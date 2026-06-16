@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="SANKADIOKRO - Restaurant Manager">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Sankadio Manager">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <title>SANKADIOKRO</title>
+  <link rel="manifest" href="manifest.json">
+
+  <script>
+    // ================================================================
+    // SANKADIOKRO — Assistante Vocale Africaine Francophone
+    // Utilise l'API Web Speech avec priorité aux voix africaines fr-FR
+    // ================================================================
+
+    window._ttsVoice = null;
+    window._ttsReady = false;
+    window._ttsSpeaking = false;
+
+    // Codes de langue africains francophones par priorité
+    var AFRICAN_FR_LOCALES = [
+      'fr-CI', // Côte d\'Ivoire
+      'fr-SN', // Sénégal
+      'fr-CM', // Cameroun
+      'fr-MG', // Madagascar
+      'fr-BF', // Burkina Faso
+      'fr-ML', // Mali
+      'fr-GN', // Guinée
+      'fr-TG', // Togo
+      'fr-BJ', // Bénin
+      'fr-CD', // Congo RDC
+      'fr-CG', // Congo Brazzaville
+    ];
+
+    // Noms de voix féminines connues (Google TTS, Apple TTS, Microsoft)
+    var FEMALE_VOICE_KEYWORDS = [
+      'amélie', 'amelie', 'marie', 'claire', 'juliette', 'manon',
+      'céline', 'celine', 'thomas', 'female', 'femme',
+      'google français', 'google french',
+      'fr-fr-x-fra', 'fr-fr-wavenet-a', 'fr-fr-wavenet-c',
+      'fr-fr-neural2-a', 'fr-fr-neural2-c',
+      'audrey', 'virginie', 'léonie', 'leonie'
+    ];
+
+    function selectBestVoice(voices) {
+      if (!voices || voices.length === 0) return null;
+
+      // Priorité 1 : voix africaine francophone
+      for (var i = 0; i < AFRICAN_FR_LOCALES.length; i++) {
+        var locale = AFRICAN_FR_LOCALES[i];
+        for (var j = 0; j < voices.length; j++) {
+          if (voices[j].lang && voices[j].lang.toLowerCase() === locale.toLowerCase()) {
+            console.log('[TTS] Voix africaine trouvée:', voices[j].name, voices[j].lang);
+            return voices[j];
+          }
+        }
+      }
+
+      // Priorité 2 : voix féminine fr-FR par nom
+      for (var i = 0; i < voices.length; i++) {
+        var v = voices[i];
+        if (!v.lang || !v.lang.toLowerCase().startsWith('fr')) continue;
+        var nameLower = (v.name || '').toLowerCase();
+        for (var k = 0; k < FEMALE_VOICE_KEYWORDS.length; k++) {
+          if (nameLower.indexOf(FEMALE_VOICE_KEYWORDS[k]) !== -1) {
+            console.log('[TTS] Voix féminine trouvée:', v.name, v.lang);
+            return v;
+          }
+        }
+      }
+
+      // Priorité 3 : première voix Google fr-FR (généralement féminine)
+      for (var i = 0; i < voices.length; i++) {
+        var v = voices[i];
+        if (v.lang && v.lang.toLowerCase().startsWith('fr') &&
+            v.name && v.name.toLowerCase().indexOf('google') !== -1) {
+          console.log('[TTS] Voix Google française:', v.name, v.lang);
+          return v;
+        }
+      }
+
+      // Priorité 4 : n'importe quelle voix française
+      for (var i = 0; i < voices.length; i++) {
+        var v = voices[i];
+        if (v.lang && v.lang.toLowerCase().startsWith('fr')) {
+          console.log('[TTS] Voix française générique:', v.name, v.lang);
+          return v;
+        }
+      }
+
+      console.log('[TTS] Aucune voix française, voix par défaut utilisée');
+      return null;
+    }
+
+    function initTTSVoice() {
+      if (!window.speechSynthesis) {
+        console.warn('[TTS] API Web Speech non disponible');
+        return;
+      }
+      var voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        window._ttsVoice = selectBestVoice(voices);
+        window._ttsReady = true;
+        console.log('[TTS] Voix initialisée:', window._ttsVoice ? window._ttsVoice.name : 'défaut');
+      }
+    }
+
+    // Initialiser dès que les voix sont disponibles
+    if (window.speechSynthesis) {
+      window.speechSynthesis.addEventListener('voiceschanged', function() {
+        initTTSVoice();
+      });
+      // Tentative immédiate (Chrome charge parfois les voix sans événement)
+      setTimeout(initTTSVoice, 300);
+      setTimeout(initTTSVoice, 1000);
+      setTimeout(initTTSVoice, 3000);
+    }
+
+    // ================================================================
+    // Fonction principale appelée depuis Flutter/Dart
+    // ================================================================
+    window.africanSpeak = function(text, rate, pitch, volume) {
+      if (!window.speechSynthesis) {
+        console.warn('[TTS] speechSynthesis non disponible');
+        return;
+      }
+
+      // Toujours annuler ce qui est en cours
+      window.speechSynthesis.cancel();
+
+      if (!text || text.trim() === '') return;
+
+      var utterance = new SpeechSynthesisUtterance(text);
+
+      // Paramètres voix africaine chaleureuse
+      utterance.lang = 'fr-FR';
+      utterance.rate = rate || 0.82;    // Débit naturel africain
+      utterance.pitch = pitch || 1.2;   // Légèrement aigu = féminin
+      utterance.volume = volume || 1.0;
+
+      // Forcer l'initialisation si pas encore faite
+      if (!window._ttsReady) {
+        initTTSVoice();
+      }
+
+      // Appliquer la voix sélectionnée
+      if (window._ttsVoice) {
+        utterance.voice = window._ttsVoice;
+        utterance.lang = window._ttsVoice.lang; // respecter la locale exacte
+      }
+
+      utterance.onstart = function() {
+        window._ttsSpeaking = true;
+        console.log('[TTS] Lecture:', text.substring(0, 50) + '...');
+      };
+      utterance.onend = function() {
+        window._ttsSpeaking = false;
+      };
+      utterance.onerror = function(e) {
+        window._ttsSpeaking = false;
+        console.error('[TTS] Erreur:', e.error);
+        // Retry sans voix spécifique si erreur
+        if (e.error !== 'canceled' && e.error !== 'interrupted') {
+          var retry = new SpeechSynthesisUtterance(text);
+          retry.lang = 'fr-FR';
+          retry.rate = rate || 0.82;
+          retry.pitch = pitch || 1.2;
+          retry.volume = volume || 1.0;
+          window.speechSynthesis.speak(retry);
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+    };
+
+    window.africanStop = function() {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        window._ttsSpeaking = false;
+      }
+    };
+
+    window.africanIsSpeaking = function() {
+      return window.speechSynthesis ? window.speechSynthesis.speaking : false;
+    };
+
+    // Liste les voix disponibles (pour debug)
+    window.listTTSVoices = function() {
+      var voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+      var fr = voices.filter(function(v) { return v.lang.startsWith('fr'); });
+      console.log('[TTS] Voix françaises disponibles (' + fr.length + '):');
+      fr.forEach(function(v) { console.log(' -', v.name, '|', v.lang); });
+      return fr.map(function(v) { return v.name + ' (' + v.lang + ')'; });
+    };
+
+    console.log('[SANKADIOKRO] Assistante vocale africaine initialisée');
+  </script>
+</head>
+<body>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
