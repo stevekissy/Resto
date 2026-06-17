@@ -26,6 +26,43 @@ class FirebaseService {
 
   // =================== AUTH ===================
 
+  /// Active la persistance locale Firebase Auth sur Web (localStorage).
+  /// À appeler UNE FOIS après Firebase.initializeApp(), avant tout accès auth.
+  /// Sur Android/iOS la persistance est locale par défaut — appel ignoré.
+  Future<void> enableWebPersistence() async {
+    if (!kIsWeb) return;
+    try {
+      await _auth.setPersistence(Persistence.LOCAL);
+      debugPrint('[FirebaseService] ✅ Persistance Auth Web : LOCAL');
+    } catch (e) {
+      // Non bloquant — certains navigateurs (Safari privé) refusent localStorage
+      debugPrint('[FirebaseService] ⚠ setPersistence: $e');
+    }
+  }
+
+  /// Attend que Firebase Auth ait résolu l'état initial de session.
+  /// Sur Web avec persistance LOCAL, cela prend ~50-200ms le temps que
+  /// Firebase lise le token dans localStorage et vérifie sa validité.
+  /// Retourne l'utilisateur connecté, ou null si déconnecté.
+  Future<User?> resolveAuthState() async {
+    try {
+      // authStateChanges().first émet l'état actuel UNE SEULE FOIS
+      // puis termine — c'est exactement ce qu'on veut au démarrage.
+      final user = await _auth.authStateChanges().first.timeout(
+        const Duration(seconds: 8),
+        onTimeout: () {
+          debugPrint('[FirebaseService] ⚠ resolveAuthState timeout — traité comme déconnecté');
+          return null;
+        },
+      );
+      debugPrint('[FirebaseService] resolveAuthState → ${user?.email ?? "null (non connecté)"}');
+      return user;
+    } catch (e) {
+      debugPrint('[FirebaseService] resolveAuthState erreur: $e');
+      return null;
+    }
+  }
+
   Future<UserCredential?> signIn(String email, String password) async {
     return await _auth.signInWithEmailAndPassword(
       email: email.trim(),
@@ -35,6 +72,8 @@ class FirebaseService {
 
   Future<void> signOut() async => await _auth.signOut();
 
+  /// Lecture synchrone — peut retourner null brièvement au démarrage Web.
+  /// Préférer resolveAuthState() pour la reprise de session au boot.
   User? get currentFirebaseUser => _auth.currentUser;
 
   // =================== USERS ===================

@@ -167,20 +167,52 @@ class AppProvider extends ChangeNotifier {
     // Aucun accès Firebase dans le constructeur
   }
 
-  /// Appelé par main() APRÈS Firebase.initializeApp() — reprise de session sécurisée
-  Future<void> checkExistingSession() async {
-    if (!firebaseReady) return;
+  /// Appelé par main() APRÈS Firebase.initializeApp() + setPersistence.
+  ///
+  /// IMPORTANT : utilise resolveAuthState() (authStateChanges().first)
+  /// et NON currentUser synchrone — sur Web, currentUser peut être null
+  /// pendant ~100-300ms pendant que Firebase recharge le token localStorage.
+  ///
+  /// Retourne true si une session active a été restaurée, false sinon.
+  Future<bool> checkExistingSession() async {
+    if (!firebaseReady) return false;
     try {
-      final fbUser = _firebase.currentFirebaseUser;
-      if (fbUser == null) return;
-      debugPrint('[AppProvider] Session existante: ${fbUser.email}');
+      // Attendre que Firebase Auth ait chargé la session depuis localStorage
+      final fbUser = await _firebase.resolveAuthState();
+      if (fbUser == null) {
+        debugPrint('[AppProvider] checkExistingSession → aucune session active');
+        return false;
+      }
+
+      debugPrint('[AppProvider] ✅ Session restaurée : ${fbUser.email}');
+
+      // Profil immédiat depuis l'email (pas d'attente Firestore)
       final role = _roleFromEmail(fbUser.email ?? '');
       final displayName = _displayNameFromEmail(fbUser.email ?? '');
-      _currentUser = AppUser(id: fbUser.uid, name: displayName, email: fbUser.email ?? '', phone: '', role: role);
+      _currentUser = AppUser(
+        id: fbUser.uid,
+        name: displayName,
+        email: fbUser.email ?? '',
+        phone: '',
+        role: role,
+      );
+
+      // Enrichir depuis Firestore en arrière-plan (non bloquant)
+      _firebase.ensureUserDoc(fbUser.uid, fbUser.email ?? '', role, displayName)
+        .then((firestoreUser) {
+          _currentUser = firestoreUser;
+          notifyListeners();
+          debugPrint('[AppProvider] Profil Firestore chargé : ${firestoreUser.name}');
+        })
+        .catchError((e) => debugPrint('[AppProvider] ensureUserDoc (bg): $e'));
+
+      // Démarrer les streams Firestore temps réel
       _startFirebaseStreams();
       notifyListeners();
+      return true;
     } catch (e) {
-      debugPrint('[AppProvider] checkExistingSession: $e');
+      debugPrint('[AppProvider] checkExistingSession erreur: $e');
+      return false;
     }
   }
 
@@ -359,12 +391,26 @@ class AppProvider extends ChangeNotifier {
     _subAttendances?.cancel();
   }
 
+  /// Déconnexion complète : signOut Firebase + nettoyage local.
+  /// Appelé uniquement par un bouton "Déconnexion" explicite de l'utilisateur.
+  /// NE PAS appeler automatiquement dans initState, dispose ou guard route.
   Future<void> logout() async {
     _stopFirebaseStreams();
     if (_currentUser != null) {
       await _firebase.setUserOnline(_currentUser!.id, false).catchError((_) {});
     }
     await _firebase.signOut().catchError((e) => debugPrint('[logout] $e'));
+    _currentUser = null;
+    _users = []; _orders = []; _products = []; _stockItems = [];
+    _suppliers = []; _supplierOrders = []; _messages = []; _attendances = [];
+    notifyListeners();
+  }
+
+  /// Nettoyage local uniquement (sans signOut Firebase).
+  /// Utilisé par _AuthGate quand authStateChanges détecte une déconnexion
+  /// déclenchée par Firebase (ex: token expiré) plutôt que par l'utilisateur.
+  void clearSessionLocally() {
+    _stopFirebaseStreams();
     _currentUser = null;
     _users = []; _orders = []; _products = []; _stockItems = [];
     _suppliers = []; _supplierOrders = []; _messages = []; _attendances = [];
