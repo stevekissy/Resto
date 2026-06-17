@@ -5,8 +5,10 @@ import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import '../models/models.dart';
 
 class FirebaseService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  // Lazy getters : accédés uniquement au moment du premier appel,
+  // APRÈS que Firebase.initializeApp() soit terminé dans main().
+  FirebaseAuth get _auth => FirebaseAuth.instance;
+  FirebaseFirestore get _db => FirebaseFirestore.instance;
 
   // =================== AUTH ===================
 

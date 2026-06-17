@@ -7,7 +7,13 @@ import '../services/firebase_service.dart';
 
 class AppProvider extends ChangeNotifier {
   final _uuid = const Uuid();
-  final _firebase = FirebaseService();
+  // Late init : créé seulement quand loginWithFirebase() est appelé,
+  // APRÈS Firebase.initializeApp() dans main().
+  FirebaseService? _firebaseInstance;
+  FirebaseService get _firebase {
+    _firebaseInstance ??= FirebaseService();
+    return _firebaseInstance!;
+  }
 
   // ── Streams Firestore ──
   StreamSubscription? _subUsers;
