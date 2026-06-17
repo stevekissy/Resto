@@ -3,9 +3,27 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
+import '../services/firebase_service.dart';
 
 class AppProvider extends ChangeNotifier {
   final _uuid = const Uuid();
+  final _firebase = FirebaseService();
+
+  // ── Streams Firestore ──
+  StreamSubscription? _subUsers;
+  StreamSubscription? _subProducts;
+  StreamSubscription? _subOrders;
+  StreamSubscription? _subStock;
+  StreamSubscription? _subMessages;
+  StreamSubscription? _subSuppliers;
+  StreamSubscription? _subSupplierOrders;
+  StreamSubscription? _subAttendances;
+
+  bool _isLoading = false;
+  bool get isLoading => _isLoading;
+
+  String? _errorMessage;
+  String? get errorMessage => _errorMessage;
 
   // =================== CURRENT USER ===================
   AppUser? _currentUser;
@@ -282,24 +300,132 @@ class AppProvider extends ChangeNotifier {
     ];
   }
 
-  // =================== LOGIN ===================
-  bool login(String email, String password) {
-    final user = _users.firstWhere(
-      (u) => u.email.toLowerCase() == email.toLowerCase() && u.isActive,
-      orElse: () => AppUser(id: '', name: '', email: '', phone: '', role: UserRole.server),
-    );
-    if (user.id.isNotEmpty) {
-      _currentUser = user;
-      user.isOnline = true;
+  // =================== LOGIN Firebase ===================
+  Future<bool> loginWithFirebase(String email, String password) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final credential = await _firebase.signIn(email, password);
+      final uid  = credential?.user?.uid ?? _uuid.v4();
+      final mail = credential?.user?.email ?? email;
+
+      // Profil local immédiat
+      UserRole role = UserRole.server;
+      final low = mail.toLowerCase();
+      if (low.contains('admin'))                                      role = UserRole.admin;
+      else if (low.contains('manager'))                              role = UserRole.manager;
+      else if (low.contains('caiss') || low.contains('cashier'))    role = UserRole.cashier;
+      else if (low.contains('cuisine') || low.contains('kitchen'))  role = UserRole.kitchen;
+
+      final namePart = mail.split('@').first;
+      final displayName = namePart.isNotEmpty
+          ? namePart[0].toUpperCase() + namePart.substring(1).replaceAll(RegExp(r'[._0-9]+'), ' ').trim()
+          : 'Utilisateur';
+
+      _currentUser = AppUser(id: uid, name: displayName, email: mail, phone: '', role: role);
+
+      // Démarrer les streams Firestore
+      _startFirebaseStreams();
+
+      // Charger le vrai profil en arrière-plan
+      _firebase.getUserByUid(uid).then((u) {
+        if (u != null) { _currentUser = u; notifyListeners(); }
+        else {
+          _firebase.saveUser(_currentUser!).catchError((e) {
+            debugPrint('[bg] saveUser: $e');
+            return null;
+          });
+        }
+      }).catchError((e) { debugPrint('[bg] getUserByUid: $e'); return null; });
+
+      _isLoading = false;
       notifyListeners();
       return true;
+
+    } catch (e) {
+      debugPrint('[AppProvider] loginWithFirebase error: $e');
+      _errorMessage = _mapAuthError(e.toString());
+      _isLoading = false;
+      notifyListeners();
+      return false;
     }
-    return false;
   }
 
-  void logout() {
-    _currentUser?.isOnline = false;
+  // Garde la compatibilité avec l'ancien code
+  bool login(String email, String password) => false;
+
+  String _mapAuthError(String error) {
+    final e = error.toLowerCase();
+    if (e.contains('user-not-found') || e.contains('no user record'))
+      return 'Aucun compte trouvé avec cet email.';
+    if (e.contains('wrong-password') || e.contains('invalid-credential') ||
+        e.contains('invalid-login-credentials'))
+      return 'Email ou mot de passe incorrect.';
+    if (e.contains('too-many-requests'))
+      return 'Trop de tentatives. Réessayez dans quelques minutes.';
+    if (e.contains('network')) return 'Pas de connexion Internet.';
+    if (e.contains('user-disabled')) return 'Ce compte a été désactivé.';
+    if (e.contains('invalid-email')) return 'Format d\'email invalide.';
+    return 'Email ou mot de passe incorrect.';
+  }
+
+  // =================== STREAMS FIRESTORE ===================
+  void _startFirebaseStreams() {
+    _subUsers = _firebase.streamUsers().listen((list) {
+      _users = list; notifyListeners();
+    }, onError: (e) => debugPrint('[stream] users: $e'));
+
+    _subProducts = _firebase.streamProducts().listen((list) {
+      _products = list; notifyListeners();
+    }, onError: (e) => debugPrint('[stream] products: $e'));
+
+    _subOrders = _firebase.streamOrders().listen((list) {
+      _orders = List<Order>.from(list); notifyListeners();
+    }, onError: (e) => debugPrint('[stream] orders: $e'));
+
+    _subStock = _firebase.streamStock().listen((list) {
+      _stockItems = list; notifyListeners();
+    }, onError: (e) => debugPrint('[stream] stock: $e'));
+
+    _subMessages = _firebase.streamMessages().listen((list) {
+      _messages = list; notifyListeners();
+    }, onError: (e) => debugPrint('[stream] messages: $e'));
+
+    _subSuppliers = _firebase.streamSuppliers().listen((list) {
+      _suppliers = list; notifyListeners();
+    }, onError: (e) => debugPrint('[stream] suppliers: $e'));
+
+    _subSupplierOrders = _firebase.streamSupplierOrders().listen((list) {
+      _supplierOrders = list; notifyListeners();
+    }, onError: (e) => debugPrint('[stream] supplierOrders: $e'));
+
+    _subAttendances = _firebase.streamAttendances().listen((list) {
+      _attendances = list; notifyListeners();
+    }, onError: (e) => debugPrint('[stream] attendances: $e'));
+  }
+
+  void _stopFirebaseStreams() {
+    _subUsers?.cancel();
+    _subProducts?.cancel();
+    _subOrders?.cancel();
+    _subStock?.cancel();
+    _subMessages?.cancel();
+    _subSuppliers?.cancel();
+    _subSupplierOrders?.cancel();
+    _subAttendances?.cancel();
+  }
+
+  Future<void> logout() async {
+    _stopFirebaseStreams();
+    if (_currentUser != null) {
+      await _firebase.setUserOnline(_currentUser!.id, false).catchError((_) {});
+    }
+    await _firebase.signOut().catchError((e) => debugPrint('[logout] $e'));
     _currentUser = null;
+    _users = []; _orders = []; _products = []; _stockItems = [];
+    _suppliers = []; _supplierOrders = []; _messages = []; _attendances = [];
     notifyListeners();
   }
 
@@ -627,6 +753,7 @@ class AppProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _stopFirebaseStreams();
     _alertTimer?.cancel();
     super.dispose();
   }
