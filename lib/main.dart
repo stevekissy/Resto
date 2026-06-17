@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:firebase_core/firebase_core.dart';
 // URL Strategy — active les URL propres (/dashboard au lieu de /#/dashboard)
@@ -19,7 +18,7 @@ import 'screens/login_screen.dart';
 //  1. WidgetsFlutterBinding
 //  2. usePathUrlStrategy()   ← URLs propres sans # pour Netlify
 //  3. Firebase.initializeApp()
-//  4. Hive, Intl, orientation
+//  4. Intl, orientation
 //  5. AppProvider(firebaseReady: ...)
 //  6. checkExistingSession()
 //  7. runApp()
@@ -69,15 +68,7 @@ void main() async {
     return;
   }
 
-  // ── 4. Hive ──
-  try {
-    await Hive.initFlutter();
-    debugPrint('[main] ✅ Hive initialisé');
-  } catch (e) {
-    debugPrint('[main] ⚠ Hive: $e');
-  }
-
-  // ── 5. Intl ──
+  // ── 4. Intl ──
   try {
     await initializeDateFormatting('fr_FR', null);
   } catch (e) {

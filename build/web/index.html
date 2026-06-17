@@ -201,6 +201,121 @@
 
     console.log('[SANKADIOKRO] Assistante vocale africaine initialisée');
   </script>
+
+  <!-- ================================================================
+       DÉSACTIVATION TOTALE DU SERVICE WORKER + PURGE DU CACHE
+       Exécuté AVANT flutter_bootstrap.js pour forcer le rechargement
+       du vrai main.dart.js depuis le réseau (pas depuis le cache SW)
+       ================================================================ -->
+  <script>
+    (function() {
+      'use strict';
+
+      // 1. Dés-enregistrer TOUS les Service Workers actifs
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          var count = registrations.length;
+          if (count === 0) {
+            console.log('[SW] Aucun service worker enregistré');
+            return;
+          }
+          registrations.forEach(function(registration) {
+            registration.unregister().then(function(success) {
+              if (success) {
+                console.log('[SW] Service worker désenregistré:', registration.scope);
+              }
+            });
+          });
+          console.log('[SW] ' + count + ' service worker(s) supprimé(s)');
+        }).catch(function(err) {
+          console.warn('[SW] Erreur lors de la suppression:', err);
+        });
+      }
+
+      // 2. Vider TOUS les caches du navigateur (Cache Storage API)
+      if ('caches' in window) {
+        caches.keys().then(function(cacheNames) {
+          if (cacheNames.length === 0) {
+            console.log('[CACHE] Aucun cache à purger');
+            return;
+          }
+          cacheNames.forEach(function(cacheName) {
+            caches.delete(cacheName).then(function(deleted) {
+              if (deleted) {
+                console.log('[CACHE] Cache supprimé:', cacheName);
+              }
+            });
+          });
+          console.log('[CACHE] ' + cacheNames.length + ' cache(s) purgé(s)');
+        }).catch(function(err) {
+          console.warn('[CACHE] Erreur lors de la purge:', err);
+        });
+      }
+
+      // 3. Supprimer les clés Hive / SharedPreferences / données locales
+      //    depuis localStorage et sessionStorage
+      try {
+        var keysToRemove = [];
+        for (var i = 0; i < localStorage.length; i++) {
+          var key = localStorage.key(i);
+          if (key && (
+            key.startsWith('hive_') ||
+            key.startsWith('flutter.') ||
+            key.startsWith('sankadio') ||
+            key.startsWith('app_') ||
+            key === 'flutter_shared_preferences'
+          )) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(function(k) {
+          localStorage.removeItem(k);
+          console.log('[STORAGE] Clé supprimée:', k);
+        });
+      } catch (e) {
+        console.warn('[STORAGE] Erreur localStorage:', e);
+      }
+
+      // 4. Supprimer toutes les bases IndexedDB liées à Hive / l'application
+      if ('indexedDB' in window) {
+        var dbsToDelete = [
+          'hive_flutter',
+          'hive',
+          'sankadio',
+          'FlutterSharedPreferences'
+        ];
+        dbsToDelete.forEach(function(dbName) {
+          try {
+            var req = indexedDB.deleteDatabase(dbName);
+            req.onsuccess = function() {
+              console.log('[IDB] Base supprimée:', dbName);
+            };
+            req.onerror = function() {
+              // Silencieux si la base n'existe pas
+            };
+          } catch(e) { /* ignoré */ }
+        });
+
+        // Lister et supprimer TOUTES les bases IndexedDB présentes
+        if (indexedDB.databases) {
+          indexedDB.databases().then(function(dbs) {
+            dbs.forEach(function(db) {
+              if (db.name && (
+                db.name.toLowerCase().includes('hive') ||
+                db.name.toLowerCase().includes('flutter') ||
+                db.name.toLowerCase().includes('sankadio')
+              )) {
+                indexedDB.deleteDatabase(db.name);
+                console.log('[IDB] Base dynamique supprimée:', db.name);
+              }
+            });
+          }).catch(function() { /* API non supportée */ });
+        }
+      }
+
+      console.log('[SANKADIOKRO] Cache & SW purge terminée — chargement réseau forcé');
+    })();
+  </script>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>
