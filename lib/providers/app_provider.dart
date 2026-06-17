@@ -424,6 +424,44 @@ class AppProvider extends ChangeNotifier {
     await _firebase.updateOrder(order);
   }
 
+  /// Sauvegarde un reçu dans Firestore (collection receipts)
+  Future<void> saveReceipt({
+    required String receiptId,
+    required String type,
+    required String orderId,
+    required int orderNumber,
+    required double amount,
+    required String paymentMethod,
+    String? receiptNumber,
+    String? settlementNumber,
+  }) async {
+    final cashierName = _currentUser?.name ?? 'Caissier';
+    await _firebase.saveReceipt(
+      receiptId: receiptId,
+      type: type,
+      orderId: orderId,
+      orderNumber: orderNumber,
+      amount: amount,
+      paymentMethod: paymentMethod,
+      createdBy: cashierName,
+      receiptNumber: receiptNumber,
+      settlementNumber: settlementNumber,
+    );
+  }
+
+  /// Met à jour les flags d'impression sur une commande Firestore
+  Future<void> updateOrderPrintStatus({
+    required String orderId,
+    bool? receiptPrinted,
+    bool? settlementPrinted,
+  }) async {
+    await _firebase.updateOrderPrintStatus(
+      orderId: orderId,
+      receiptPrinted: receiptPrinted,
+      settlementPrinted: settlementPrinted,
+    );
+  }
+
   // =================== PRODUCT MANAGEMENT (Firestore) ===================
   Future<void> addProduct(Product product) async {
     await _firebase.saveProduct(product);

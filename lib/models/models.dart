@@ -166,6 +166,10 @@ class Order {
   double amountPaid; // Montant versé par le client
   double get change => (amountPaid - totalAmount).clamp(0, double.infinity);
 
+  // Statuts d'impression — mis à jour dans Firestore après chaque impression
+  bool receiptPrinted;    // Reçu d'encaissement imprimé
+  bool settlementPrinted; // Reçu de règlement imprimé
+
   Order({
     required this.id,
     required this.orderNumber,
@@ -183,6 +187,8 @@ class Order {
     this.isPaid = false,
     this.paymentMethod,
     this.amountPaid = 0,
+    this.receiptPrinted = false,
+    this.settlementPrinted = false,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.totalPrice);
@@ -224,6 +230,9 @@ class Order {
     'readyAt': readyAt?.millisecondsSinceEpoch,
     'servedAt': servedAt?.millisecondsSinceEpoch,
     'discount': discount, 'isPaid': isPaid, 'paymentMethod': paymentMethod,
+    'amountPaid': amountPaid,
+    'receiptPrinted': receiptPrinted,
+    'settlementPrinted': settlementPrinted,
   };
 
   factory Order.fromMap(Map<String, dynamic> map) => Order(
@@ -240,6 +249,9 @@ class Order {
     discount: (map['discount'] as num?)?.toDouble() ?? 0,
     isPaid: map['isPaid'] ?? false,
     paymentMethod: map['paymentMethod'],
+    amountPaid: (map['amountPaid'] as num?)?.toDouble() ?? 0,
+    receiptPrinted: map['receiptPrinted'] as bool? ?? false,
+    settlementPrinted: map['settlementPrinted'] as bool? ?? false,
   );
 }
 

@@ -425,4 +425,47 @@ class FirebaseService {
   Future<void> saveAttendance(Attendance attendance) async {
     await _db.collection('attendances').doc(attendance.id).set(attendance.toMap());
   }
+
+  // =================== RECEIPTS ===================
+
+  /// Sauvegarde un reçu (encaissement ou règlement) dans Firestore
+  /// Collection : receipts/{receiptId}
+  Future<void> saveReceipt({
+    required String receiptId,
+    required String type,         // 'encaissement' ou 'reglement'
+    required String orderId,
+    required int orderNumber,
+    required double amount,
+    required String paymentMethod,
+    required String createdBy,
+    String? receiptNumber,
+    String? settlementNumber,
+  }) async {
+    await _db.collection('receipts').doc(receiptId).set({
+      'id': receiptId,
+      'type': type,
+      'orderId': orderId,
+      'orderNumber': orderNumber,
+      'amount': amount,
+      'paymentMethod': paymentMethod,
+      'createdBy': createdBy,
+      'createdAt': FieldValue.serverTimestamp(),
+      if (receiptNumber != null) 'receiptNumber': receiptNumber,
+      if (settlementNumber != null) 'settlementNumber': settlementNumber,
+    });
+  }
+
+  /// Met à jour les flags d'impression sur la commande
+  Future<void> updateOrderPrintStatus({
+    required String orderId,
+    bool? receiptPrinted,
+    bool? settlementPrinted,
+  }) async {
+    final updates = <String, dynamic>{};
+    if (receiptPrinted != null) updates['receiptPrinted'] = receiptPrinted;
+    if (settlementPrinted != null) updates['settlementPrinted'] = settlementPrinted;
+    if (updates.isNotEmpty) {
+      await _db.collection('orders').doc(orderId).update(updates);
+    }
+  }
 }

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../../models/models.dart';
+import '../../services/print_service.dart';
 
 class CashierScreen extends StatefulWidget {
   const CashierScreen({super.key});
@@ -515,137 +517,342 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   }
 }
 
-// =================== INVOICE SCREEN ===================
-class InvoiceScreen extends StatelessWidget {
+// ══════════════════════════════════════════════════════════════════════
+//  INVOICE SCREEN — Facture #commande avec impression réelle
+//  Deux reçus distincts : encaissement et règlement caisse
+// ══════════════════════════════════════════════════════════════════════
+class InvoiceScreen extends StatefulWidget {
   final Order order;
   final double amountPaid;
 
   const InvoiceScreen({super.key, required this.order, this.amountPaid = 0});
 
   @override
+  State<InvoiceScreen> createState() => _InvoiceScreenState();
+}
+
+class _InvoiceScreenState extends State<InvoiceScreen> {
+  final _printService = PrintService();
+  bool _printingEncaissement = false;
+  bool _printingReglement = false;
+  bool _receiptPrinted = false;
+  bool _settlementPrinted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _receiptPrinted = widget.order.receiptPrinted;
+    _settlementPrinted = widget.order.settlementPrinted;
+  }
+
+  // ── Impression Reçu d'Encaissement ──────────────────────────────────
+  Future<void> _printEncaissement() async {
+    if (_printingEncaissement) return;
+    setState(() => _printingEncaissement = true);
+
+    final provider = context.read<AppProvider>();
+    final receiptNumber = PrintService.generateReceiptNumber(widget.order.orderNumber);
+    final cashierName = provider.currentUser?.name;
+
+    try {
+      // 1. Générer et ouvrir le reçu HTML + window.print()
+      _printService.printEncaissement(
+        order: widget.order,
+        amountPaid: widget.amountPaid,
+        receiptNumber: receiptNumber,
+        cashierName: cashierName,
+      );
+
+      // 2. Sauvegarder le reçu dans Firestore
+      await provider.saveReceipt(
+        receiptId: const Uuid().v4(),
+        type: 'encaissement',
+        orderId: widget.order.id,
+        orderNumber: widget.order.orderNumber,
+        amount: widget.order.totalAmount,
+        paymentMethod: widget.order.paymentMethod ?? 'Espèces',
+        receiptNumber: receiptNumber,
+      );
+
+      // 3. Marquer receiptPrinted = true sur la commande
+      await provider.updateOrderPrintStatus(
+        orderId: widget.order.id,
+        receiptPrinted: true,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _receiptPrinted = true;
+        _printingEncaissement = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(children: [
+            const Icon(Icons.print, color: Colors.white, size: 18),
+            const SizedBox(width: 10),
+            Expanded(child: Text('Reçu d\'encaissement $receiptNumber ouvert — Utilisez Ctrl+P / dialogue d\'impression')),
+          ]),
+          backgroundColor: AppTheme.success,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _printingEncaissement = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur impression : $e'), backgroundColor: AppTheme.error),
+      );
+    }
+  }
+
+  // ── Impression Reçu de Règlement Caisse ─────────────────────────────
+  Future<void> _printReglement() async {
+    if (_printingReglement) return;
+    setState(() => _printingReglement = true);
+
+    final provider = context.read<AppProvider>();
+    final settlementNumber = PrintService.generateSettlementNumber(widget.order.orderNumber);
+    final cashierName = provider.currentUser?.name;
+
+    try {
+      // 1. Générer et ouvrir le reçu de règlement HTML + window.print()
+      _printService.printReglement(
+        order: widget.order,
+        amountPaid: widget.amountPaid,
+        settlementNumber: settlementNumber,
+        cashierName: cashierName,
+      );
+
+      // 2. Sauvegarder le règlement dans Firestore
+      await provider.saveReceipt(
+        receiptId: const Uuid().v4(),
+        type: 'reglement',
+        orderId: widget.order.id,
+        orderNumber: widget.order.orderNumber,
+        amount: widget.order.totalAmount,
+        paymentMethod: widget.order.paymentMethod ?? 'Espèces',
+        settlementNumber: settlementNumber,
+      );
+
+      // 3. Marquer settlementPrinted = true sur la commande
+      await provider.updateOrderPrintStatus(
+        orderId: widget.order.id,
+        settlementPrinted: true,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _settlementPrinted = true;
+        _printingReglement = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(children: [
+            const Icon(Icons.receipt_long, color: Colors.white, size: 18),
+            const SizedBox(width: 10),
+            Expanded(child: Text('Reçu de règlement $settlementNumber ouvert — Utilisez Ctrl+P / dialogue d\'impression')),
+          ]),
+          backgroundColor: AppTheme.warning,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _printingReglement = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur impression : $e'), backgroundColor: AppTheme.error),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final fmt = NumberFormat('#,###', 'fr_FR');
-    final dateStr = DateFormat('dd/MM/yyyy HH:mm').format(order.createdAt);
-    final change = (amountPaid - order.totalAmount).clamp(0, double.infinity);
+    final dateStr = DateFormat('dd/MM/yyyy HH:mm').format(widget.order.createdAt);
+    final change = (widget.amountPaid - widget.order.totalAmount).clamp(0.0, double.infinity);
+    final order = widget.order;
 
     return Scaffold(
       appBar: AppBar(
         title: Text('Facture #${order.orderNumber}'),
         actions: [
+          // Bouton impression rapide encaissement dans l'AppBar
           IconButton(
-            icon: const Icon(Icons.print),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Impression en cours...'), backgroundColor: AppTheme.success),
-              );
-            },
+            icon: _printingEncaissement
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : Icon(Icons.print, color: _receiptPrinted ? AppTheme.success : Colors.white),
+            tooltip: 'Imprimer reçu d\'encaissement',
+            onPressed: _printEncaissement,
           ),
           IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Partage de la facture...'), backgroundColor: AppTheme.primary),
-              );
-            },
+            icon: const Icon(Icons.receipt_long),
+            tooltip: 'Imprimer reçu de règlement',
+            onPressed: _printReglement,
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            // ── Aperçu facture ──────────────────────────────────────
             GlassCard(
               border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
               child: Column(
                 children: [
                   // Header
-                  Column(
-                    children: [
-                      const Text('SANKADIOKRO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 22, letterSpacing: 3)),
-                      const Text('Restaurant Africain', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-                      const SizedBox(height: 6),
-                      Container(height: 2, color: AppTheme.primary),
-                      const SizedBox(height: 10),
-                      const Text('FACTURE D\'ENCAISSEMENT', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 14, letterSpacing: 1)),
-                    ],
+                  const Text('SANKADIOKRO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 22, letterSpacing: 3)),
+                  const Text('Restaurant Africain', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Container(height: 2, color: AppTheme.primary),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppTheme.primary),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('FACTURE D\'ENCAISSEMENT',
+                        style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1)),
                   ),
                   const SizedBox(height: 16),
+
                   // Infos commande
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(color: AppTheme.surfaceLight, borderRadius: BorderRadius.circular(10)),
                     child: Column(
                       children: [
-                        _InvoiceRow('N° Commande:', '#${order.orderNumber}'),
-                        _InvoiceRow('Table:', order.tableNumber),
-                        _InvoiceRow('Date:', dateStr),
-                        if (order.serverName != null) _InvoiceRow('Serveur:', order.serverName!),
-                        if (order.paymentMethod != null) _InvoiceRow('Paiement:', order.paymentMethod!),
+                        _InvoiceRow('N° Commande', '#${order.orderNumber}'),
+                        _InvoiceRow('Table', order.tableNumber),
+                        _InvoiceRow('Date', dateStr),
+                        if (order.serverName != null) _InvoiceRow('Serveur', order.serverName!),
+                        if (order.paymentMethod != null) _InvoiceRow('Paiement', order.paymentMethod!),
                       ],
                     ),
                   ),
                   const SizedBox(height: 16),
+
                   // Entête articles
-                  const Row(
-                    children: [
-                      Expanded(flex: 5, child: Text('Article', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontWeight: FontWeight.w700))),
-                      Expanded(flex: 2, child: Text('Qté', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontWeight: FontWeight.w700))),
-                      Expanded(flex: 3, child: Text('Prix', textAlign: TextAlign.right, style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontWeight: FontWeight.w700))),
-                    ],
-                  ),
+                  const Row(children: [
+                    Expanded(flex: 5, child: Text('Article', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700))),
+                    Expanded(flex: 2, child: Text('Qté', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700))),
+                    Expanded(flex: 2, child: Text('P.U', textAlign: TextAlign.right, style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700))),
+                    Expanded(flex: 3, child: Text('Total', textAlign: TextAlign.right, style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700))),
+                  ]),
                   const Divider(color: Color(0xFF2A2A5A), height: 12),
                   ...order.items.map((item) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        Expanded(flex: 5, child: Text(item.productName, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12))),
-                        Expanded(flex: 2, child: Text('×${item.quantity}', textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12))),
-                        Expanded(flex: 3, child: Text('${fmt.format(item.totalPrice)} F', textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w600))),
-                      ],
-                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(children: [
+                      Expanded(flex: 5, child: Text(item.productName, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 11))),
+                      Expanded(flex: 2, child: Text('×${item.quantity}', textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 11))),
+                      Expanded(flex: 2, child: Text('${fmt.format(item.unitPrice)} F', textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11))),
+                      Expanded(flex: 3, child: Text('${fmt.format(item.totalPrice)} F', textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w600))),
+                    ]),
                   )),
                   const Divider(color: Color(0xFF2A2A5A)),
-                  _TotalRow('Sous-total', '${fmt.format(order.subtotal)} F CFA', bold: false),
-                  if (order.discount > 0) _TotalRow('Remise', '-${fmt.format(order.discount)} F CFA', bold: false, color: AppTheme.warning),
+
+                  // Totaux
+                  _TotalRow('Sous-total', '${fmt.format(order.subtotal)} F CFA'),
+                  if (order.discount > 0)
+                    _TotalRow('Remise', '-${fmt.format(order.discount)} F CFA', color: AppTheme.warning),
                   _TotalRow('TOTAL', '${fmt.format(order.totalAmount)} F CFA', bold: true, color: AppTheme.primary),
-                  const SizedBox(height: 8),
-                  const Divider(color: Color(0xFF2A2A5A)),
-                  // Montant versé / Monnaie rendue
-                  if (amountPaid > 0) ...[
-                    _TotalRow('Montant versé', '${fmt.format(amountPaid)} F CFA', bold: false, color: AppTheme.success),
-                    _TotalRow('Monnaie rendue', '${fmt.format(change)} F CFA', bold: true, color: change > 0 ? AppTheme.warning : AppTheme.textSecondary),
-                    const SizedBox(height: 8),
+                  if (widget.amountPaid > 0) ...[
+                    const SizedBox(height: 4),
+                    const Divider(color: Color(0xFF2A2A5A)),
+                    _TotalRow('Montant reçu', '${fmt.format(widget.amountPaid)} F CFA', color: AppTheme.success),
+                    _TotalRow('Monnaie rendue', '${fmt.format(change)} F CFA',
+                        bold: true, color: change > 0 ? AppTheme.warning : AppTheme.textSecondary),
                   ],
+                  const SizedBox(height: 12),
                   Container(height: 2, color: AppTheme.primary),
                   const SizedBox(height: 12),
-                  const Text('Merci pour votre visite !', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontStyle: FontStyle.italic)),
-                  const Text('À bientôt chez SANKADIOKRO', style: TextStyle(color: AppTheme.primary, fontSize: 11)),
+                  const Text('Merci pour votre visite !',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontStyle: FontStyle.italic)),
+                  const Text('À bientôt chez SANKADIOKRO',
+                      style: TextStyle(color: AppTheme.primary, fontSize: 11)),
                 ],
               ),
             ),
+
             const SizedBox(height: 20),
-            PrimaryButton(
+
+            // ── Statuts d'impression ────────────────────────────────
+            if (_receiptPrinted || _settlementPrinted)
+              GlassCard(
+                margin: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  children: [
+                    const Text('Statuts d\'impression',
+                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                      _PrintStatusBadge(
+                        label: 'Encaissement',
+                        printed: _receiptPrinted,
+                        icon: Icons.print,
+                      ),
+                      _PrintStatusBadge(
+                        label: 'Règlement',
+                        printed: _settlementPrinted,
+                        icon: Icons.receipt_long,
+                      ),
+                    ]),
+                  ],
+                ),
+              ),
+
+            // ── Bouton 1 : Imprimer Reçu d'Encaissement ─────────────
+            _PrintButton(
               label: 'Imprimer Facture d\'Encaissement',
+              sublabel: 'Reçu client — ticket thermique 80mm',
               icon: Icons.print,
-              isFullWidth: true,
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Impression sur imprimante Epson...'), backgroundColor: AppTheme.success),
-                );
-              },
+              color: AppTheme.success,
+              isLoading: _printingEncaissement,
+              alreadyPrinted: _receiptPrinted,
+              onPressed: _printEncaissement,
             ),
+
             const SizedBox(height: 12),
-            PrimaryButton(
+
+            // ── Bouton 2 : Imprimer Reçu de Règlement Caisse ─────────
+            _PrintButton(
               label: 'Imprimer Facture de Règlement',
+              sublabel: 'Reçu caisse — avec signature caissier',
               icon: Icons.receipt_long,
-              isFullWidth: true,
-              color: AppTheme.warning,
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Impression facture de règlement...'), backgroundColor: AppTheme.warning),
-                );
-              },
+              color: const Color(0xFFE65100),
+              isLoading: _printingReglement,
+              alreadyPrinted: _settlementPrinted,
+              onPressed: _printReglement,
             ),
+
+            const SizedBox(height: 24),
+
+            // ── Info impression ──────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: AppTheme.primary, size: 16),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Une nouvelle fenêtre s\'ouvre avec le reçu. Utilisez Ctrl+P (PC) ou le menu Partager (mobile) pour imprimer ou enregistrer en PDF.',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
           ],
         ),
       ),
@@ -653,6 +860,7 @@ class InvoiceScreen extends StatelessWidget {
   }
 }
 
+// ── Widget : ligne de facture ────────────────────────────────────────
 class _InvoiceRow extends StatelessWidget {
   final String label;
   final String value;
@@ -674,6 +882,7 @@ class _InvoiceRow extends StatelessWidget {
   }
 }
 
+// ── Widget : ligne de total ──────────────────────────────────────────
 class _TotalRow extends StatelessWidget {
   final String label;
   final String value;
@@ -685,14 +894,152 @@ class _TotalRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(color: bold ? Colors.white : AppTheme.textSecondary, fontSize: bold ? 15 : 13, fontWeight: bold ? FontWeight.w700 : FontWeight.normal)),
-          Text(value, style: TextStyle(color: color ?? Colors.white, fontSize: bold ? 16 : 13, fontWeight: bold ? FontWeight.w800 : FontWeight.w600)),
+          Text(label,
+              style: TextStyle(
+                color: bold ? Colors.white : AppTheme.textSecondary,
+                fontSize: bold ? 15 : 13,
+                fontWeight: bold ? FontWeight.w700 : FontWeight.normal,
+              )),
+          Text(value,
+              style: TextStyle(
+                color: color ?? Colors.white,
+                fontSize: bold ? 16 : 13,
+                fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+              )),
         ],
       ),
+    );
+  }
+}
+
+// ── Widget : bouton d'impression avec état ───────────────────────────
+class _PrintButton extends StatelessWidget {
+  final String label;
+  final String sublabel;
+  final IconData icon;
+  final Color color;
+  final bool isLoading;
+  final bool alreadyPrinted;
+  final VoidCallback onPressed;
+
+  const _PrintButton({
+    required this.label,
+    required this.sublabel,
+    required this.icon,
+    required this.color,
+    required this.isLoading,
+    required this.alreadyPrinted,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: isLoading ? null : onPressed,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          decoration: BoxDecoration(
+            color: isLoading
+                ? AppTheme.surfaceLight
+                : color.withValues(alpha: alreadyPrinted ? 0.12 : 0.18),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isLoading
+                  ? AppTheme.textSecondary.withValues(alpha: 0.3)
+                  : color.withValues(alpha: alreadyPrinted ? 0.4 : 0.7),
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            children: [
+              // Icône ou spinner
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: isLoading ? AppTheme.surfaceLight : color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: isLoading
+                    ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5)))
+                    : Icon(alreadyPrinted ? Icons.check_circle : icon,
+                        color: alreadyPrinted ? AppTheme.success : color, size: 22),
+              ),
+              const SizedBox(width: 14),
+
+              // Labels
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isLoading ? 'Impression en cours...' : label,
+                      style: TextStyle(
+                        color: isLoading ? AppTheme.textSecondary : Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      alreadyPrinted ? 'Déjà imprimé — réimprimer ?' : sublabel,
+                      style: TextStyle(
+                        color: alreadyPrinted ? AppTheme.success : AppTheme.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Flèche
+              if (!isLoading)
+                Icon(Icons.arrow_forward_ios, color: color.withValues(alpha: 0.6), size: 14),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Widget : badge statut d'impression ───────────────────────────────
+class _PrintStatusBadge extends StatelessWidget {
+  final String label;
+  final bool printed;
+  final IconData icon;
+
+  const _PrintStatusBadge({
+    required this.label,
+    required this.printed,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Icon(
+          printed ? Icons.check_circle : Icons.radio_button_unchecked,
+          color: printed ? AppTheme.success : AppTheme.textSecondary,
+          size: 20,
+        ),
+        const SizedBox(height: 4),
+        Text(label,
+            style: TextStyle(
+              color: printed ? AppTheme.success : AppTheme.textSecondary,
+              fontSize: 10,
+              fontWeight: printed ? FontWeight.w700 : FontWeight.normal,
+            )),
+      ],
     );
   }
 }
