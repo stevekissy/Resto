@@ -87,7 +87,14 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       setState(() => _isLoading = false);
 
       if (success) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainScreen()));
+        // pushAndRemoveUntil : nettoie toute la pile de navigation
+        // Évite que "retour" revienne sur LoginScreen après connexion
+        // Évite les routes orphelines qui causent des 404 sur Netlify
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const MainScreen()),
+          (route) => false,
+        );
       } else {
         _showError(provider.errorMessage ?? 'Email ou mot de passe incorrect.');
       }

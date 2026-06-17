@@ -219,9 +219,15 @@ class _MainScreenState extends State<MainScreen> {
               child: const Icon(Icons.logout, color: AppTheme.error, size: 18),
             ),
             title: const Text('Déconnexion', style: TextStyle(color: AppTheme.error, fontSize: 14, fontWeight: FontWeight.w600)),
-            onTap: () {
-              provider.logout();
-              Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+            onTap: () async {
+              Navigator.pop(context); // ferme le drawer d'abord
+              await provider.logout();
+              if (!context.mounted) return;
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                (route) => false,
+              );
             },
           ),
           const SizedBox(height: 8),
@@ -290,10 +296,15 @@ class _MainScreenState extends State<MainScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () {
+                onPressed: () async {
                   Navigator.pop(context);
-                  provider.logout();
-                  Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+                  await provider.logout();
+                  if (!context.mounted) return;
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    (route) => false,
+                  );
                 },
                 icon: const Icon(Icons.logout),
                 label: const Text('Se déconnecter'),

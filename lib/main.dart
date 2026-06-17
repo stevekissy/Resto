@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:firebase_core/firebase_core.dart';
+// URL Strategy — active les URL propres (/dashboard au lieu de /#/dashboard)
+// Disponible nativement dans Flutter Web (flutter/services)
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'firebase_options.dart';
 import 'providers/app_provider.dart';
 import 'utils/app_theme.dart';
@@ -13,17 +17,25 @@ import 'screens/login_screen.dart';
 // ══════════════════════════════════════════════════════════════
 //  POINT D'ENTRÉE — ordre strict :
 //  1. WidgetsFlutterBinding
-//  2. Firebase.initializeApp()   ← OBLIGATOIRE avant tout accès Auth/Firestore
-//  3. Hive, Intl, orientation
-//  4. AppProvider(firebaseReady: ...)  ← créé ICI, jamais en variable globale
-//  5. checkExistingSession()
-//  6. runApp()
+//  2. usePathUrlStrategy()   ← URLs propres sans # pour Netlify
+//  3. Firebase.initializeApp()
+//  4. Hive, Intl, orientation
+//  5. AppProvider(firebaseReady: ...)
+//  6. checkExistingSession()
+//  7. runApp()
 // ══════════════════════════════════════════════════════════════
 void main() async {
   // ── 1. Binding Flutter ──
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ── 2. Firebase — AVANT tout accès à FirebaseAuth ou Firestore ──
+  // ── 2. URL Strategy — AVANT runApp(), après ensureInitialized() ──
+  // Supprime le '#' des URLs sur Flutter Web : /login au lieu de /#/login
+  // OBLIGATOIRE pour que Netlify _redirects fonctionne correctement
+  if (kIsWeb) {
+    usePathUrlStrategy();
+  }
+
+  // ── 3. Firebase — AVANT tout accès à FirebaseAuth ou Firestore ──
   bool firebaseOk = false;
   String? firebaseError;
   try {
@@ -35,10 +47,9 @@ void main() async {
   } catch (e) {
     firebaseError = e.toString();
     debugPrint('[main] ❌ Firebase ERREUR: $e');
-    // L'app continue sans Firebase — mode dégradé avec données demo
   }
 
-  // ── 3. Hive ──
+  // ── 4. Hive ──
   try {
     await Hive.initFlutter();
     debugPrint('[main] ✅ Hive initialisé');
@@ -46,14 +57,14 @@ void main() async {
     debugPrint('[main] ⚠ Hive: $e');
   }
 
-  // ── 4. Intl ──
+  // ── 5. Intl ──
   try {
     await initializeDateFormatting('fr_FR', null);
   } catch (e) {
     debugPrint('[main] ⚠ Intl: $e');
   }
 
-  // ── 5. Orientation ──
+  // ── 6. Orientation ──
   try {
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -67,23 +78,18 @@ void main() async {
     statusBarIconBrightness: Brightness.light,
   ));
 
-  // ── 6. Créer AppProvider ICI — APRÈS Firebase.initializeApp() ──
-  // JAMAIS en variable globale Dart (serait créé avant main(), avant Firebase)
+  // ── 7. Créer AppProvider ICI — APRÈS Firebase.initializeApp() ──
   final AppProvider provider;
-  String? providerError;
   try {
     provider = AppProvider(firebaseReady: firebaseOk);
     debugPrint('[main] ✅ AppProvider créé (firebaseReady=$firebaseOk)');
   } catch (e) {
-    // Ce bloc ne devrait jamais être atteint si AppProvider ne lance pas d'exception
-    // Mais par sécurité maximale, on crée un provider minimal
     debugPrint('[main] ❌ AppProvider ERREUR: $e');
-    providerError = 'AppProvider: $e';
     runApp(_ErrorApp(message: 'Erreur critique AppProvider:\n$e'));
     return;
   }
 
-  // ── 7. Reprise de session si Firebase est prêt ──
+  // ── 8. Reprise de session si Firebase est prêt ──
   if (firebaseOk) {
     try {
       await provider.checkExistingSession();
@@ -93,7 +99,7 @@ void main() async {
     }
   }
 
-  // ── 8. Lancer l'app ──
+  // ── 9. Lancer l'app ──
   runApp(SankadiokroApp(
     provider: provider,
     firebaseError: firebaseError,
@@ -115,15 +121,25 @@ class SankadiokroApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ChangeNotifierProvider.value : utilise l'instance déjà créée dans main()
-    // → AUCUN risque de throw dans create() car pas de create() ici
     return ChangeNotifierProvider.value(
       value: provider,
       child: MaterialApp(
         title: 'Sankadio Manager',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
-        home: LoginScreen(firebaseInitError: firebaseError),
+        // ── Routes nommées — résout les 404 après navigation ──
+        // Toutes les routes inconnues reviennent à LoginScreen
+        // Le _redirects Netlify renvoie toujours index.html
+        // Flutter prend ensuite le relais avec ces routes
+        initialRoute: '/',
+        routes: {
+          '/': (context) => LoginScreen(firebaseInitError: firebaseError),
+          '/login': (context) => LoginScreen(firebaseInitError: firebaseError),
+          '/home': (context) => const _HomeRedirect(),
+        },
+        onUnknownRoute: (settings) => MaterialPageRoute(
+          builder: (_) => LoginScreen(firebaseInitError: firebaseError),
+        ),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context)
               .copyWith(textScaler: const TextScaler.linear(1.0)),
@@ -134,8 +150,48 @@ class SankadiokroApp extends StatelessWidget {
   }
 }
 
+// ── Redirect helper : si l'utilisateur est déjà connecté, va à MainScreen ──
+class _HomeRedirect extends StatefulWidget {
+  const _HomeRedirect();
+
+  @override
+  State<_HomeRedirect> createState() => _HomeRedirectState();
+}
+
+class _HomeRedirectState extends State<_HomeRedirect> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _redirect();
+    });
+  }
+
+  void _redirect() {
+    final provider = context.read<AppProvider>();
+    if (provider.currentUser != null) {
+      // Utilisateur connecté → MainScreen
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        '/dashboard',
+        (_) => false,
+      );
+    } else {
+      // Non connecté → Login
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF0A0A1A),
+      body: Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
 // ══════════════════════════════════════════════════════════════
-//  APP D'ERREUR CRITIQUE (fallback si AppProvider lui-même plante)
+//  APP D'ERREUR CRITIQUE
 // ══════════════════════════════════════════════════════════════
 class _ErrorApp extends StatelessWidget {
   final String message;
