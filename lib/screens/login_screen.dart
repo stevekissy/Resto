@@ -108,13 +108,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     }
   }
 
-  // Accès rapide : pré-remplit email + mot de passe Firebase réel
-  void _quickLogin(String email, String password) {
-    _emailController.text    = email;
-    _passwordController.text = password;
-    _login();
-  }
-
   void _showError(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -214,84 +207,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                       ),
                     ),
 
-                    const SizedBox(height: 20),
-
-                    // ── Accès rapide ──
-                    GlassCard(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                      child: Column(
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(Icons.bolt, color: AppTheme.primary, size: 14),
-                              const SizedBox(width: 6),
-                              const Text('Accès rapide',
-                                  style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w700)),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            alignment: WrapAlignment.center,
-                            children: [
-                              _QuickBtn(label: 'Admin',   color: const Color(0xFF1565C0), onTap: () => _quickLogin('admin@sankadio.com',   'Admin@2025!')),
-                              _QuickBtn(label: 'Caisse',  color: const Color(0xFF2E7D32), onTap: () => _quickLogin('caisse@sankadio.com',   'Caisse@2025!')),
-                              _QuickBtn(label: 'Cuisine', color: const Color(0xFFE65100), onTap: () => _quickLogin('cuisine@sankadio.com',  'Cuisine@2025!')),
-                              _QuickBtn(label: 'Serveur', color: const Color(0xFF00838F), onTap: () => _quickLogin('serveur@sankadio.com',  'Serveur@2025!')),
-                              _QuickBtn(label: 'Manager', color: const Color(0xFF6A1B9A), onTap: () => _quickLogin('manager@sankadio.com',  'Manager@2025!')),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    // ── Info ──
-                    GlassCard(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(Icons.cloud_done_outlined, color: AppTheme.primary, size: 14),
-                          SizedBox(width: 8),
-                          Text('Connexion sécurisée Firebase',
-                              style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-
                     const SizedBox(height: 24),
-                    // ── Statut Firebase ──
-                    Consumer<AppProvider>(
-                      builder: (context, p, _) {
-                        final fbOk = p.firebaseReady;
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              fbOk ? Icons.cloud_done : Icons.cloud_off,
-                              size: 12,
-                              color: fbOk ? Colors.greenAccent : Colors.orange,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              fbOk
-                                  ? 'Firebase ✅ connecté'
-                                  : 'Firebase ⚠ non initialisé — mode local',
-                              style: TextStyle(
-                                color: fbOk ? Colors.greenAccent.withValues(alpha: 0.8) : Colors.orange,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 8),
                     const Text('Version 1.0.0 © 2025 SANKADIOKRO',
                         style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
                   ],
@@ -305,25 +221,4 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   }
 }
 
-class _QuickBtn extends StatelessWidget {
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-  const _QuickBtn({required this.label, required this.color, required this.onTap});
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withValues(alpha: 0.6), width: 1.2),
-        ),
-        child: Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)),
-      ),
-    );
-  }
-}
