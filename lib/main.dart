@@ -10,87 +10,170 @@ import 'providers/app_provider.dart';
 import 'utils/app_theme.dart';
 import 'screens/login_screen.dart';
 
-void main() {
-  runZonedGuarded(() async {
-    WidgetsFlutterBinding.ensureInitialized();
+// ══════════════════════════════════════════════════════════════
+//  POINT D'ENTRÉE — ordre strict :
+//  1. WidgetsFlutterBinding
+//  2. Firebase.initializeApp()   ← OBLIGATOIRE avant tout accès Auth/Firestore
+//  3. Hive, Intl, orientation
+//  4. AppProvider(firebaseReady: ...)  ← créé ICI, jamais en variable globale
+//  5. checkExistingSession()
+//  6. runApp()
+// ══════════════════════════════════════════════════════════════
+void main() async {
+  // ── 1. Binding Flutter ──
+  WidgetsFlutterBinding.ensureInitialized();
 
-    FlutterError.onError = (FlutterErrorDetails details) {
-      FlutterError.presentError(details);
-      debugPrint('[FlutterError] ${details.exception}');
-    };
+  // ── 2. Firebase — AVANT tout accès à FirebaseAuth ou Firestore ──
+  bool firebaseOk = false;
+  String? firebaseError;
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    firebaseOk = true;
+    debugPrint('[main] ✅ Firebase initialisé (projet: sankadiokro-manager)');
+  } catch (e) {
+    firebaseError = e.toString();
+    debugPrint('[main] ❌ Firebase ERREUR: $e');
+    // L'app continue sans Firebase — mode dégradé avec données demo
+  }
 
-    // ── Firebase ──
+  // ── 3. Hive ──
+  try {
+    await Hive.initFlutter();
+    debugPrint('[main] ✅ Hive initialisé');
+  } catch (e) {
+    debugPrint('[main] ⚠ Hive: $e');
+  }
+
+  // ── 4. Intl ──
+  try {
+    await initializeDateFormatting('fr_FR', null);
+  } catch (e) {
+    debugPrint('[main] ⚠ Intl: $e');
+  }
+
+  // ── 5. Orientation ──
+  try {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  } catch (_) {}
+
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+  ));
+
+  // ── 6. Créer AppProvider ICI — APRÈS Firebase.initializeApp() ──
+  // JAMAIS en variable globale Dart (serait créé avant main(), avant Firebase)
+  final AppProvider provider;
+  String? providerError;
+  try {
+    provider = AppProvider(firebaseReady: firebaseOk);
+    debugPrint('[main] ✅ AppProvider créé (firebaseReady=$firebaseOk)');
+  } catch (e) {
+    // Ce bloc ne devrait jamais être atteint si AppProvider ne lance pas d'exception
+    // Mais par sécurité maximale, on crée un provider minimal
+    debugPrint('[main] ❌ AppProvider ERREUR: $e');
+    providerError = 'AppProvider: $e';
+    runApp(_ErrorApp(message: 'Erreur critique AppProvider:\n$e'));
+    return;
+  }
+
+  // ── 7. Reprise de session si Firebase est prêt ──
+  if (firebaseOk) {
     try {
-      await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform);
-      debugPrint('[Firebase] Initialisé ✅');
-      // Reprise de session APRÈS init Firebase — safe
-      await _appProvider.checkExistingSession();
+      await provider.checkExistingSession();
+      debugPrint('[main] ✅ Session vérifiée');
     } catch (e) {
-      debugPrint('[Firebase] Erreur init: $e');
+      debugPrint('[main] ⚠ checkExistingSession: $e');
     }
+  }
 
-    // ── Hive ──
-    try {
-      await Hive.initFlutter();
-    } catch (e) {
-      debugPrint('[Hive] $e');
-    }
-
-    // ── Intl ──
-    try {
-      await initializeDateFormatting('fr_FR', null);
-    } catch (e) {
-      debugPrint('[Intl] $e');
-    }
-
-    // ── Orientation ──
-    try {
-      await SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
-    } catch (e) {
-      debugPrint('[Orientation] $e');
-    }
-
-    // ── Status bar ──
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Color(0xFF0A0A0A),
-      systemNavigationBarIconBrightness: Brightness.light,
-    ));
-
-    runApp(const SankadiokroApp());
-  }, (error, stack) {
-    debugPrint('[ZoneError] $error');
-  });
+  // ── 8. Lancer l'app ──
+  runApp(SankadiokroApp(
+    provider: provider,
+    firebaseError: firebaseError,
+  ));
 }
 
-// Provider instancié une seule fois, en dehors du widget tree
-final _appProvider = AppProvider();
-
+// ══════════════════════════════════════════════════════════════
+//  APPLICATION PRINCIPALE
+// ══════════════════════════════════════════════════════════════
 class SankadiokroApp extends StatelessWidget {
-  const SankadiokroApp({super.key});
+  final AppProvider provider;
+  final String? firebaseError;
+
+  const SankadiokroApp({
+    super.key,
+    required this.provider,
+    this.firebaseError,
+  });
 
   @override
   Widget build(BuildContext context) {
+    // ChangeNotifierProvider.value : utilise l'instance déjà créée dans main()
+    // → AUCUN risque de throw dans create() car pas de create() ici
     return ChangeNotifierProvider.value(
-      value: _appProvider,
+      value: provider,
       child: MaterialApp(
         title: 'Sankadio Manager',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
-        home: const LoginScreen(),
-        builder: (context, child) {
-          return MediaQuery(
-            data: MediaQuery.of(context)
-                .copyWith(textScaler: const TextScaler.linear(1.0)),
-            child: child!,
-          );
-        },
+        home: LoginScreen(firebaseInitError: firebaseError),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: const TextScaler.linear(1.0)),
+          child: child!,
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  APP D'ERREUR CRITIQUE (fallback si AppProvider lui-même plante)
+// ══════════════════════════════════════════════════════════════
+class _ErrorApp extends StatelessWidget {
+  final String message;
+  const _ErrorApp({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: const Color(0xFF0A0A1A),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 64),
+                const SizedBox(height: 16),
+                const Text(
+                  'Erreur de démarrage',
+                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  style: const TextStyle(color: Colors.red, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Relancez l\'application.',
+                  style: TextStyle(color: Colors.white54, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

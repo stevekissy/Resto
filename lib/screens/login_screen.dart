@@ -6,7 +6,11 @@ import '../widgets/common_widgets.dart';
 import 'main_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  /// Message d'erreur Firebase passé depuis main() si initializeApp() a échoué.
+  /// Affiché dans l'UI pour aider au diagnostic.
+  final String? firebaseInitError;
+
+  const LoginScreen({super.key, this.firebaseInitError});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -30,6 +34,31 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     _slideAnim = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
         CurvedAnimation(parent: _animController, curve: Curves.easeOut));
     _animController.forward();
+
+    // Afficher l'erreur Firebase si présente
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.firebaseInitError != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.cloud_off, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '⚠ Firebase non connecté : ${widget.firebaseInitError!.length > 80 ? widget.firebaseInitError!.substring(0, 80) + "..." : widget.firebaseInitError}',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.orange[800],
+            duration: const Duration(seconds: 6),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    });
   }
 
   @override
@@ -228,6 +257,34 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                     ),
 
                     const SizedBox(height: 24),
+                    // ── Statut Firebase ──
+                    Consumer<AppProvider>(
+                      builder: (context, p, _) {
+                        final fbOk = p.firebaseReady;
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              fbOk ? Icons.cloud_done : Icons.cloud_off,
+                              size: 12,
+                              color: fbOk ? Colors.greenAccent : Colors.orange,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              fbOk
+                                  ? 'Firebase ✅ connecté'
+                                  : 'Firebase ⚠ non initialisé — mode local',
+                              style: TextStyle(
+                                color: fbOk ? Colors.greenAccent.withValues(alpha: 0.8) : Colors.orange,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 8),
                     const Text('Version 1.0.0 © 2025 SANKADIOKRO',
                         style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
                   ],

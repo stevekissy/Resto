@@ -7,8 +7,12 @@ import '../services/firebase_service.dart';
 
 class AppProvider extends ChangeNotifier {
   final _uuid = const Uuid();
-  // Late init : créé seulement quand loginWithFirebase() est appelé,
-  // APRÈS Firebase.initializeApp() dans main().
+
+  /// true si Firebase.initializeApp() a réussi dans main()
+  /// Accessible depuis l'UI pour afficher un badge de statut
+  final bool firebaseReady;
+
+  // FirebaseService créé seulement si Firebase est initialisé
   FirebaseService? _firebaseInstance;
   FirebaseService get _firebase {
     _firebaseInstance ??= FirebaseService();
@@ -158,14 +162,15 @@ class AppProvider extends ChangeNotifier {
 
   Timer? _alertTimer;
 
-  AppProvider() {
+  AppProvider({this.firebaseReady = false}) {
     try { _initDemoData(); } catch (e) { debugPrint('[AppProvider] initDemoData: $e'); }
     try { _startAlertTimer(); } catch (e) { debugPrint('[AppProvider] alertTimer: $e'); }
-    // PAS de _checkExistingSession() ici — trop tôt, Firebase peut ne pas être prêt
+    // Aucun accès Firebase dans le constructeur
   }
 
   /// Appelé par main() APRÈS Firebase.initializeApp() — reprise de session sécurisée
   Future<void> checkExistingSession() async {
+    if (!firebaseReady) return;
     try {
       final fbUser = _firebase.currentFirebaseUser;
       if (fbUser == null) return;
@@ -316,6 +321,11 @@ class AppProvider extends ChangeNotifier {
 
   // =================== LOGIN Firebase ===================
   Future<bool> loginWithFirebase(String email, String password) async {
+    if (!firebaseReady) {
+      _errorMessage = 'Firebase non initialisé. Relancez l\'application.';
+      notifyListeners();
+      return false;
+    }
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
@@ -397,46 +407,86 @@ class AppProvider extends ChangeNotifier {
 
   // =================== STREAMS FIRESTORE ===================
   void _startFirebaseStreams() {
+    // GARDE : ne jamais ouvrir de stream Firestore si Firebase non prêt ou user non connecté
+    if (!firebaseReady) {
+      debugPrint('[AppProvider] _startFirebaseStreams ignoré — Firebase non prêt');
+      return;
+    }
+    final fbUser = _firebase.currentFirebaseUser;
+    if (fbUser == null) {
+      debugPrint('[AppProvider] _startFirebaseStreams ignoré — currentUser == null');
+      return;
+    }
+    debugPrint('[AppProvider] Démarrage streams Firestore pour ${fbUser.email}');
+
     _stopFirebaseStreams(); // Annuler les anciens streams si existants
 
     _subUsers = _firebase.streamUsers().listen(
-      (list) { _users = list; notifyListeners(); },
-      onError: (e) { debugPrint('[stream.users] $e'); },
+      (list) {
+        // Garder les données démo si Firestore renvoie une liste vide
+        if (list.isNotEmpty) _users = list;
+        notifyListeners();
+      },
+      onError: (e) { debugPrint('[stream.users] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subProducts = _firebase.streamProducts().listen(
-      (list) { _products = list; notifyListeners(); },
-      onError: (e) { debugPrint('[stream.products] $e'); },
+      (list) {
+        if (list.isNotEmpty) _products = list;
+        notifyListeners();
+      },
+      onError: (e) { debugPrint('[stream.products] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subOrders = _firebase.streamOrders().listen(
-      (list) { _orders = List<Order>.from(list); notifyListeners(); },
-      onError: (e) { debugPrint('[stream.orders] $e'); },
+      (list) {
+        // Les commandes peuvent être vides (nouveau restaurant) — on accepte []
+        _orders = List<Order>.from(list);
+        notifyListeners();
+      },
+      onError: (e) { debugPrint('[stream.orders] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subStock = _firebase.streamStock().listen(
-      (list) { _stockItems = list; notifyListeners(); },
-      onError: (e) { debugPrint('[stream.stock] $e'); },
+      (list) {
+        if (list.isNotEmpty) _stockItems = list;
+        notifyListeners();
+      },
+      onError: (e) { debugPrint('[stream.stock] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subMessages = _firebase.streamMessages().listen(
-      (list) { _messages = list; notifyListeners(); },
-      onError: (e) { debugPrint('[stream.messages] $e'); },
+      (list) {
+        // Messages peuvent être vides — on accepte []
+        _messages = list;
+        notifyListeners();
+      },
+      onError: (e) { debugPrint('[stream.messages] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subSuppliers = _firebase.streamSuppliers().listen(
-      (list) { _suppliers = list; notifyListeners(); },
-      onError: (e) { debugPrint('[stream.suppliers] $e'); },
+      (list) {
+        if (list.isNotEmpty) _suppliers = list;
+        notifyListeners();
+      },
+      onError: (e) { debugPrint('[stream.suppliers] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subSupplierOrders = _firebase.streamSupplierOrders().listen(
-      (list) { _supplierOrders = list; notifyListeners(); },
-      onError: (e) { debugPrint('[stream.supplierOrders] $e'); },
+      (list) {
+        if (list.isNotEmpty) _supplierOrders = list;
+        notifyListeners();
+      },
+      onError: (e) { debugPrint('[stream.supplierOrders] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subAttendances = _firebase.streamAttendances().listen(
-      (list) { _attendances = list; notifyListeners(); },
-      onError: (e) { debugPrint('[stream.attendances] $e'); },
+      (list) {
+        // Attendances peuvent être vides — on accepte []
+        _attendances = list;
+        notifyListeners();
+      },
+      onError: (e) { debugPrint('[stream.attendances] ERREUR: $e'); },
       cancelOnError: false,
     );
   }
