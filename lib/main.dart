@@ -35,7 +35,8 @@ void main() async {
     usePathUrlStrategy();
   }
 
-  // ── 3. Firebase — AVANT tout accès à FirebaseAuth ou Firestore ──
+  // ── 3. Firebase — OBLIGATOIRE : sans Firebase l'app ne peut pas fonctionner ──
+  // Si Firebase échoue, on affiche l'erreur exacte (plus de silence) pour diagnostic
   bool firebaseOk = false;
   String? firebaseError;
   try {
@@ -44,9 +45,28 @@ void main() async {
     );
     firebaseOk = true;
     debugPrint('[main] ✅ Firebase initialisé (projet: sankadiokro-manager)');
-  } catch (e) {
+    debugPrint('[main]    platform: ${kIsWeb ? "WEB" : "ANDROID/iOS"}');
+    debugPrint('[main]    authDomain: sankadiokro-manager.firebaseapp.com');
+    debugPrint('[main]    projectId: sankadiokro-manager');
+  } catch (e, stack) {
     firebaseError = e.toString();
-    debugPrint('[main] ❌ Firebase ERREUR: $e');
+    // ⚠️ ERREUR FIREBASE — affichée clairement pour diagnostic
+    debugPrint('═══════════════════════════════════════════════');
+    debugPrint('[main] ❌ Firebase INIT FAILED');
+    debugPrint('[main]    platform : ${kIsWeb ? "WEB" : "ANDROID/iOS"}');
+    debugPrint('[main]    error    : $e');
+    debugPrint('[main]    stack    : $stack');
+    debugPrint('═══════════════════════════════════════════════');
+    // Afficher l'écran d'erreur immédiatement — pas de mode dégradé silencieux
+    runApp(_ErrorApp(
+      message: 'Firebase init failed\n\n'
+          'Platform: ${kIsWeb ? "Web" : "Android/iOS"}\n\n'
+          'Erreur: $e\n\n'
+          'Si vous voyez "duplicate-app" : rechargez la page.\n'
+          'Si vous voyez "network" : vérifiez la connexion.\n'
+          'Si vous voyez "invalid-api-key" : vérifiez firebase_options.dart.',
+    ));
+    return;
   }
 
   // ── 4. Hive ──
