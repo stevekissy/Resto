@@ -1,6 +1,5 @@
-// firebase_options.dart — généré pour le projet sankadiokro-manager
-// À compléter avec les vraies clés Web depuis Firebase Console
-// (en attendant google-services.json)
+// firebase_options.dart — généré pour sankadiokro-manager
+// Package Android : com.sankadiokro.manager
 
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
@@ -8,9 +7,7 @@ import 'package:flutter/foundation.dart'
 
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
-    if (kIsWeb) {
-      return web;
-    }
+    if (kIsWeb) return web;
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return android;
@@ -21,32 +18,32 @@ class DefaultFirebaseOptions {
     }
   }
 
-  // ── Config Web ── (à remplacer avec les vraies clés depuis Firebase Console)
+  // ── Web (même clé API Android en attendant app Web Firebase) ──
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'REPLACE_WITH_WEB_API_KEY',
-    appId: 'REPLACE_WITH_WEB_APP_ID',
-    messagingSenderId: 'REPLACE_WITH_SENDER_ID',
+    apiKey: 'AIzaSyBn6uvarIeS37QdtW8ERBHoHBaehIjcU6U',
+    appId: '1:54702810896:android:5072a1135ac7c67c7e6795',
+    messagingSenderId: '54702810896',
     projectId: 'sankadiokro-manager',
     authDomain: 'sankadiokro-manager.firebaseapp.com',
     storageBucket: 'sankadiokro-manager.firebasestorage.app',
   );
 
-  // ── Config Android ── (à remplacer avec google-services.json)
+  // ── Android ──
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'REPLACE_WITH_ANDROID_API_KEY',
-    appId: 'REPLACE_WITH_ANDROID_APP_ID',
-    messagingSenderId: 'REPLACE_WITH_SENDER_ID',
+    apiKey: 'AIzaSyBn6uvarIeS37QdtW8ERBHoHBaehIjcU6U',
+    appId: '1:54702810896:android:5072a1135ac7c67c7e6795',
+    messagingSenderId: '54702810896',
     projectId: 'sankadiokro-manager',
     storageBucket: 'sankadiokro-manager.firebasestorage.app',
   );
 
-  // ── Config iOS ──
+  // ── iOS (optionnel) ──
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'REPLACE_WITH_IOS_API_KEY',
-    appId: 'REPLACE_WITH_IOS_APP_ID',
-    messagingSenderId: 'REPLACE_WITH_SENDER_ID',
+    apiKey: 'AIzaSyBn6uvarIeS37QdtW8ERBHoHBaehIjcU6U',
+    appId: '1:54702810896:android:5072a1135ac7c67c7e6795',
+    messagingSenderId: '54702810896',
     projectId: 'sankadiokro-manager',
     storageBucket: 'sankadiokro-manager.firebasestorage.app',
-    iosBundleId: 'com.sankadiomanager.manage',
+    iosBundleId: 'com.sankadiokro.manager',
   );
 }

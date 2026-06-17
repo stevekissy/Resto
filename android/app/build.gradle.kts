@@ -7,6 +7,8 @@ plugins {
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // ✅ Google Services plugin pour Firebase
+    id("com.google.gms.google-services")
 }
 
 // ✅ Lecture du fichier key.properties pour la signature release
@@ -17,7 +19,7 @@ if (keyPropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.sankadiomanager.manage"
+    namespace = "com.sankadiokro.manager"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -43,7 +45,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.sankadiomanager.manage"
+        applicationId = "com.sankadiokro.manager"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
