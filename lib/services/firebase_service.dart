@@ -4,11 +4,25 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import '../models/models.dart';
 
+// ── Helper : convertit un champ Firestore (Timestamp ou int) en DateTime ──
+DateTime _toDateTime(dynamic val, {DateTime? fallback}) {
+  if (val == null) return fallback ?? DateTime.now();
+  if (val is Timestamp) return val.toDate();
+  if (val is int)       return DateTime.fromMillisecondsSinceEpoch(val);
+  return fallback ?? DateTime.now();
+}
+
+DateTime? _toDateTimeNullable(dynamic val) {
+  if (val == null) return null;
+  if (val is Timestamp) return val.toDate();
+  if (val is int)       return DateTime.fromMillisecondsSinceEpoch(val);
+  return null;
+}
+
 class FirebaseService {
-  // Lazy getters : accédés uniquement au moment du premier appel,
-  // APRÈS que Firebase.initializeApp() soit terminé dans main().
-  FirebaseAuth get _auth => FirebaseAuth.instance;
-  FirebaseFirestore get _db => FirebaseFirestore.instance;
+  // Lazy getters — accédés APRÈS Firebase.initializeApp() dans main()
+  FirebaseAuth      get _auth => FirebaseAuth.instance;
+  FirebaseFirestore get _db   => FirebaseFirestore.instance;
 
   // =================== AUTH ===================
 
@@ -19,19 +33,41 @@ class FirebaseService {
     );
   }
 
-  Future<void> signOut() async {
-    await _auth.signOut();
-  }
+  Future<void> signOut() async => await _auth.signOut();
 
   User? get currentFirebaseUser => _auth.currentUser;
 
   // =================== USERS ===================
 
+  /// Crée le document user s'il n'existe pas encore.
+  Future<AppUser> ensureUserDoc(String uid, String email, UserRole role, String displayName) async {
+    try {
+      final doc = await _db.collection('users').doc(uid).get();
+      if (doc.exists && doc.data() != null) {
+        return _userFromDoc(doc.data()!, uid);
+      }
+      // Créer automatiquement
+      final newUser = AppUser(
+        id: uid, name: displayName, email: email,
+        phone: '', role: role, isActive: true,
+      );
+      await _db.collection('users').doc(uid).set({
+        ...newUser.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      debugPrint('[FirebaseService] User doc créé pour $email');
+      return newUser;
+    } catch (e) {
+      debugPrint('[FirebaseService] ensureUserDoc error: $e');
+      return AppUser(id: uid, name: displayName, email: email, phone: '', role: role);
+    }
+  }
+
   Future<AppUser?> getUserByUid(String uid) async {
     try {
       final doc = await _db.collection('users').doc(uid).get();
       if (doc.exists && doc.data() != null) {
-        return AppUser.fromMap({...doc.data()!, 'id': doc.id});
+        return _userFromDoc(doc.data()!, uid);
       }
       return null;
     } catch (e) {
@@ -40,32 +76,35 @@ class FirebaseService {
     }
   }
 
-  Future<AppUser?> getUserByEmail(String email) async {
-    try {
-      final q = await _db
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .limit(1)
-          .get();
-      if (q.docs.isNotEmpty) {
-        final doc = q.docs.first;
-        return AppUser.fromMap({...doc.data(), 'id': doc.id});
-      }
-      return null;
-    } catch (e) {
-      debugPrint('[FirebaseService] getUserByEmail error: $e');
-      return null;
-    }
-  }
+  AppUser _userFromDoc(Map<String, dynamic> d, String id) => AppUser(
+    id: id,
+    name: d['name'] as String? ?? 'Utilisateur',
+    email: d['email'] as String? ?? '',
+    phone: d['phone'] as String? ?? '',
+    role: UserRole.values[(d['role'] as int?) ?? 0],
+    avatarUrl: d['avatarUrl'] as String?,
+    isActive: d['isActive'] as bool? ?? true,
+    isOnline: d['isOnline'] as bool? ?? false,
+    createdAt: _toDateTime(d['createdAt']),
+  );
 
+  // Stream sans orderBy — tri en mémoire (aucun index requis)
   Stream<List<AppUser>> streamUsers() {
-    return _db.collection('users').snapshots().map((snap) => snap.docs
-        .map((d) => AppUser.fromMap({...d.data(), 'id': d.id}))
-        .toList());
+    return _db.collection('users').snapshots().map((snap) {
+      final list = snap.docs.map((d) {
+        try { return _userFromDoc(d.data(), d.id); }
+        catch (e) { debugPrint('[stream.users] doc ${d.id}: $e'); return null; }
+      }).whereType<AppUser>().toList();
+      list.sort((a, b) => a.name.compareTo(b.name));
+      return list;
+    });
   }
 
   Future<void> saveUser(AppUser user) async {
-    await _db.collection('users').doc(user.id).set(user.toMap());
+    await _db.collection('users').doc(user.id).set({
+      ...user.toMap(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   Future<void> updateUser(AppUser user) async {
@@ -77,17 +116,38 @@ class FirebaseService {
   }
 
   Future<void> setUserOnline(String uid, bool online) async {
-    try {
-      await _db.collection('users').doc(uid).update({'isOnline': online});
-    } catch (_) {}
+    try { await _db.collection('users').doc(uid).update({'isOnline': online}); }
+    catch (_) {}
   }
 
   // =================== PRODUCTS ===================
 
   Stream<List<Product>> streamProducts() {
-    return _db.collection('products').snapshots().map((snap) => snap.docs
-        .map((d) => Product.fromMap({...d.data(), 'id': d.id}))
-        .toList());
+    return _db.collection('products').snapshots().map((snap) {
+      final list = snap.docs.map((d) {
+        try {
+          final data = d.data();
+          return Product(
+            id: d.id,
+            name: data['name'] as String? ?? '',
+            category: data['category'] as String? ?? 'Plats',
+            price: (data['price'] as num?)?.toDouble() ?? 0,
+            prepTime: (data['prepTime'] as num?)?.toDouble() ?? 0,
+            description: data['description'] as String?,
+            imageUrl: data['imageUrl'] as String?,
+            isAvailable: data['isAvailable'] as bool? ?? true,
+            stockQuantity: (data['stockQuantity'] as num?)?.toInt() ?? 0,
+            minStockAlert: (data['minStockAlert'] as num?)?.toInt() ?? 10,
+            ingredients: Map<String, double>.from(data['ingredients'] ?? {}),
+          );
+        } catch (e) {
+          debugPrint('[stream.products] doc ${d.id}: $e');
+          return null;
+        }
+      }).whereType<Product>().toList();
+      list.sort((a, b) => a.name.compareTo(b.name));
+      return list;
+    });
   }
 
   Future<void> saveProduct(Product product) async {
@@ -103,19 +163,65 @@ class FirebaseService {
   }
 
   // =================== ORDERS ===================
+  // PAS de .orderBy() → aucun index composite requis → tri en mémoire
 
   Stream<List<Order>> streamOrders() {
-    return _db
-        .collection('orders')
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => Order.fromMap({...d.data(), 'id': d.id}))
-            .toList());
+    return _db.collection('orders').snapshots().map((snap) {
+      final list = snap.docs.map((d) {
+        try {
+          final data = d.data();
+          return Order(
+            id: d.id,
+            orderNumber: (data['orderNumber'] as num?)?.toInt() ?? 0,
+            tableNumber: data['tableNumber'] as String? ?? '',
+            serverName: data['serverName'] as String?,
+            items: _parseOrderItems(data['items']),
+            status: OrderStatus.values[(data['status'] as int?) ?? 0],
+            specialInstructions: data['specialInstructions'] as String?,
+            isUrgent: data['isUrgent'] as bool? ?? false,
+            createdAt: _toDateTime(data['createdAt']),
+            startedAt: _toDateTimeNullable(data['startedAt']),
+            readyAt: _toDateTimeNullable(data['readyAt']),
+            servedAt: _toDateTimeNullable(data['servedAt']),
+            discount: (data['discount'] as num?)?.toDouble() ?? 0,
+            isPaid: data['isPaid'] as bool? ?? false,
+            paymentMethod: data['paymentMethod'] as String?,
+          );
+        } catch (e) {
+          debugPrint('[stream.orders] doc ${d.id}: $e');
+          return null;
+        }
+      }).whereType<Order>().toList();
+      // Tri en mémoire : plus récent en premier
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
+  }
+
+  List<OrderItem> _parseOrderItems(dynamic raw) {
+    if (raw == null) return [];
+    try {
+      return (raw as List).map((i) {
+        final m = i as Map<String, dynamic>;
+        return OrderItem(
+          productId: m['productId'] as String? ?? '',
+          productName: m['productName'] as String? ?? '',
+          quantity: (m['quantity'] as num?)?.toInt() ?? 1,
+          unitPrice: (m['unitPrice'] as num?)?.toDouble() ?? 0,
+          specialComment: m['specialComment'] as String?,
+        );
+      }).toList();
+    } catch (e) {
+      debugPrint('[parseOrderItems] $e');
+      return [];
+    }
   }
 
   Future<void> saveOrder(Order order) async {
-    await _db.collection('orders').doc(order.id).set(order.toMap());
+    await _db.collection('orders').doc(order.id).set({
+      ...order.toMap(),
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> updateOrder(Order order) async {
@@ -137,9 +243,29 @@ class FirebaseService {
   // =================== STOCK ===================
 
   Stream<List<StockItem>> streamStock() {
-    return _db.collection('stock').snapshots().map((snap) => snap.docs
-        .map((d) => StockItem.fromMap({...d.data(), 'id': d.id}))
-        .toList());
+    return _db.collection('stock').snapshots().map((snap) {
+      final list = snap.docs.map((d) {
+        try {
+          final data = d.data();
+          return StockItem(
+            id: d.id,
+            name: data['name'] as String? ?? '',
+            unit: data['unit'] as String? ?? 'unité',
+            currentQuantity: (data['currentQuantity'] as num?)?.toDouble() ?? 0,
+            minQuantity: (data['minQuantity'] as num?)?.toDouble() ?? 0,
+            maxQuantity: (data['maxQuantity'] as num?)?.toDouble() ?? 100,
+            unitCost: (data['unitCost'] as num?)?.toDouble() ?? 0,
+            category: data['category'] as String? ?? 'Divers',
+            expiryDate: _toDateTimeNullable(data['expiryDate']),
+          );
+        } catch (e) {
+          debugPrint('[stream.stock] doc ${d.id}: $e');
+          return null;
+        }
+      }).whereType<StockItem>().toList();
+      list.sort((a, b) => a.name.compareTo(b.name));
+      return list;
+    });
   }
 
   Future<void> saveStockItem(StockItem item) async {
@@ -155,19 +281,38 @@ class FirebaseService {
   }
 
   // =================== MESSAGES ===================
+  // PAS de .orderBy() → tri en mémoire
 
   Stream<List<ChatMessage>> streamMessages() {
-    return _db
-        .collection('messages')
-        .orderBy('sentAt', descending: false)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => ChatMessage.fromMap({...d.data(), 'id': d.id}))
-            .toList());
+    return _db.collection('messages').snapshots().map((snap) {
+      final list = snap.docs.map((d) {
+        try {
+          final data = d.data();
+          return ChatMessage(
+            id: d.id,
+            senderId: data['senderId'] as String? ?? '',
+            senderName: data['senderName'] as String? ?? '',
+            content: data['content'] as String? ?? '',
+            type: MessageType.values[(data['type'] as int?) ?? 0],
+            sentAt: _toDateTime(data['sentAt']),
+            receiverId: data['receiverId'] as String?,
+            isRead: data['isRead'] as bool? ?? false,
+          );
+        } catch (e) {
+          debugPrint('[stream.messages] doc ${d.id}: $e');
+          return null;
+        }
+      }).whereType<ChatMessage>().toList();
+      list.sort((a, b) => a.sentAt.compareTo(b.sentAt));
+      return list;
+    });
   }
 
   Future<void> sendMessage(ChatMessage message) async {
-    await _db.collection('messages').doc(message.id).set(message.toMap());
+    await _db.collection('messages').doc(message.id).set({
+      ...message.toMap(),
+      'sentAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> deleteMessage(String messageId) async {
@@ -177,9 +322,26 @@ class FirebaseService {
   // =================== SUPPLIERS ===================
 
   Stream<List<Supplier>> streamSuppliers() {
-    return _db.collection('suppliers').snapshots().map((snap) => snap.docs
-        .map((d) => Supplier.fromMap({...d.data(), 'id': d.id}))
-        .toList());
+    return _db.collection('suppliers').snapshots().map((snap) {
+      final list = snap.docs.map((d) {
+        try {
+          final data = d.data();
+          return Supplier(
+            id: d.id,
+            name: data['name'] as String? ?? '',
+            contact: data['contact'] as String? ?? '',
+            phone: data['phone'] as String? ?? '',
+            email: data['email'] as String?,
+            address: data['address'] as String?,
+          );
+        } catch (e) {
+          debugPrint('[stream.suppliers] doc ${d.id}: $e');
+          return null;
+        }
+      }).whereType<Supplier>().toList();
+      list.sort((a, b) => a.name.compareTo(b.name));
+      return list;
+    });
   }
 
   Future<void> saveSupplier(Supplier supplier) async {
@@ -195,15 +357,34 @@ class FirebaseService {
   }
 
   // =================== SUPPLIER ORDERS ===================
+  // PAS de .orderBy() → tri en mémoire
 
   Stream<List<SupplierOrder>> streamSupplierOrders() {
-    return _db
-        .collection('supplierOrders')
-        .orderBy('orderDate', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => SupplierOrder.fromMap({...d.data(), 'id': d.id}))
-            .toList());
+    return _db.collection('supplierOrders').snapshots().map((snap) {
+      final list = snap.docs.map((d) {
+        try {
+          final data = d.data();
+          return SupplierOrder(
+            id: d.id,
+            supplierId: data['supplierId'] as String? ?? '',
+            supplierName: data['supplierName'] as String? ?? '',
+            items: List<Map<String, dynamic>>.from(data['items'] ?? []),
+            totalAmount: (data['totalAmount'] as num?)?.toDouble() ?? 0,
+            paidAmount: (data['paidAmount'] as num?)?.toDouble() ?? 0,
+            paymentStatus: SupplierPaymentStatus.values[(data['paymentStatus'] as int?) ?? 0],
+            paymentMethod: data['paymentMethod'] as String? ?? '',
+            orderDate: _toDateTime(data['orderDate']),
+            expectedDelivery: _toDateTimeNullable(data['expectedDelivery']),
+            notes: data['notes'] as String?,
+          );
+        } catch (e) {
+          debugPrint('[stream.supplierOrders] doc ${d.id}: $e');
+          return null;
+        }
+      }).whereType<SupplierOrder>().toList();
+      list.sort((a, b) => b.orderDate.compareTo(a.orderDate));
+      return list;
+    });
   }
 
   Future<void> saveSupplierOrder(SupplierOrder order) async {
@@ -217,15 +398,31 @@ class FirebaseService {
   // =================== ATTENDANCES ===================
 
   Stream<List<Attendance>> streamAttendances() {
-    return _db.collection('attendances').snapshots().map((snap) => snap.docs
-        .map((d) => Attendance.fromMap({...d.data(), 'id': d.id}))
-        .toList());
+    return _db.collection('attendances').snapshots().map((snap) {
+      final list = snap.docs.map((d) {
+        try {
+          final data = d.data();
+          return Attendance(
+            id: d.id,
+            userId: data['userId'] as String? ?? '',
+            userName: data['userName'] as String? ?? '',
+            date: _toDateTime(data['date']),
+            morningPresent: data['morningPresent'] as bool? ?? false,
+            morningTime: _toDateTimeNullable(data['morningTime']),
+            eveningPresent: data['eveningPresent'] as bool? ?? false,
+            eveningTime: _toDateTimeNullable(data['eveningTime']),
+          );
+        } catch (e) {
+          debugPrint('[stream.attendances] doc ${d.id}: $e');
+          return null;
+        }
+      }).whereType<Attendance>().toList();
+      list.sort((a, b) => b.date.compareTo(a.date));
+      return list;
+    });
   }
 
   Future<void> saveAttendance(Attendance attendance) async {
-    await _db
-        .collection('attendances')
-        .doc(attendance.id)
-        .set(attendance.toMap());
+    await _db.collection('attendances').doc(attendance.id).set(attendance.toMap());
   }
 }

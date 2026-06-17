@@ -169,6 +169,35 @@ class AppProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('[AppProvider] Erreur _startAlertTimer: $e');
     }
+    // Vérifier si Firebase Auth a déjà un user connecté (reprise de session)
+    _checkExistingSession();
+  }
+
+  /// Vérifie si un user Firebase est déjà connecté au démarrage
+  void _checkExistingSession() {
+    try {
+      // Accès lazy et protégé — ne crash pas si Firebase non init
+      Future.microtask(() async {
+        try {
+          final fbUser = _firebase.currentFirebaseUser;
+          if (fbUser != null) {
+            debugPrint('[AppProvider] Session existante: ${fbUser.email}');
+            final role = _roleFromEmail(fbUser.email ?? '');
+            final displayName = _displayNameFromEmail(fbUser.email ?? '');
+            _currentUser = AppUser(
+              id: fbUser.uid, name: displayName,
+              email: fbUser.email ?? '', phone: '', role: role,
+            );
+            _startFirebaseStreams();
+            notifyListeners();
+          }
+        } catch (e) {
+          debugPrint('[AppProvider] _checkExistingSession: $e');
+        }
+      });
+    } catch (e) {
+      debugPrint('[AppProvider] _checkExistingSession outer: $e');
+    }
   }
 
   void _startAlertTimer() {
@@ -196,8 +225,7 @@ class AppProvider extends ChangeNotifier {
       AppUser(id: 'u5', name: 'Ibrahim Manager', email: 'ibrahim@sankadio.com', phone: '+225 05 55 66 77', role: UserRole.manager),
     ];
 
-    _currentUser = _users[0];
-
+    // _currentUser reste null — sera défini après loginWithFirebase()
     // Products
     _products = [
       Product(id: 'p1', name: 'Poisson Braisé', category: 'Plats', price: 3500, prepTime: 25, stockQuantity: 20),
@@ -313,51 +341,55 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // 1. Authentification Firebase
       final credential = await _firebase.signIn(email, password);
-      final uid  = credential?.user?.uid ?? _uuid.v4();
-      final mail = credential?.user?.email ?? email;
+      if (credential?.user == null) throw Exception('Aucun utilisateur retourné par Firebase');
 
-      // Profil local immédiat
-      UserRole role = UserRole.server;
-      final low = mail.toLowerCase();
-      if (low.contains('admin'))                                      role = UserRole.admin;
-      else if (low.contains('manager'))                              role = UserRole.manager;
-      else if (low.contains('caiss') || low.contains('cashier'))    role = UserRole.cashier;
-      else if (low.contains('cuisine') || low.contains('kitchen'))  role = UserRole.kitchen;
+      final uid  = credential!.user!.uid;
+      final mail = credential.user!.email ?? email;
 
-      final namePart = mail.split('@').first;
-      final displayName = namePart.isNotEmpty
-          ? namePart[0].toUpperCase() + namePart.substring(1).replaceAll(RegExp(r'[._0-9]+'), ' ').trim()
-          : 'Utilisateur';
-
+      // 2. Rôle déduit de l'email (profil immédiat sans attendre Firestore)
+      final role = _roleFromEmail(mail);
+      final displayName = _displayNameFromEmail(mail);
       _currentUser = AppUser(id: uid, name: displayName, email: mail, phone: '', role: role);
+      notifyListeners(); // UI réactive immédiatement
 
-      // Démarrer les streams Firestore
+      // 3. S'assurer que le doc Firestore existe (crée si absent)
+      final firestoreUser = await _firebase.ensureUserDoc(uid, mail, role, displayName);
+      _currentUser = firestoreUser;
+      notifyListeners();
+
+      // 4. Démarrer les streams temps réel
       _startFirebaseStreams();
-
-      // Charger le vrai profil en arrière-plan
-      _firebase.getUserByUid(uid).then((u) {
-        if (u != null) { _currentUser = u; notifyListeners(); }
-        else {
-          _firebase.saveUser(_currentUser!).catchError((e) {
-            debugPrint('[bg] saveUser: $e');
-            return null;
-          });
-        }
-      }).catchError((e) { debugPrint('[bg] getUserByUid: $e'); return null; });
 
       _isLoading = false;
       notifyListeners();
       return true;
 
     } catch (e, st) {
-      debugPrint('[AppProvider] loginWithFirebase error: $e');
-      debugPrint('[AppProvider] stacktrace: $st');
+      debugPrint('[AppProvider] loginWithFirebase ERROR: $e');
+      debugPrint('[AppProvider] STACKTRACE: $st');
       _errorMessage = _mapAuthError(e.toString());
       _isLoading = false;
       notifyListeners();
-      return false;  // Ne propage JAMAIS l'exception
+      return false; // Ne propage JAMAIS l'exception
     }
+  }
+
+  UserRole _roleFromEmail(String email) {
+    final low = email.toLowerCase();
+    if (low.contains('admin'))                                    return UserRole.admin;
+    if (low.contains('manager'))                                  return UserRole.manager;
+    if (low.contains('caiss') || low.contains('cashier'))        return UserRole.cashier;
+    if (low.contains('cuisine') || low.contains('kitchen'))      return UserRole.kitchen;
+    return UserRole.server;
+  }
+
+  String _displayNameFromEmail(String email) {
+    final namePart = email.split('@').first;
+    if (namePart.isEmpty) return 'Utilisateur';
+    return namePart[0].toUpperCase() +
+        namePart.substring(1).replaceAll(RegExp(r'[._0-9]+'), ' ').trim();
   }
 
   // Garde la compatibilité avec l'ancien code
@@ -385,37 +417,48 @@ class AppProvider extends ChangeNotifier {
 
   // =================== STREAMS FIRESTORE ===================
   void _startFirebaseStreams() {
-    _subUsers = _firebase.streamUsers().listen((list) {
-      _users = list; notifyListeners();
-    }, onError: (e) => debugPrint('[stream] users: $e'));
+    _stopFirebaseStreams(); // Annuler les anciens streams si existants
 
-    _subProducts = _firebase.streamProducts().listen((list) {
-      _products = list; notifyListeners();
-    }, onError: (e) => debugPrint('[stream] products: $e'));
-
-    _subOrders = _firebase.streamOrders().listen((list) {
-      _orders = List<Order>.from(list); notifyListeners();
-    }, onError: (e) => debugPrint('[stream] orders: $e'));
-
-    _subStock = _firebase.streamStock().listen((list) {
-      _stockItems = list; notifyListeners();
-    }, onError: (e) => debugPrint('[stream] stock: $e'));
-
-    _subMessages = _firebase.streamMessages().listen((list) {
-      _messages = list; notifyListeners();
-    }, onError: (e) => debugPrint('[stream] messages: $e'));
-
-    _subSuppliers = _firebase.streamSuppliers().listen((list) {
-      _suppliers = list; notifyListeners();
-    }, onError: (e) => debugPrint('[stream] suppliers: $e'));
-
-    _subSupplierOrders = _firebase.streamSupplierOrders().listen((list) {
-      _supplierOrders = list; notifyListeners();
-    }, onError: (e) => debugPrint('[stream] supplierOrders: $e'));
-
-    _subAttendances = _firebase.streamAttendances().listen((list) {
-      _attendances = list; notifyListeners();
-    }, onError: (e) => debugPrint('[stream] attendances: $e'));
+    _subUsers = _firebase.streamUsers().listen(
+      (list) { _users = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.users] $e'); },
+      cancelOnError: false,
+    );
+    _subProducts = _firebase.streamProducts().listen(
+      (list) { _products = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.products] $e'); },
+      cancelOnError: false,
+    );
+    _subOrders = _firebase.streamOrders().listen(
+      (list) { _orders = List<Order>.from(list); notifyListeners(); },
+      onError: (e) { debugPrint('[stream.orders] $e'); },
+      cancelOnError: false,
+    );
+    _subStock = _firebase.streamStock().listen(
+      (list) { _stockItems = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.stock] $e'); },
+      cancelOnError: false,
+    );
+    _subMessages = _firebase.streamMessages().listen(
+      (list) { _messages = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.messages] $e'); },
+      cancelOnError: false,
+    );
+    _subSuppliers = _firebase.streamSuppliers().listen(
+      (list) { _suppliers = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.suppliers] $e'); },
+      cancelOnError: false,
+    );
+    _subSupplierOrders = _firebase.streamSupplierOrders().listen(
+      (list) { _supplierOrders = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.supplierOrders] $e'); },
+      cancelOnError: false,
+    );
+    _subAttendances = _firebase.streamAttendances().listen(
+      (list) { _attendances = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.attendances] $e'); },
+      cancelOnError: false,
+    );
   }
 
   void _stopFirebaseStreams() {
