@@ -1,7 +1,7 @@
 // firebase_options.dart — projet sankadiokro-manager
-// IMPORTANT : Web utilise un appId format "web:" différent de Android "android:"
-// Si vous n'avez pas d'app Web dans Firebase Console, laissez le appId web vide
-// et l'initialisation utilisera le projet sans app web dédiée.
+// Généré automatiquement — NE PAS MODIFIER MANUELLEMENT
+// Config Web récupérée depuis Firebase Console (app sankadiokro-web)
+// Config Android depuis google-services.json
 
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
@@ -20,23 +20,18 @@ class DefaultFirebaseOptions {
     }
   }
 
-  // ── Web ──
-  // NOTE: Si vous n'avez pas encore ajouté une app Web dans Firebase Console,
-  // utilisez les mêmes clés que Android — Firebase accepte ça pour le preview web.
-  // L'appId web aura le format "1:XXXXX:web:XXXXX" une fois créé dans Firebase Console.
+  // ── Web — configuration app "sankadiokro-web" depuis Firebase Console ──
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyBn6uvarIeS37QdtW8ERBHoHBaehIjcU6U',
-    // appId web correct — format "1:PROJECT_NUMBER:web:HASH"
-    // Si pas d'app web dans Firebase Console, utiliser le même que android est toléré
-    // pour le preview uniquement. Pour la production, créer une app Web dans Firebase Console.
-    appId: '1:54702810896:web:0000000000000000',
+    apiKey: 'AIzaSyDP96Ow__9boFHl5M28pTIHqfKjEoFq4DI',
+    appId: '1:54702810896:web:66059d3978fa00b27e6795',
     messagingSenderId: '54702810896',
     projectId: 'sankadiokro-manager',
     authDomain: 'sankadiokro-manager.firebaseapp.com',
     storageBucket: 'sankadiokro-manager.firebasestorage.app',
+    measurementId: 'G-Z9DY3FL0ZD',
   );
 
-  // ── Android ──
+  // ── Android — depuis google-services.json (package: com.sankadiokro.manager) ──
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBn6uvarIeS37QdtW8ERBHoHBaehIjcU6U',
     appId: '1:54702810896:android:5072a1135ac7c67c7e6795',
