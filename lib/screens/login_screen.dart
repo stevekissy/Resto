@@ -2,12 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../utils/app_theme.dart';
-import '../widgets/common_widgets.dart';
 import 'main_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   /// Message d'erreur Firebase passé depuis main() si initializeApp() a échoué.
-  /// Affiché dans l'UI pour aider au diagnostic.
   final String? firebaseInitError;
 
   const LoginScreen({super.key, this.firebaseInitError});
@@ -24,15 +22,30 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   late Animation<Offset>  _slideAnim;
+  late Animation<double>  _logoScaleAnim;
 
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200));
-    _fadeAnim  = Tween<double>(begin: 0, end: 1).animate(
-        CurvedAnimation(parent: _animController, curve: const Interval(0.3, 1.0, curve: Curves.easeOut)));
-    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
-        CurvedAnimation(parent: _animController, curve: Curves.easeOut));
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _fadeAnim = Tween<double>(begin: 0, end: 1).animate(
+        CurvedAnimation(
+          parent: _animController,
+          curve: const Interval(0.2, 1.0, curve: Curves.easeOut),
+        ));
+    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.25), end: Offset.zero).animate(
+        CurvedAnimation(
+          parent: _animController,
+          curve: const Interval(0.2, 1.0, curve: Curves.easeOut),
+        ));
+    _logoScaleAnim = Tween<double>(begin: 0.5, end: 1.0).animate(
+        CurvedAnimation(
+          parent: _animController,
+          curve: const Interval(0.0, 0.6, curve: Curves.elasticOut),
+        ));
     _animController.forward();
 
     // Afficher l'erreur Firebase si présente
@@ -46,7 +59,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '⚠ Firebase non connecté : ${widget.firebaseInitError!.length > 80 ? widget.firebaseInitError!.substring(0, 80) + "..." : widget.firebaseInitError}',
+                    '⚠ Firebase non connecté : ${widget.firebaseInitError!.length > 80 ? '${widget.firebaseInitError!.substring(0, 80)}...' : widget.firebaseInitError}',
                     style: const TextStyle(fontSize: 11),
                   ),
                 ),
@@ -87,9 +100,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       setState(() => _isLoading = false);
 
       if (success) {
-        // pushAndRemoveUntil : nettoie toute la pile de navigation
-        // Évite que "retour" revienne sur LoginScreen après connexion
-        // Évite les routes orphelines qui causent des 404 sur Netlify
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (_) => const MainScreen()),
@@ -101,7 +111,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      // Afficher le vrai message d'erreur pour faciliter le diagnostic
       debugPrint('[LoginScreen] Exception: $e');
       final msg = e.toString().replaceFirst('Exception: ', '');
       _showError(msg.length > 120 ? msg.substring(0, 120) : msg);
@@ -111,105 +120,322 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   void _showError(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: AppTheme.error, behavior: SnackBarBehavior.floating),
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: AppTheme.error,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final isWide = size.width > 600;
+
     return Scaffold(
+      // Pas de SafeArea ici — on gère manuellement le padding pour éviter la bande noire
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        // Gradient bleu plein écran, de haut en bas
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF0A0A1A), Color(0xFF0D47A1), Color(0xFF0A0A1A)],
-            stops: [0.0, 0.5, 1.0],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF0D47A1), // Bleu foncé officiel en haut
+              Color(0xFF1565C0), // Transition
+              Color(0xFF2196F3), // Bleu clair officiel au milieu
+              Color(0xFF1976D2), // Légèrement plus foncé
+              Color(0xFF0D47A1), // Bleu foncé officiel en bas
+            ],
+            stops: [0.0, 0.25, 0.5, 0.75, 1.0],
           ),
         ),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: FadeTransition(
-              opacity: _fadeAnim,
-              child: SlideTransition(
-                position: _slideAnim,
+        child: SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: size.height,
+            ),
+            child: Padding(
+              // padding top pour compenser la status bar
+              padding: EdgeInsets.fromLTRB(
+                isWide ? size.width * 0.25 : 24,
+                MediaQuery.of(context).padding.top + (isWide ? 60 : 40),
+                isWide ? size.width * 0.25 : 24,
+                MediaQuery.of(context).padding.bottom + 24,
+              ),
+              child: FadeTransition(
+                opacity: _fadeAnim,
                 child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const SizedBox(height: 40),
-
-                    // ── Logo ──
-                    Container(
-                      width: 90, height: 90,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primary,
-                        borderRadius: BorderRadius.circular(24),
-                        boxShadow: [BoxShadow(color: AppTheme.primary.withValues(alpha: 0.5), blurRadius: 30, spreadRadius: 5)],
-                      ),
-                      child: const Center(
-                        child: Text('S', style: TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.w900)),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text('SANKADIOKRO',
-                        style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 4)),
-                    const SizedBox(height: 6),
-                    const Text('Système de Gestion Restaurant',
-                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-                    const SizedBox(height: 50),
-
-                    // ── Formulaire ──
-                    GlassCard(
-                      padding: const EdgeInsets.all(24),
+                    // ── LOGO OFFICIEL SANKADIOKRO ──
+                    ScaleTransition(
+                      scale: _logoScaleAnim,
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Connexion',
-                              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
-                          const SizedBox(height: 4),
-                          const Text('Entrez vos identifiants',
-                              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-                          const SizedBox(height: 24),
-                          TextField(
-                            controller: _emailController,
-                            keyboardType: TextInputType.emailAddress,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: const InputDecoration(
-                              labelText: 'Email',
-                              prefixIcon: Icon(Icons.email_outlined, color: AppTheme.primary),
+                          // Ombre portée sous le logo
+                          Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.4),
+                                  blurRadius: 40,
+                                  spreadRadius: 5,
+                                  offset: const Offset(0, 10),
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 16),
-                          TextField(
-                            controller: _passwordController,
-                            obscureText: _obscurePassword,
-                            style: const TextStyle(color: Colors.white),
-                            onSubmitted: (_) => _login(),
-                            decoration: InputDecoration(
-                              labelText: 'Mot de passe',
-                              prefixIcon: const Icon(Icons.lock_outline, color: AppTheme.primary),
-                              suffixIcon: IconButton(
-                                icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility,
-                                    color: AppTheme.textSecondary),
-                                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(20),
+                              child: Image.asset(
+                                'assets/images/logo_sankadiokro.png',
+                                width: isWide ? 160 : 130,
+                                height: isWide ? 160 : 130,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, __, ___) => Container(
+                                  width: isWide ? 160 : 130,
+                                  height: isWide ? 160 : 130,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: const Center(
+                                    child: Text(
+                                      'S',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 72,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                          const SizedBox(height: 24),
-                          PrimaryButton(
-                            label: 'Se connecter',
-                            icon: Icons.login,
-                            isLoading: _isLoading,
-                            isFullWidth: true,
-                            onPressed: _login,
+                          const SizedBox(height: 16),
+                          // Nom du restaurant
+                          const Text(
+                            'SANKADIOKRO',
+                            style: TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                              letterSpacing: 5,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black38,
+                                  offset: Offset(0, 2),
+                                  blurRadius: 8,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          // Sous-titre professionnel
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.3),
+                                width: 1,
+                              ),
+                            ),
+                            child: const Text(
+                              'Système Professionnel de Gestion Restaurant',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ),
 
-                    const SizedBox(height: 24),
-                    const Text('Version 1.0.0 © 2025 SANKADIOKRO',
-                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                    const SizedBox(height: 44),
+
+                    // ── FORMULAIRE DE CONNEXION ──
+                    SlideTransition(
+                      position: _slideAnim,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.25),
+                            width: 1.5,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.25),
+                              blurRadius: 30,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(28),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Titre du formulaire
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withValues(alpha: 0.2),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: const Icon(
+                                      Icons.lock_person_outlined,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  const Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Connexion',
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                      Text(
+                                        'Entrez vos identifiants',
+                                        style: TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 28),
+
+                              // Champ email
+                              _buildTextField(
+                                controller: _emailController,
+                                label: 'Email',
+                                icon: Icons.email_outlined,
+                                keyboardType: TextInputType.emailAddress,
+                              ),
+                              const SizedBox(height: 16),
+
+                              // Champ mot de passe
+                              _buildTextField(
+                                controller: _passwordController,
+                                label: 'Mot de passe',
+                                icon: Icons.lock_outline,
+                                obscureText: _obscurePassword,
+                                onSubmitted: (_) => _login(),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                    color: Colors.white60,
+                                    size: 20,
+                                  ),
+                                  onPressed: () =>
+                                      setState(() => _obscurePassword = !_obscurePassword),
+                                ),
+                              ),
+                              const SizedBox(height: 28),
+
+                              // Bouton de connexion
+                              SizedBox(
+                                width: double.infinity,
+                                height: 52,
+                                child: ElevatedButton(
+                                  onPressed: _isLoading ? null : _login,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: AppTheme.primaryDark,
+                                    disabledBackgroundColor:
+                                        Colors.white.withValues(alpha: 0.5),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    elevation: 4,
+                                    shadowColor:
+                                        Colors.black.withValues(alpha: 0.3),
+                                  ),
+                                  child: _isLoading
+                                      ? const SizedBox(
+                                          width: 22,
+                                          height: 22,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.5,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                              AppTheme.primaryDark,
+                                            ),
+                                          ),
+                                        )
+                                      : const Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.login_rounded, size: 20),
+                                            SizedBox(width: 10),
+                                            Text(
+                                              'Se connecter',
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w700,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 32),
+
+                    // ── PIED DE PAGE ──
+                    Text(
+                      'Version 1.0.0 © 2025 Restaurant Sankadiokro',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.6),
+                        fontSize: 11,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Yopougon Millionnaire • Abidjan, Côte d\'Ivoire',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.5),
+                        fontSize: 10,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
                   ],
                 ),
               ),
@@ -219,6 +445,49 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       ),
     );
   }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    TextInputType? keyboardType,
+    bool obscureText = false,
+    ValueChanged<String>? onSubmitted,
+    Widget? suffixIcon,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      obscureText: obscureText,
+      onSubmitted: onSubmitted,
+      style: const TextStyle(color: Colors.white, fontSize: 15),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white70, fontSize: 14),
+        prefixIcon: Icon(icon, color: Colors.white70, size: 20),
+        suffixIcon: suffixIcon,
+        filled: true,
+        fillColor: Colors.white.withValues(alpha: 0.12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(
+            color: Colors.white.withValues(alpha: 0.25),
+            width: 1,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(
+            color: Colors.white,
+            width: 2,
+          ),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      ),
+    );
+  }
 }
-
-

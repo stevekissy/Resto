@@ -124,11 +124,13 @@ class PrintService {
 </head>
 <body>
   <div class="receipt">
-    <!-- ── EN-TÊTE ── -->
+    <!-- ── EN-TÊTE OFFICIEL ── -->
     <div class="header">
-      <div class="restaurant-name">SANKADIOKRO</div>
-      <div class="restaurant-sub">Restaurant Africain</div>
-      <div class="restaurant-sub">Korhogo, Côte d'Ivoire</div>
+      <img src="${_logoBase64()}" alt="Logo Sankadiokro" class="logo-img" />
+      <div class="restaurant-name">RESTAURANT SANKADIOKRO</div>
+      <div class="restaurant-sub">Yopougon Millionnaire</div>
+      <div class="restaurant-sub">Abidjan - Côte d'Ivoire</div>
+      <div class="restaurant-sub">Tél : 0757564300 / 0594114223</div>
       <div class="divider-double"></div>
       <div class="receipt-title receipt-type">REÇU D'ENCAISSEMENT</div>
     </div>
@@ -256,10 +258,13 @@ class PrintService {
 </head>
 <body>
   <div class="receipt">
-    <!-- ── EN-TÊTE ── -->
+    <!-- ── EN-TÊTE OFFICIEL ── -->
     <div class="header">
-      <div class="restaurant-name">SANKADIOKRO</div>
-      <div class="restaurant-sub">Restaurant Africain</div>
+      <img src="${_logoBase64()}" alt="Logo Sankadiokro" class="logo-img" />
+      <div class="restaurant-name">RESTAURANT SANKADIOKRO</div>
+      <div class="restaurant-sub">Yopougon Millionnaire</div>
+      <div class="restaurant-sub">Abidjan - Côte d'Ivoire</div>
+      <div class="restaurant-sub">Tél : 0757564300 / 0594114223</div>
       <div class="divider-double"></div>
       <div class="receipt-title receipt-type">REÇU DE RÈGLEMENT CAISSE</div>
     </div>
@@ -360,16 +365,24 @@ class PrintService {
       margin-bottom: 6px;
     }
 
+    .logo-img {
+      width: 60px;
+      height: 60px;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto 4px auto;
+    }
+
     .restaurant-name {
-      font-size: 20px;
+      font-size: 14px;
       font-weight: bold;
-      letter-spacing: 3px;
+      letter-spacing: 1px;
       margin-bottom: 2px;
     }
 
     .restaurant-sub {
       font-size: 10px;
-      color: #444;
+      color: #333;
     }
 
     .receipt-title {
@@ -557,5 +570,13 @@ class PrintService {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#x27;');
+  }
+
+  /// Retourne l'URL du logo pour inclusion dans les tickets HTML
+  /// Sur Web Flutter, les assets sont accessibles via chemin relatif depuis la racine
+  String _logoBase64() {
+    // Sur Flutter Web, les assets sont publiés à la racine de /assets/
+    // L'URL relative fonctionne dans la fenêtre d'impression (même origine)
+    return 'assets/images/logo_sankadiokro.png';
   }
 }

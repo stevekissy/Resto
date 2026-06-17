@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../utils/app_theme.dart';
 import '../models/models.dart';
+import '../widgets/common_widgets.dart';
 import 'dashboard/dashboard_screen.dart';
 import 'orders/order_screen.dart';
 import 'kitchen/kitchen_screen.dart';
@@ -130,24 +131,43 @@ class _MainScreenState extends State<MainScreen> {
         children: [
           Container(
             padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [AppTheme.primaryDark, AppTheme.primary],
+                colors: [Color(0xFF0D47A1), Color(0xFF2196F3)],
               ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 60, height: 60,
-                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(16)),
-                  child: const Center(child: Text('S', style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900))),
+                // Logo officiel SANKADIOKRO dans le drawer
+                Row(
+                  children: [
+                    const SankaLogo(size: 64),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'SANKADIOKRO',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              letterSpacing: 2,
+                            ),
+                          ),
+                          Text(
+                            'Restaurant Africain',
+                            style: TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 10),
-                const Text('SANKADIOKRO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18, letterSpacing: 3)),
-                const Text('Restaurant Africain', style: TextStyle(color: Colors.white70, fontSize: 12)),
                 const SizedBox(height: 14),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

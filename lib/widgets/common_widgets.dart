@@ -1,6 +1,90 @@
 import 'package:flutter/material.dart';
 import '../utils/app_theme.dart';
 
+/// ══════════════════════════════════════════════════════════════════════
+///  SankaLogo — Logo officiel SANKADIOKRO réutilisable
+///  Utilise l'asset local avec fallback sur un logo SVG inline
+/// ══════════════════════════════════════════════════════════════════════
+class SankaLogo extends StatelessWidget {
+  final double size;
+  final bool showText;
+  final bool circular;
+
+  const SankaLogo({
+    super.key,
+    this.size = 60,
+    this.showText = false,
+    this.circular = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final logoWidget = ClipRRect(
+      borderRadius: circular
+          ? BorderRadius.circular(size / 2)
+          : BorderRadius.circular(size * 0.15),
+      child: Image.asset(
+        'assets/images/logo_sankadiokro.png',
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => _FallbackLogo(size: size),
+      ),
+    );
+
+    if (!showText) return logoWidget;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        logoWidget,
+        const SizedBox(height: 8),
+        Text(
+          'SANKADIOKRO',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: size * 0.25,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 3,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Fallback si l'asset n'est pas disponible (Web service worker cache)
+class _FallbackLogo extends StatelessWidget {
+  final double size;
+  const _FallbackLogo({required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0D47A1), Color(0xFF2196F3)],
+        ),
+        borderRadius: BorderRadius.circular(size * 0.15),
+      ),
+      child: Center(
+        child: Text(
+          'S',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: size * 0.55,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class GlassCard extends StatelessWidget {
   final Widget child;
   final EdgeInsets? padding;

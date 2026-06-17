@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static const Color primary = Color(0xFF1565C0);
-  static const Color primaryDark = Color(0xFF0D47A1);
-  static const Color primaryLight = Color(0xFF1976D2);
-  static const Color accent = Color(0xFF2196F3);
+  static const Color primary = Color(0xFF2196F3);      // Bleu clair officiel SANKADIOKRO
+  static const Color primaryDark = Color(0xFF0D47A1);   // Bleu foncé officiel SANKADIOKRO
+  static const Color primaryLight = Color(0xFF64B5F6);  // Bleu très clair
+  static const Color accent = Color(0xFF1D84C6);        // Bleu moyen logo SANKADIOKRO
   static const Color background = Color(0xFF0A0A0A);
   static const Color surface = Color(0xFF1A1A2E);
   static const Color surfaceLight = Color(0xFF16213E);
