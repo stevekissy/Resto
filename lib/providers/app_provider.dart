@@ -344,12 +344,13 @@ class AppProvider extends ChangeNotifier {
       notifyListeners();
       return true;
 
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('[AppProvider] loginWithFirebase error: $e');
+      debugPrint('[AppProvider] stacktrace: $st');
       _errorMessage = _mapAuthError(e.toString());
       _isLoading = false;
       notifyListeners();
-      return false;
+      return false;  // Ne propage JAMAIS l'exception
     }
   }
 
@@ -365,10 +366,15 @@ class AppProvider extends ChangeNotifier {
       return 'Email ou mot de passe incorrect.';
     if (e.contains('too-many-requests'))
       return 'Trop de tentatives. Réessayez dans quelques minutes.';
-    if (e.contains('network')) return 'Pas de connexion Internet.';
+    if (e.contains('network-request-failed') || e.contains('network'))
+      return 'Pas de connexion Internet. Vérifiez votre réseau.';
     if (e.contains('user-disabled')) return 'Ce compte a été désactivé.';
     if (e.contains('invalid-email')) return 'Format d\'email invalide.';
-    return 'Email ou mot de passe incorrect.';
+    if (e.contains('firebase_auth') || e.contains('platformexception'))
+      return 'Erreur Firebase Auth. Vérifiez votre connexion Internet.';
+    // Retourner le message brut pour diagnostic (tronqué à 100 chars)
+    final raw = error.replaceAll('\n', ' ').trim();
+    return raw.length > 100 ? raw.substring(0, 100) : raw;
   }
 
   // =================== STREAMS FIRESTORE ===================

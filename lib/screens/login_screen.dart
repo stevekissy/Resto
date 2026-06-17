@@ -65,7 +65,10 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      _showError('Erreur inattendue. Réessayez.');
+      // Afficher le vrai message d'erreur pour faciliter le diagnostic
+      debugPrint('[LoginScreen] Exception: $e');
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      _showError(msg.length > 120 ? msg.substring(0, 120) : msg);
     }
   }
 
