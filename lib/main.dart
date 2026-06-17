@@ -24,6 +24,8 @@ void main() {
       await Firebase.initializeApp(
           options: DefaultFirebaseOptions.currentPlatform);
       debugPrint('[Firebase] Initialisé ✅');
+      // Reprise de session APRÈS init Firebase — safe
+      await _appProvider.checkExistingSession();
     } catch (e) {
       debugPrint('[Firebase] Erreur init: $e');
     }
@@ -67,13 +69,16 @@ void main() {
   });
 }
 
+// Provider instancié une seule fois, en dehors du widget tree
+final _appProvider = AppProvider();
+
 class SankadiokroApp extends StatelessWidget {
   const SankadiokroApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => AppProvider(),
+    return ChangeNotifierProvider.value(
+      value: _appProvider,
       child: MaterialApp(
         title: 'Sankadio Manager',
         debugShowCheckedModeBanner: false,

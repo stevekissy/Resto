@@ -159,44 +159,24 @@ class AppProvider extends ChangeNotifier {
   Timer? _alertTimer;
 
   AppProvider() {
-    try {
-      _initDemoData();
-    } catch (e) {
-      debugPrint('[AppProvider] Erreur _initDemoData: $e');
-    }
-    try {
-      _startAlertTimer();
-    } catch (e) {
-      debugPrint('[AppProvider] Erreur _startAlertTimer: $e');
-    }
-    // Vérifier si Firebase Auth a déjà un user connecté (reprise de session)
-    _checkExistingSession();
+    try { _initDemoData(); } catch (e) { debugPrint('[AppProvider] initDemoData: $e'); }
+    try { _startAlertTimer(); } catch (e) { debugPrint('[AppProvider] alertTimer: $e'); }
+    // PAS de _checkExistingSession() ici — trop tôt, Firebase peut ne pas être prêt
   }
 
-  /// Vérifie si un user Firebase est déjà connecté au démarrage
-  void _checkExistingSession() {
+  /// Appelé par main() APRÈS Firebase.initializeApp() — reprise de session sécurisée
+  Future<void> checkExistingSession() async {
     try {
-      // Accès lazy et protégé — ne crash pas si Firebase non init
-      Future.microtask(() async {
-        try {
-          final fbUser = _firebase.currentFirebaseUser;
-          if (fbUser != null) {
-            debugPrint('[AppProvider] Session existante: ${fbUser.email}');
-            final role = _roleFromEmail(fbUser.email ?? '');
-            final displayName = _displayNameFromEmail(fbUser.email ?? '');
-            _currentUser = AppUser(
-              id: fbUser.uid, name: displayName,
-              email: fbUser.email ?? '', phone: '', role: role,
-            );
-            _startFirebaseStreams();
-            notifyListeners();
-          }
-        } catch (e) {
-          debugPrint('[AppProvider] _checkExistingSession: $e');
-        }
-      });
+      final fbUser = _firebase.currentFirebaseUser;
+      if (fbUser == null) return;
+      debugPrint('[AppProvider] Session existante: ${fbUser.email}');
+      final role = _roleFromEmail(fbUser.email ?? '');
+      final displayName = _displayNameFromEmail(fbUser.email ?? '');
+      _currentUser = AppUser(id: fbUser.uid, name: displayName, email: fbUser.email ?? '', phone: '', role: role);
+      _startFirebaseStreams();
+      notifyListeners();
     } catch (e) {
-      debugPrint('[AppProvider] _checkExistingSession outer: $e');
+      debugPrint('[AppProvider] checkExistingSession: $e');
     }
   }
 
