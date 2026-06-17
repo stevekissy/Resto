@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
@@ -163,7 +162,7 @@ class AppProvider extends ChangeNotifier {
   Timer? _alertTimer;
 
   AppProvider({this.firebaseReady = false}) {
-    try { _initDemoData(); } catch (e) { debugPrint('[AppProvider] initDemoData: $e'); }
+    // ✅ PAS DE DONNÉES DÉMO — toutes les données viennent exclusivement de Firestore
     try { _startAlertTimer(); } catch (e) { debugPrint('[AppProvider] alertTimer: $e'); }
     // Aucun accès Firebase dans le constructeur
   }
@@ -197,126 +196,6 @@ class AppProvider extends ChangeNotifier {
         onOrderDelayed?.call(order);
       }
     }
-  }
-
-  // =================== INIT DEMO DATA ===================
-  void _initDemoData() {
-    // Users
-    _users = [
-      AppUser(id: 'u1', name: 'Kouamé Admin', email: 'admin@sankadio.com', phone: '+225 07 11 22 33', role: UserRole.admin),
-      AppUser(id: 'u2', name: 'Aya Koné', email: 'aya@sankadio.com', phone: '+225 05 44 55 66', role: UserRole.cashier),
-      AppUser(id: 'u3', name: 'Mamadou Chef', email: 'mamadou@sankadio.com', phone: '+225 01 77 88 99', role: UserRole.kitchen),
-      AppUser(id: 'u4', name: 'Fatou Servante', email: 'fatou@sankadio.com', phone: '+225 07 22 33 44', role: UserRole.server),
-      AppUser(id: 'u5', name: 'Ibrahim Manager', email: 'ibrahim@sankadio.com', phone: '+225 05 55 66 77', role: UserRole.manager),
-    ];
-
-    // _currentUser reste null — sera défini après loginWithFirebase()
-    // Products
-    _products = [
-      Product(id: 'p1', name: 'Poisson Braisé', category: 'Plats', price: 3500, prepTime: 25, stockQuantity: 20),
-      Product(id: 'p2', name: 'Poulet Braisé', category: 'Plats', price: 3000, prepTime: 20, stockQuantity: 15),
-      Product(id: 'p3', name: 'Kedjenou de Poulet', category: 'Plats', price: 3500, prepTime: 35, stockQuantity: 10),
-      Product(id: 'p4', name: 'Riz Sauce', category: 'Plats', price: 2000, prepTime: 10, stockQuantity: 30),
-      Product(id: 'p5', name: 'Garba', category: 'Plats', price: 1500, prepTime: 8, stockQuantity: 25),
-      Product(id: 'p6', name: 'Attiéké', category: 'Accompagnements', price: 500, prepTime: 5, stockQuantity: 50),
-      Product(id: 'p7', name: 'Foutou Banane', category: 'Accompagnements', price: 800, prepTime: 15, stockQuantity: 20),
-      Product(id: 'p8', name: 'Alloco', category: 'Accompagnements', price: 600, prepTime: 10, stockQuantity: 30),
-      Product(id: 'p9', name: 'Coca-Cola', category: 'Boissons', price: 500, prepTime: 1, stockQuantity: 100),
-      Product(id: 'p10', name: 'Eau Minérale', category: 'Boissons', price: 300, prepTime: 1, stockQuantity: 150),
-      Product(id: 'p11', name: 'Jus de Bissap', category: 'Boissons', price: 400, prepTime: 2, stockQuantity: 40),
-      Product(id: 'p12', name: 'Bière Fraîche', category: 'Boissons', price: 700, prepTime: 1, stockQuantity: 60),
-      Product(id: 'p13', name: 'Thiéboudienne', category: 'Plats', price: 4000, prepTime: 40, stockQuantity: 8),
-      Product(id: 'p14', name: 'Mafé', category: 'Plats', price: 3500, prepTime: 30, stockQuantity: 12),
-      Product(id: 'p15', name: 'Café', category: 'Boissons', price: 200, prepTime: 3, stockQuantity: 0, isAvailable: false),
-    ];
-
-    // Stock
-    _stockItems = [
-      StockItem(id: 's1', name: 'Poisson Tilapia', unit: 'kg', currentQuantity: 15, minQuantity: 5, maxQuantity: 50, unitCost: 2000, category: 'Viandes & Poissons'),
-      StockItem(id: 's2', name: 'Poulet', unit: 'kg', currentQuantity: 3, minQuantity: 5, maxQuantity: 30, unitCost: 2500, category: 'Viandes & Poissons'),
-      StockItem(id: 's3', name: 'Huile de palme', unit: 'L', currentQuantity: 20, minQuantity: 5, maxQuantity: 50, unitCost: 800, category: 'Épices & Huiles'),
-      StockItem(id: 's4', name: 'Attiéké', unit: 'kg', currentQuantity: 30, minQuantity: 10, maxQuantity: 100, unitCost: 300, category: 'Féculents'),
-      StockItem(id: 's5', name: 'Riz', unit: 'kg', currentQuantity: 50, minQuantity: 15, maxQuantity: 150, unitCost: 450, category: 'Féculents'),
-      StockItem(id: 's6', name: 'Tomates', unit: 'kg', currentQuantity: 2, minQuantity: 3, maxQuantity: 20, unitCost: 600, category: 'Légumes'),
-      StockItem(id: 's7', name: 'Oignons', unit: 'kg', currentQuantity: 0, minQuantity: 3, maxQuantity: 20, unitCost: 400, category: 'Légumes'),
-      StockItem(id: 's8', name: 'Coca-Cola 1L', unit: 'bouteilles', currentQuantity: 100, minQuantity: 20, maxQuantity: 200, unitCost: 350, category: 'Boissons'),
-      StockItem(id: 's9', name: 'Eau Minérale', unit: 'bouteilles', currentQuantity: 150, minQuantity: 30, maxQuantity: 300, unitCost: 200, category: 'Boissons'),
-      StockItem(id: 's10', name: 'Piment', unit: 'kg', currentQuantity: 1, minQuantity: 2, maxQuantity: 10, unitCost: 1500, category: 'Épices & Huiles', expiryDate: DateTime.now().add(const Duration(days: 3))),
-    ];
-
-    // Suppliers
-    _suppliers = [
-      Supplier(id: 'sup1', name: 'Poissonnerie Adjoua', contact: 'Adjoua Koné', phone: '+225 07 33 44 55'),
-      Supplier(id: 'sup2', name: 'Élevage Bamory', contact: 'Bamory Traoré', phone: '+225 05 66 77 88'),
-      Supplier(id: 'sup3', name: 'Marché Légumes Yopou', contact: 'Yaya Diallo', phone: '+225 01 99 00 11'),
-    ];
-
-    // Sample orders
-    final now = DateTime.now();
-    _orders = [
-      Order(
-        id: 'o1', orderNumber: 151, tableNumber: '05',
-        serverName: 'Fatou', status: OrderStatus.preparing,
-        createdAt: now.subtract(const Duration(minutes: 12)),
-        startedAt: now.subtract(const Duration(minutes: 10)),
-        items: [
-          OrderItem(productId: 'p1', productName: 'Poisson Braisé', quantity: 2, unitPrice: 3500),
-          OrderItem(productId: 'p6', productName: 'Attiéké', quantity: 2, unitPrice: 500),
-          OrderItem(productId: 'p9', productName: 'Coca-Cola', quantity: 3, unitPrice: 500),
-        ],
-      ),
-      Order(
-        id: 'o2', orderNumber: 152, tableNumber: '03',
-        serverName: 'Fatou', status: OrderStatus.pending,
-        isUrgent: true,
-        createdAt: now.subtract(const Duration(minutes: 3)),
-        items: [
-          OrderItem(productId: 'p2', productName: 'Poulet Braisé', quantity: 1, unitPrice: 3000),
-          OrderItem(productId: 'p8', productName: 'Alloco', quantity: 1, unitPrice: 600),
-          OrderItem(productId: 'p10', productName: 'Eau Minérale', quantity: 2, unitPrice: 300),
-        ],
-      ),
-      Order(
-        id: 'o3', orderNumber: 153, tableNumber: '08',
-        serverName: 'Fatou', status: OrderStatus.ready,
-        createdAt: now.subtract(const Duration(minutes: 28)),
-        startedAt: now.subtract(const Duration(minutes: 25)),
-        readyAt: now.subtract(const Duration(minutes: 2)),
-        items: [
-          OrderItem(productId: 'p5', productName: 'Garba', quantity: 3, unitPrice: 1500),
-          OrderItem(productId: 'p11', productName: 'Jus de Bissap', quantity: 3, unitPrice: 400),
-        ],
-      ),
-    ];
-
-    // Messages
-    _messages = [
-      ChatMessage(id: 'm1', senderId: 'u3', senderName: 'Mamadou Chef', content: 'La commande 151 sera bientôt prête !', type: MessageType.text, sentAt: now.subtract(const Duration(minutes: 5))),
-      ChatMessage(id: 'm2', senderId: 'u2', senderName: 'Aya Koné', content: 'Merci, j\'attends !', type: MessageType.text, sentAt: now.subtract(const Duration(minutes: 4))),
-      ChatMessage(id: 'm3', senderId: 'u1', senderName: 'Kouamé Admin', content: 'Bonjour équipe, bonne journée à tous !', type: MessageType.text, sentAt: now.subtract(const Duration(hours: 2))),
-    ];
-
-    // Today's attendance
-    final today = DateTime.now();
-    _attendances = [
-      Attendance(id: 'a1', userId: 'u2', userName: 'Aya Koné', date: today, morningPresent: true, morningTime: DateTime(today.year, today.month, today.day, 8, 0)),
-      Attendance(id: 'a2', userId: 'u3', userName: 'Mamadou Chef', date: today, morningPresent: true, morningTime: DateTime(today.year, today.month, today.day, 7, 30)),
-      Attendance(id: 'a3', userId: 'u4', userName: 'Fatou Servante', date: today, morningPresent: true, morningTime: DateTime(today.year, today.month, today.day, 8, 15)),
-      Attendance(id: 'a4', userId: 'u5', userName: 'Ibrahim Manager', date: today, morningPresent: false),
-    ];
-
-    // Supplier orders
-    _supplierOrders = [
-      SupplierOrder(
-        id: 'so1', supplierId: 'sup1', supplierName: 'Poissonnerie Adjoua',
-        items: [{'name': 'Poisson Tilapia', 'quantity': 20, 'unit': 'kg', 'unitPrice': 2000}],
-        totalAmount: 40000, paidAmount: 20000,
-        paymentStatus: SupplierPaymentStatus.partial,
-        paymentMethod: 'Espèces',
-        orderDate: DateTime.now().subtract(const Duration(days: 2)),
-        expectedDelivery: DateTime.now().add(const Duration(days: 1)),
-      ),
-    ];
   }
 
   // =================== LOGIN Firebase ===================
@@ -382,7 +261,7 @@ class AppProvider extends ChangeNotifier {
         namePart.substring(1).replaceAll(RegExp(r'[._0-9]+'), ' ').trim();
   }
 
-  // Garde la compatibilité avec l'ancien code
+  // Compatibilité — non utilisé
   bool login(String email, String password) => false;
 
   String _mapAuthError(String error) {
@@ -421,62 +300,40 @@ class AppProvider extends ChangeNotifier {
 
     _stopFirebaseStreams(); // Annuler les anciens streams si existants
 
+    // ✅ 100% Firestore — on accepte TOUJOURS la liste reçue, même vide
+    // Si Firestore renvoie [], l'UI affiche "Aucune donnée enregistrée"
     _subUsers = _firebase.streamUsers().listen(
-      (list) {
-        // Garder les données démo si Firestore renvoie une liste vide
-        if (list.isNotEmpty) _users = list;
-        notifyListeners();
-      },
+      (list) { _users = list; notifyListeners(); },
       onError: (e) { debugPrint('[stream.users] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subProducts = _firebase.streamProducts().listen(
-      (list) {
-        if (list.isNotEmpty) _products = list;
-        notifyListeners();
-      },
+      (list) { _products = list; notifyListeners(); },
       onError: (e) { debugPrint('[stream.products] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subOrders = _firebase.streamOrders().listen(
-      (list) {
-        // Les commandes peuvent être vides (nouveau restaurant) — on accepte []
-        _orders = List<Order>.from(list);
-        notifyListeners();
-      },
+      (list) { _orders = List<Order>.from(list); notifyListeners(); },
       onError: (e) { debugPrint('[stream.orders] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subStock = _firebase.streamStock().listen(
-      (list) {
-        if (list.isNotEmpty) _stockItems = list;
-        notifyListeners();
-      },
+      (list) { _stockItems = list; notifyListeners(); },
       onError: (e) { debugPrint('[stream.stock] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subMessages = _firebase.streamMessages().listen(
-      (list) {
-        // Messages peuvent être vides — on accepte []
-        _messages = list;
-        notifyListeners();
-      },
+      (list) { _messages = list; notifyListeners(); },
       onError: (e) { debugPrint('[stream.messages] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subSuppliers = _firebase.streamSuppliers().listen(
-      (list) {
-        if (list.isNotEmpty) _suppliers = list;
-        notifyListeners();
-      },
+      (list) { _suppliers = list; notifyListeners(); },
       onError: (e) { debugPrint('[stream.suppliers] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subSupplierOrders = _firebase.streamSupplierOrders().listen(
-      (list) {
-        if (list.isNotEmpty) _supplierOrders = list;
-        notifyListeners();
-      },
+      (list) { _supplierOrders = list; notifyListeners(); },
       onError: (e) { debugPrint('[stream.supplierOrders] ERREUR: $e'); },
       cancelOnError: false,
     );
@@ -514,14 +371,14 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // =================== ORDER MANAGEMENT ===================
-  Order createOrder({
+  // =================== ORDER MANAGEMENT (Firestore) ===================
+  Future<Order> createOrder({
     required String tableNumber,
     required List<OrderItem> items,
     String? serverName,
     String? specialInstructions,
     bool isUrgent = false,
-  }) {
+  }) async {
     _orderCounter++;
     final order = Order(
       id: _uuid.v4(),
@@ -532,36 +389,18 @@ class AppProvider extends ChangeNotifier {
       specialInstructions: specialInstructions,
       isUrgent: isUrgent,
     );
-    _orders.insert(0, order);
-    
-    // Deduct stock
-    for (var item in items) {
-      final product = _products.firstWhere((p) => p.id == item.productId, orElse: () => Product(id: '', name: '', category: '', price: 0, prepTime: 0));
-      if (product.id.isNotEmpty && product.stockQuantity > 0) {
-        product.stockQuantity -= item.quantity;
-        if (product.stockQuantity <= 0) {
-          product.stockQuantity = 0;
-          product.isAvailable = false;
-        }
-      }
-    }
-
+    await _firebase.saveOrder(order);
     onNewOrder?.call(order);
-    notifyListeners();
     return order;
   }
 
-  void updateOrderStatus(String orderId, OrderStatus status) {
-    final order = _orders.firstWhere((o) => o.id == orderId);
-    order.status = status;
-    if (status == OrderStatus.preparing) order.startedAt = DateTime.now();
-    if (status == OrderStatus.ready) order.readyAt = DateTime.now();
-    if (status == OrderStatus.served) order.servedAt = DateTime.now();
-    notifyListeners();
+  Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
+    await _firebase.updateOrderStatus(orderId, status);
   }
 
-  void updateOrderItemQuantity(String orderId, String productId, int newQuantity) {
-    final order = _orders.firstWhere((o) => o.id == orderId);
+  Future<void> updateOrderItemQuantity(String orderId, String productId, int newQuantity) async {
+    final order = _orders.firstWhere((o) => o.id == orderId, orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []));
+    if (order.id.isEmpty) return;
     final itemIndex = order.items.indexWhere((i) => i.productId == productId);
     if (itemIndex != -1) {
       if (newQuantity <= 0) {
@@ -569,62 +408,74 @@ class AppProvider extends ChangeNotifier {
       } else {
         order.items[itemIndex].quantity = newQuantity;
       }
-      notifyListeners();
+      await _firebase.updateOrder(order);
     }
   }
 
-  void payOrder(String orderId, String paymentMethod, double discount, {double amountPaid = 0}) {
-    final order = _orders.firstWhere((o) => o.id == orderId);
+  Future<void> payOrder(String orderId, String paymentMethod, double discount, {double amountPaid = 0}) async {
+    final order = _orders.firstWhere((o) => o.id == orderId, orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []));
+    if (order.id.isEmpty) return;
     order.isPaid = true;
     order.paymentMethod = paymentMethod;
     order.discount = discount;
     order.amountPaid = amountPaid;
     order.status = OrderStatus.served;
     order.servedAt = DateTime.now();
-    notifyListeners();
+    await _firebase.updateOrder(order);
   }
 
-  // =================== PRODUCT MANAGEMENT ===================
-  void addProduct(Product product) {
-    _products.add(product);
-    notifyListeners();
+  // =================== PRODUCT MANAGEMENT (Firestore) ===================
+  Future<void> addProduct(Product product) async {
+    await _firebase.saveProduct(product);
+    // Le stream Firestore met _products à jour automatiquement
   }
 
-  void updateProduct(Product product) {
-    final index = _products.indexWhere((p) => p.id == product.id);
-    if (index != -1) {
-      _products[index] = product;
-      notifyListeners();
-    }
+  Future<void> updateProduct(Product product) async {
+    await _firebase.updateProduct(product);
   }
 
-  void deleteProduct(String id) {
-    _products.removeWhere((p) => p.id == id);
-    notifyListeners();
+  Future<void> deleteProduct(String id) async {
+    await _firebase.deleteProduct(id);
   }
 
-  void toggleProductAvailability(String id) {
-    final p = _products.firstWhere((p) => p.id == id);
+  Future<void> toggleProductAvailability(String id) async {
+    final p = _products.firstWhere((p) => p.id == id, orElse: () => Product(id: '', name: '', category: '', price: 0, prepTime: 0));
+    if (p.id.isEmpty) return;
     p.isAvailable = !p.isAvailable;
-    notifyListeners();
+    await _firebase.updateProduct(p);
   }
 
-  // =================== STOCK MANAGEMENT ===================
-  void updateStock(String id, double newQuantity) {
-    final item = _stockItems.firstWhere((s) => s.id == id);
+  // =================== STOCK MANAGEMENT (Firestore) ===================
+  Future<void> updateStock(String id, double newQuantity) async {
+    final item = _stockItems.firstWhere((s) => s.id == id, orElse: () => StockItem(id: '', name: '', unit: '', currentQuantity: 0, minQuantity: 0, maxQuantity: 0, unitCost: 0, category: ''));
+    if (item.id.isEmpty) return;
     item.currentQuantity = newQuantity;
-    notifyListeners();
+    await _firebase.updateStockItem(item);
   }
 
-  void addStockItem(StockItem item) {
-    _stockItems.add(item);
-    notifyListeners();
+  Future<void> addStockItem(StockItem item) async {
+    await _firebase.saveStockItem(item);
   }
 
-  // =================== USER MANAGEMENT (simple) ===================
-  void addUserDirect(AppUser user) {
-    _users.add(user);
-    notifyListeners();
+  Future<void> updateStockItem(StockItem item) async {
+    await _firebase.updateStockItem(item);
+  }
+
+  Future<void> deleteStockItem(String id) async {
+    await _firebase.deleteStockItem(id);
+  }
+
+  // =================== USER MANAGEMENT (Firestore) ===================
+  Future<void> addUserDirect(AppUser user) async {
+    await _firebase.saveUser(user);
+  }
+
+  Future<void> deleteUserFirestore(String id) async {
+    await _firebase.deleteUser(id);
+  }
+
+  Future<void> updateUserFirestore(AppUser user) async {
+    await _firebase.updateUser(user);
   }
 
   // =================== ATTENDANCE ===================
@@ -660,10 +511,9 @@ class AppProvider extends ChangeNotifier {
     ).toList();
   }
 
-  // =================== MESSAGING ===================
-  void sendMessage(ChatMessage message) {
-    _messages.add(message);
-    notifyListeners();
+  // =================== MESSAGING (Firestore) ===================
+  Future<void> sendMessage(ChatMessage message) async {
+    await _firebase.sendMessage(message);
   }
 
   List<ChatMessage> getConversation(String userId1, String userId2) {
@@ -673,19 +523,26 @@ class AppProvider extends ChangeNotifier {
     ).toList()..sort((a, b) => a.sentAt.compareTo(b.sentAt));
   }
 
-  // =================== SUPPLIERS ===================
-  void addSupplier(Supplier supplier) {
-    _suppliers.add(supplier);
-    notifyListeners();
+  // =================== SUPPLIERS (Firestore) ===================
+  Future<void> addSupplier(Supplier supplier) async {
+    await _firebase.saveSupplier(supplier);
   }
 
-  void addSupplierOrder(SupplierOrder order) {
-    _supplierOrders.add(order);
-    notifyListeners();
+  Future<void> updateSupplier(Supplier supplier) async {
+    await _firebase.updateSupplier(supplier);
   }
 
-  void updateSupplierOrderPayment(String id, double amount, String method) {
-    final order = _supplierOrders.firstWhere((o) => o.id == id);
+  Future<void> deleteSupplier(String id) async {
+    await _firebase.deleteSupplier(id);
+  }
+
+  Future<void> addSupplierOrder(SupplierOrder order) async {
+    await _firebase.saveSupplierOrder(order);
+  }
+
+  Future<void> updateSupplierOrderPayment(String id, double amount, String method) async {
+    final order = _supplierOrders.firstWhere((o) => o.id == id, orElse: () => SupplierOrder(id: '', supplierId: '', supplierName: '', items: [], totalAmount: 0, paidAmount: 0, paymentStatus: SupplierPaymentStatus.pending, paymentMethod: '', orderDate: DateTime.now()));
+    if (order.id.isEmpty) return;
     order.paidAmount += amount;
     order.paymentMethod = method;
     if (order.paidAmount >= order.totalAmount) {
@@ -693,7 +550,7 @@ class AppProvider extends ChangeNotifier {
     } else {
       order.paymentStatus = SupplierPaymentStatus.partial;
     }
-    notifyListeners();
+    await _firebase.updateSupplierOrder(order);
   }
 
   // =================== STATISTICS ===================
@@ -729,60 +586,65 @@ class AppProvider extends ChangeNotifier {
 
   // =================== GESTION UTILISATEURS (ADMIN) ===================
 
-  void addUser({
+  // =================== GESTION UTILISATEURS ADMIN (Firestore) ===================
+
+  Future<void> addUser({
     required String name,
     required String email,
     required String phone,
     required String password,
     required UserRole role,
-  }) {
+  }) async {
     final newUser = AppUser(
       id: _uuid.v4(),
       name: name,
       email: email,
       phone: phone,
       role: role,
+      isActive: true,
     );
-    _users.add(newUser);
-    notifyListeners();
+    await _firebase.saveUser(newUser);
+    // Le stream Firestore met _users à jour automatiquement
   }
 
-  void updateUser(
+  Future<void> updateUser(
     String id, {
     required String name,
     required String email,
     required String phone,
     required UserRole role,
-  }) {
+  }) async {
     final idx = _users.indexWhere((u) => u.id == id);
-    if (idx != -1) {
-      _users[idx].name = name;
-      _users[idx].email = email;
-      _users[idx].phone = phone;
-      _users[idx].role = role;
-      notifyListeners();
-    }
+    if (idx == -1) return;
+    final updated = AppUser(
+      id: id,
+      name: name,
+      email: email,
+      phone: phone,
+      role: role,
+      isActive: _users[idx].isActive,
+    );
+    await _firebase.updateUser(updated);
   }
 
-  void deleteUser(String id) {
-    _users.removeWhere((u) => u.id == id);
-    notifyListeners();
+  Future<void> deleteUser(String id) async {
+    await _firebase.deleteUser(id);
   }
 
-  void toggleUserActive(String id) {
+  Future<void> toggleUserActive(String id) async {
     final idx = _users.indexWhere((u) => u.id == id);
-    if (idx != -1) {
-      _users[idx].isActive = !_users[idx].isActive;
-      notifyListeners();
-    }
+    if (idx == -1) return;
+    final u = _users[idx];
+    u.isActive = !u.isActive;
+    await _firebase.updateUser(u);
   }
 
-  void changeUserRole(String id, UserRole role) {
+  Future<void> changeUserRole(String id, UserRole role) async {
     final idx = _users.indexWhere((u) => u.id == id);
-    if (idx != -1) {
-      _users[idx].role = role;
-      notifyListeners();
-    }
+    if (idx == -1) return;
+    final u = _users[idx];
+    u.role = role;
+    await _firebase.updateUser(u);
   }
 
   // =================== PERMISSIONS PAR RÔLE ===================

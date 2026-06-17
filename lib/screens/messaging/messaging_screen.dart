@@ -630,7 +630,7 @@ class _ChatAreaState extends State<ChatArea> {
       fileUrl: fileUrl,
       fileName: fileName,
     );
-    widget.provider.sendMessage(msg);
+    widget.provider.sendMessage(msg); // async fire-and-forget
     _messageCtrl.clear();
     Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollCtrl.hasClients) {

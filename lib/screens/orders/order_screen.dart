@@ -125,7 +125,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
     });
   }
 
-  void _submitOrder() {
+  Future<void> _submitOrder() async {
     if (_tableController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Veuillez saisir un numéro de table'), backgroundColor: AppTheme.error),
@@ -140,13 +140,14 @@ class _NewOrderTabState extends State<NewOrderTab> {
     }
 
     final provider = context.read<AppProvider>();
-    final order = provider.createOrder(
+    final order = await provider.createOrder(
       tableNumber: _tableController.text,
       items: List.from(_cartItems),
       specialInstructions: _notesController.text.isEmpty ? null : _notesController.text,
       isUrgent: _isUrgent,
     );
 
+    if (!mounted) return;
     setState(() {
       _cartItems.clear();
       _tableController.clear();

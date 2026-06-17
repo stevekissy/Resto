@@ -84,6 +84,13 @@ class _UsersTab extends StatelessWidget {
     final provider = context.watch<AppProvider>();
     final users = provider.users;
 
+    if (users.isEmpty) {
+      return const EmptyState(
+        icon: Icons.people_outline,
+        title: 'Aucun utilisateur enregistré',
+        subtitle: 'Utilisez le bouton + pour créer un utilisateur',
+      );
+    }
     return ListView.builder(
       padding: const EdgeInsets.all(12),
       itemCount: users.length,
@@ -204,7 +211,7 @@ class _UserCard extends StatelessWidget {
                         _showChangeRoleDialog(context, user, provider);
                         break;
                       case 'toggle':
-                        provider.toggleUserActive(user.id);
+                        provider.toggleUserActive(user.id); // async fire-and-forget
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(user.isActive ? '${user.name} désactivé' : '${user.name} activé'),
@@ -279,8 +286,9 @@ class _UserCard extends StatelessWidget {
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-              onPressed: () {
-                provider.changeUserRole(user.id, selectedRole);
+              onPressed: () async {
+                await provider.changeUserRole(user.id, selectedRole);
+                if (!ctx.mounted) return;
                 Navigator.pop(ctx);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text('Rôle mis à jour'), backgroundColor: AppTheme.success),
@@ -305,8 +313,9 @@ class _UserCard extends StatelessWidget {
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
-            onPressed: () {
-              provider.deleteUser(user.id);
+            onPressed: () async {
+              await provider.deleteUser(user.id);
+              if (!context.mounted) return;
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text('${user.name} supprimé'), backgroundColor: AppTheme.error),
@@ -633,7 +642,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         ),
         ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-          onPressed: () {
+          onPressed: () async {
             if (_nameCtrl.text.trim().isEmpty || _emailCtrl.text.trim().isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Nom et email obligatoires'), backgroundColor: AppTheme.error),
@@ -641,26 +650,28 @@ class _UserFormDialogState extends State<_UserFormDialog> {
               return;
             }
             if (isEditing) {
-              provider.updateUser(
+              await provider.updateUser(
                 widget.user!.id,
                 name: _nameCtrl.text.trim(),
                 email: _emailCtrl.text.trim(),
                 phone: _phoneCtrl.text.trim(),
                 role: _selectedRole,
               );
+              if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Utilisateur mis à jour'), backgroundColor: AppTheme.success),
               );
             } else {
-              provider.addUser(
+              await provider.addUser(
                 name: _nameCtrl.text.trim(),
                 email: _emailCtrl.text.trim(),
                 phone: _phoneCtrl.text.trim(),
                 password: _passwordCtrl.text,
                 role: _selectedRole,
               );
+              if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Utilisateur créé avec succès'), backgroundColor: AppTheme.success),
+                const SnackBar(content: Text('Utilisateur ajouté dans Firestore'), backgroundColor: AppTheme.success),
               );
             }
             Navigator.pop(context);

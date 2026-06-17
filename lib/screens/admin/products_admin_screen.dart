@@ -186,7 +186,7 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 final name = nameCtrl.text.trim();
                 final price = double.tryParse(priceCtrl.text);
                 if (name.isNotEmpty && price != null) {
@@ -201,11 +201,11 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
                     isAvailable: (int.tryParse(stockCtrl.text) ?? 0) > 0,
                   );
                   if (isEdit) {
-                    provider.updateProduct(product);
+                    await provider.updateProduct(product);
                   } else {
-                    provider.addProduct(product);
+                    await provider.addProduct(product);
                   }
-                  Navigator.pop(ctx);
+                  if (ctx.mounted) Navigator.pop(ctx);
                 }
               },
               child: Text(isEdit ? 'Modifier' : 'Ajouter'),
@@ -591,7 +591,7 @@ class _ProductAdminCard extends StatelessWidget {
                 constraints: const BoxConstraints(),
               ),
               IconButton(
-                onPressed: () => provider.toggleProductAvailability(product.id),
+                onPressed: () => provider.toggleProductAvailability(product.id), // async fire-and-forget
                 icon: Icon(
                   product.isAvailable ? Icons.visibility_off : Icons.visibility,
                   color: product.isAvailable ? AppTheme.warning : AppTheme.success,
@@ -622,9 +622,9 @@ class _ProductAdminCard extends StatelessWidget {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
-            onPressed: () {
-              provider.deleteProduct(product.id);
-              Navigator.pop(context);
+            onPressed: () async {
+              await provider.deleteProduct(product.id);
+              if (context.mounted) Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
             child: const Text('Supprimer'),

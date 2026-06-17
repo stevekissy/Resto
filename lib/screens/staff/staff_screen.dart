@@ -125,16 +125,17 @@ class _PersonnelTab extends StatelessWidget {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (nameCtrl.text.isNotEmpty && emailCtrl.text.isNotEmpty) {
-                  provider.addUserDirect(AppUser(
+                  await provider.addUserDirect(AppUser(
                     id: const Uuid().v4(),
                     name: nameCtrl.text,
                     email: emailCtrl.text,
                     phone: phoneCtrl.text,
                     role: role,
+                    isActive: true,
                   ));
-                  Navigator.pop(ctx);
+                  if (ctx.mounted) Navigator.pop(ctx);
                 }
               },
               child: const Text('Ajouter'),
@@ -209,7 +210,7 @@ class _UserCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   GestureDetector(
-                    onTap: () => provider.toggleUserActive(user.id),
+                    onTap: () => provider.toggleUserActive(user.id), // async fire-and-forget
                     child: Container(
                       padding: const EdgeInsets.all(6),
                       decoration: BoxDecoration(
@@ -249,15 +250,15 @@ class _UserCard extends StatelessWidget {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
-              onPressed: () {
-                provider.updateUser(
+              onPressed: () async {
+                await provider.updateUser(
                   user.id,
                   name: user.name,
                   email: user.email,
                   phone: user.phone,
                   role: selectedRole,
                 );
-                Navigator.pop(ctx);
+                if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('Sauvegarder'),
             ),

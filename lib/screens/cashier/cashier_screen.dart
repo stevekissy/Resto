@@ -162,8 +162,9 @@ class _CaisseTabState extends State<_CaisseTab> {
             ),
             child: _OrderDetail(
               order: _selectedOrder!,
-              onPay: (method, discount, amountPaid) {
-                provider.payOrder(_selectedOrder!.id, method, discount, amountPaid: amountPaid);
+              onPay: (method, discount, amountPaid) async {
+                await provider.payOrder(_selectedOrder!.id, method, discount, amountPaid: amountPaid);
+                if (!mounted) return;
                 _showInvoice(context, _selectedOrder!, amountPaid);
                 setState(() => _selectedOrder = null);
               },
@@ -178,8 +179,9 @@ class _CaisseTabState extends State<_CaisseTab> {
       context: context,
       builder: (_) => _PaymentDialog(
         order: order,
-        onPay: (method, discount, amountPaid) {
-          provider.payOrder(order.id, method, discount, amountPaid: amountPaid);
+        onPay: (method, discount, amountPaid) async {
+          await provider.payOrder(order.id, method, discount, amountPaid: amountPaid);
+          if (!context.mounted) return;
           Navigator.pop(context);
           _showInvoice(context, order, amountPaid);
           setState(() => _selectedOrder = null);

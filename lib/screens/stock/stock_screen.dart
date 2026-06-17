@@ -136,7 +136,15 @@ class _StockTabState extends State<_StockTab> {
           ),
           Expanded(
             child: items.isEmpty
-              ? const EmptyState(icon: Icons.inventory_2, title: 'Aucun article dans cette catégorie')
+              ? EmptyState(
+                  icon: Icons.inventory_2,
+                  title: provider.stockItems.isEmpty
+                      ? 'Aucun article de stock enregistré'
+                      : 'Aucun article dans cette catégorie',
+                  subtitle: provider.stockItems.isEmpty
+                      ? 'Utilisez le bouton + pour ajouter un article'
+                      : null,
+                )
               : ListView.builder(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   itemCount: items.length,
@@ -177,11 +185,11 @@ class _StockTabState extends State<_StockTab> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               final qty = double.tryParse(ctrl.text);
               if (qty != null && qty >= 0) {
-                provider.updateStock(item.id, qty);
-                Navigator.pop(context);
+                await provider.updateStock(item.id, qty);
+                if (context.mounted) Navigator.pop(context);
               }
             },
             child: const Text('Confirmer'),
@@ -234,9 +242,9 @@ class _StockTabState extends State<_StockTab> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (nameCtrl.text.isNotEmpty) {
-                  provider.addStockItem(StockItem(
+                  await provider.addStockItem(StockItem(
                     id: const Uuid().v4(),
                     name: nameCtrl.text,
                     unit: unitCtrl.text,
@@ -246,7 +254,7 @@ class _StockTabState extends State<_StockTab> {
                     unitCost: double.tryParse(costCtrl.text) ?? 0,
                     category: category,
                   ));
-                  Navigator.pop(ctx);
+                  if (ctx.mounted) Navigator.pop(ctx);
                 }
               },
               child: const Text('Ajouter'),

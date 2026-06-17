@@ -148,16 +148,16 @@ class _SuppliersTab extends StatelessWidget {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (nameCtrl.text.isNotEmpty) {
-                provider.addSupplier(Supplier(
+                await provider.addSupplier(Supplier(
                   id: const Uuid().v4(),
                   name: nameCtrl.text,
                   contact: contactCtrl.text,
                   phone: phoneCtrl.text,
                   email: emailCtrl.text.isEmpty ? null : emailCtrl.text,
                 ));
-                Navigator.pop(context);
+                if (context.mounted) Navigator.pop(context);
               }
             },
             child: const Text('Ajouter'),
@@ -280,10 +280,10 @@ class _SupplierOrdersTab extends StatelessWidget {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 final total = double.tryParse(totalCtrl.text);
                 if (total != null && total > 0) {
-                  provider.addSupplierOrder(SupplierOrder(
+                  await provider.addSupplierOrder(SupplierOrder(
                     id: const Uuid().v4(),
                     supplierId: supplierId,
                     supplierName: supplierName,
@@ -292,7 +292,7 @@ class _SupplierOrdersTab extends StatelessWidget {
                     notes: notesCtrl.text.isEmpty ? null : notesCtrl.text,
                     expectedDelivery: DateTime.now().add(const Duration(days: 3)),
                   ));
-                  Navigator.pop(ctx);
+                  if (ctx.mounted) Navigator.pop(ctx);
                 }
               },
               child: const Text('Créer'),
@@ -418,11 +418,11 @@ class _SupplierOrderCard extends StatelessWidget {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 final amount = double.tryParse(amountCtrl.text);
                 if (amount != null && amount > 0) {
-                  provider.updateSupplierOrderPayment(order.id, amount, method);
-                  Navigator.pop(ctx);
+                  await provider.updateSupplierOrderPayment(order.id, amount, method);
+                  if (ctx.mounted) Navigator.pop(ctx);
                 }
               },
               child: const Text('Confirmer'),
