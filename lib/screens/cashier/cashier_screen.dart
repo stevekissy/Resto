@@ -317,136 +317,29 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
         onConfirm: (paymentMethod, amountPaid) async {
           Navigator.pop(ctx);
           setState(() => _processing = true);
-
-          // Préparer les données de la facture définitive avant settleOrder
-          final settlementNumber = PrintService.generateSettlementNumber(order.orderNumber);
-          final amountDue = order.totalAmount;
-          final change = (amountPaid - amountDue).clamp(0.0, double.infinity);
-          final cashierName = provider.currentUser?.name;
-
           try {
             await provider.settleOrder(
               order.id,
               paymentMethod: paymentMethod,
               amountPaid: amountPaid,
             );
-
+            final settlementNumber = PrintService.generateSettlementNumber(order.orderNumber);
+            final amountDue = order.totalAmount;
+            final change = (amountPaid - amountDue).clamp(0.0, double.infinity);
+            PrintService().printSettlementInvoice(
+              order: order,
+              settlementInvoiceNumber: settlementNumber,
+              paymentMethod: paymentMethod,
+              amountPaid: amountPaid,
+              changeAmount: change,
+              cashierName: provider.currentUser?.name,
+            );
             if (mounted) {
-              // Dialog de succès avec bouton Imprimer la facture définitive
-              await showDialog(
-                context: context,
-                barrierDismissible: true,
-                builder: (successCtx) => AlertDialog(
-                  backgroundColor: AppTheme.surface,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  title: const Row(
-                    children: [
-                      Icon(Icons.check_circle, color: AppTheme.success, size: 28),
-                      SizedBox(width: 10),
-                      Text('Règlement confirmé',
-                        style: TextStyle(color: Colors.white, fontSize: 16)),
-                    ],
-                  ),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Résumé du règlement
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppTheme.success.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: AppTheme.success.withValues(alpha: 0.3)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text('Commande',
-                                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                                Text('#${order.orderNumber} — Table ${order.tableNumber}',
-                                  style: const TextStyle(
-                                    color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text('Mode paiement',
-                                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                                Text(paymentMethod,
-                                  style: const TextStyle(
-                                    color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text('Montant réglé',
-                                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                                Text('${_fmt.format(amountDue)} F CFA',
-                                  style: const TextStyle(
-                                    color: AppTheme.success, fontWeight: FontWeight.w800, fontSize: 14)),
-                              ],
-                            ),
-                            if (change > 0) ...[
-                              const SizedBox(height: 4),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text('Monnaie rendue',
-                                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                                  Text('${_fmt.format(change)} F CFA',
-                                    style: const TextStyle(
-                                      color: AppTheme.warning, fontWeight: FontWeight.w700, fontSize: 12)),
-                                ],
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      // Bouton Imprimer la facture définitive
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            PrintService().printSettlementInvoice(
-                              order: order,
-                              settlementInvoiceNumber: settlementNumber,
-                              paymentMethod: paymentMethod,
-                              amountPaid: amountPaid,
-                              changeAmount: change,
-                              cashierName: cashierName,
-                            );
-                          },
-                          icon: const Icon(Icons.print, size: 18),
-                          label: const Text('Imprimer la facture définitive',
-                            style: TextStyle(fontWeight: FontWeight.w700)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(successCtx),
-                      child: const Text('Fermer',
-                        style: TextStyle(color: AppTheme.textSecondary)),
-                    ),
-                  ],
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Règlement #${order.orderNumber} enregistré — ${_fmt.format(amountDue)} F CFA'),
+                  backgroundColor: AppTheme.success,
+                  duration: const Duration(seconds: 4),
                 ),
               );
             }
@@ -1003,10 +896,6 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
             ),
           ),
           const SizedBox(height: 16),
-          // ═══ RECETTE DE VENTE PAR PRODUIT ════════════════════════════
-          _buildRecetteVenteCard(todayPaid, fmt),
-
-          const SizedBox(height: 16),
           // Dernières transactions
           GlassCard(
             child: Column(
@@ -1032,153 +921,6 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────
-  //  Recette de Vente — agrège articles du jour par produit
-  //  Colonnes : Produit | Qté vendue | Prix unitaire | Total vendu
-  // ─────────────────────────────────────────────────────────────────────
-  Widget _buildRecetteVenteCard(List<Order> todayPaid, NumberFormat fmt) {
-    // Agréger les articles de toutes les commandes réglées du jour
-    final Map<String, Map<String, dynamic>> aggregated = {};
-    for (final order in todayPaid) {
-      for (final item in order.items) {
-        final key = item.productName;
-        if (aggregated.containsKey(key)) {
-          aggregated[key]!['qty'] = (aggregated[key]!['qty'] as int) + item.quantity;
-          aggregated[key]!['total'] = (aggregated[key]!['total'] as double) + item.totalPrice;
-        } else {
-          aggregated[key] = {
-            'qty': item.quantity,
-            'unitPrice': item.unitPrice,
-            'total': item.totalPrice,
-          };
-        }
-      }
-    }
-    // Tri par total décroissant
-    final entries = aggregated.entries.toList()
-      ..sort((a, b) => (b.value['total'] as double).compareTo(a.value['total'] as double));
-    final grandTotal = entries.fold<double>(0, (s, e) => s + (e.value['total'] as double));
-
-    return GlassCard(
-      border: Border.all(color: AppTheme.success.withValues(alpha: 0.3)),
-      child: Column(
-        children: [
-          const SectionHeader(title: 'Recette de Vente', icon: Icons.storefront),
-          const SizedBox(height: 12),
-          if (entries.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                'Aucune vente enregistrée aujourd\'hui',
-                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-              ),
-            )
-          else ...[
-            // En-tête tableau
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 4),
-              decoration: BoxDecoration(
-                color: AppTheme.surfaceLight,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Row(
-                children: [
-                  Expanded(
-                    flex: 4,
-                    child: Text('Produit',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 10, fontWeight: FontWeight.w700)),
-                  ),
-                  SizedBox(
-                    width: 32,
-                    child: Text('Qté',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 10, fontWeight: FontWeight.w700)),
-                  ),
-                  SizedBox(
-                    width: 64,
-                    child: Text('P.U.',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 10, fontWeight: FontWeight.w700)),
-                  ),
-                  SizedBox(
-                    width: 68,
-                    child: Text('Total',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 10, fontWeight: FontWeight.w700)),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 6),
-            // Lignes produits
-            ...entries.map((entry) {
-              final qty   = entry.value['qty'] as int;
-              final unit  = entry.value['unitPrice'] as double;
-              final total = entry.value['total'] as double;
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      flex: 4,
-                      child: Text(entry.key,
-                        style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12),
-                        overflow: TextOverflow.ellipsis),
-                    ),
-                    SizedBox(
-                      width: 32,
-                      child: Container(
-                        alignment: Alignment.center,
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppTheme.primary.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text('$qty',
-                          style: const TextStyle(
-                            color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w700)),
-                      ),
-                    ),
-                    SizedBox(
-                      width: 64,
-                      child: Text('${fmt.format(unit)} F',
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-                    ),
-                    SizedBox(
-                      width: 68,
-                      child: Text('${fmt.format(total)} F',
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          color: AppTheme.success, fontWeight: FontWeight.w700, fontSize: 12)),
-                    ),
-                  ],
-                ),
-              );
-            }),
-            // Total général
-            const Divider(color: Color(0xFF2A2A5A), height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('TOTAL VENTES',
-                  style: TextStyle(
-                    color: AppTheme.success, fontWeight: FontWeight.w800, fontSize: 12)),
-                Text('${fmt.format(grandTotal)} F CFA',
-                  style: const TextStyle(
-                    color: AppTheme.success, fontWeight: FontWeight.w900, fontSize: 14)),
-              ],
-            ),
-          ],
         ],
       ),
     );
