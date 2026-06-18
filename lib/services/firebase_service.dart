@@ -225,6 +225,28 @@ class FirebaseService {
             discount: (data['discount'] as num?)?.toDouble() ?? 0,
             isPaid: data['isPaid'] as bool? ?? false,
             paymentMethod: data['paymentMethod'] as String?,
+            amountPaid: (data['amountPaid'] as num?)?.toDouble() ?? 0,
+            // ── Cycle de vie caisse 2 étapes ──────────────────────────
+            cashStatus: CashStatus.values[
+              (data['cashStatus'] as int?) ?? CashStatus.pending_cashout.index
+            ],
+            cashoutInvoiceGenerated:
+                data['cashoutInvoiceGenerated'] as bool? ?? false,
+            settlementInvoiceGenerated:
+                data['settlementInvoiceGenerated'] as bool? ?? false,
+            cashoutInvoiceNumber:
+                data['cashoutInvoiceNumber'] as String?,
+            cashoutAt: _toDateTimeNullable(data['cashoutAt']),
+            cashierId: data['cashierId'] as String?,
+            cashierName: data['cashierName'] as String?,
+            settlementInvoiceNumber:
+                data['settlementInvoiceNumber'] as String?,
+            settledAt: _toDateTimeNullable(data['settledAt']),
+            changeAmount:
+                (data['changeAmount'] as num?)?.toDouble() ?? 0,
+            receiptPrinted: data['receiptPrinted'] as bool? ?? false,
+            settlementPrinted:
+                data['settlementPrinted'] as bool? ?? false,
           );
         } catch (e) {
           debugPrint('[stream.orders] doc ${d.id}: $e');
@@ -583,6 +605,8 @@ class FirebaseService {
       'settlementInvoiceNumber': settlementInvoiceNumber,
       'settledAt': nowMs,
       'isPaid': true,
+      'paymentStatus': 'paid',           // ← requis par Point de Caisse
+      'settlementStatus': 'completed',   // ← requis par Point de Caisse
       'paymentMethod': paymentMethod,
       'amountPaid': amountPaid,
       'changeAmount': changeAmount,

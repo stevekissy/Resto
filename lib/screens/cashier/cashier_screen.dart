@@ -8,11 +8,11 @@ import '../../models/models.dart';
 import '../../services/print_service.dart';
 
 // ════════════════════════════════════════════════════════════════════════════
-//  CashierScreen — VERSION CAISSE OFFICIELLE 18-06
+//  CashierScreen — Caisse Sankadio Manager
 //  UN SEUL module caisse — design identique admin/manager/cashier
 //  Tab 1 : Commandes à encaisser   (cashStatus == pending_cashout)
 //  Tab 2 : Factures en attente     (cashStatus == awaiting_payment)
-//  Tab 3 : Point de Caisse         (settlementInvoiceGenerated == true)
+//  Tab 3 : Point de Caisse         (paymentStatus=paid + settlementStatus=completed)
 // ════════════════════════════════════════════════════════════════════════════
 
 class CashierScreen extends StatefulWidget {
@@ -47,22 +47,6 @@ class _CashierScreenState extends State<CashierScreen>
     return Scaffold(
       body: Column(
         children: [
-          // ── BANDEAU VERSION TEMPORAIRE ──────────────────────────────
-          Container(
-            width: double.infinity,
-            color: const Color(0xFF1565C0),
-            padding: const EdgeInsets.symmetric(vertical: 3),
-            child: const Text(
-              'VERSION CAISSE OFFICIELLE 18-06',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1,
-              ),
-            ),
-          ),
           // ── TABS ────────────────────────────────────────────────────
           Container(
             color: AppTheme.surface,
@@ -907,13 +891,16 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
     final today = DateTime.now();
 
     // Uniquement les règlements définitifs du jour
+    // Filtre sur settledAt (date du règlement) et non createdAt (date de commande)
     final todayPaid = provider.orders
-        .where((o) =>
-            o.settlementInvoiceGenerated &&
-            o.isPaid &&
-            o.createdAt.day == today.day &&
-            o.createdAt.month == today.month &&
-            o.createdAt.year == today.year)
+        .where((o) {
+          if (!o.settlementInvoiceGenerated || !o.isPaid) return false;
+          final settled = o.settledAt;
+          if (settled == null) return false;
+          return settled.day == today.day &&
+              settled.month == today.month &&
+              settled.year == today.year;
+        })
         .toList();
 
     final totalCash = todayPaid

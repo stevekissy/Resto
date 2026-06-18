@@ -729,29 +729,33 @@ class AppProvider extends ChangeNotifier {
   }
 
   // =================== STATISTICS ===================
-  /// Revenu du jour — compte UNIQUEMENT les règlements définitifs (settlementInvoiceGenerated == true)
-  /// Les factures d'encaissement provisoires (cashStatus == awaiting_payment) ne sont PAS comptées.
+  /// Revenu du jour — compte UNIQUEMENT les règlements définitifs.
+  /// Filtre sur settledAt (heure du règlement) et NON createdAt (heure de commande).
+  /// Les factures provisoires (cashStatus == awaiting_payment) ne sont PAS comptées.
   double get todayRevenue {
     final today = DateTime.now();
     return _orders
-      .where((o) =>
-        o.settlementInvoiceGenerated &&
-        o.isPaid &&
-        o.createdAt.day == today.day &&
-        o.createdAt.month == today.month &&
-        o.createdAt.year == today.year)
+      .where((o) {
+        if (!o.settlementInvoiceGenerated || !o.isPaid) return false;
+        final settled = o.settledAt;
+        if (settled == null) return false;
+        return settled.day   == today.day   &&
+               settled.month == today.month &&
+               settled.year  == today.year;
+      })
       .fold(0.0, (sum, o) => sum + o.totalAmount);
   }
 
   /// Revenu du jour par mode de paiement (point de caisse détaillé)
+  /// Filtre sur settledAt — même règle que todayRevenue.
   Map<String, double> get todayRevenueByPaymentMethod {
     final today = DateTime.now();
-    final settled = _orders.where((o) =>
-      o.settlementInvoiceGenerated &&
-      o.isPaid &&
-      o.createdAt.day == today.day &&
-      o.createdAt.month == today.month &&
-      o.createdAt.year == today.year);
+    final settled = _orders.where((o) {
+      if (!o.settlementInvoiceGenerated || !o.isPaid) return false;
+      final s = o.settledAt;
+      if (s == null) return false;
+      return s.day == today.day && s.month == today.month && s.year == today.year;
+    });
     final map = <String, double>{};
     for (final o in settled) {
       final method = o.paymentMethod ?? 'Espèces';
