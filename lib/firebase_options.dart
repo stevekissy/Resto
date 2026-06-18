@@ -26,7 +26,7 @@ class DefaultFirebaseOptions {
     appId: '1:54702810896:web:66059d3978fa00b27e6795',
     messagingSenderId: '54702810896',
     projectId: 'sankadiokro-manager',
-    authDomain: 'sankadiokro-manager.firebaseapp.com',
+    authDomain: 'cheery-monstera-c061a0.netlify.app',
     storageBucket: 'sankadiokro-manager.firebasestorage.app',
     measurementId: 'G-Z9DY3FL0ZD',
   );
