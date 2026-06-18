@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
@@ -88,10 +87,12 @@ class _PersonnelTab extends StatelessWidget {
   }
 
   void _showAddUserDialog(BuildContext context, AppProvider provider) {
-    final nameCtrl = TextEditingController();
-    final emailCtrl = TextEditingController();
-    final phoneCtrl = TextEditingController();
+    final nameCtrl     = TextEditingController();
+    final emailCtrl    = TextEditingController();
+    final passwordCtrl = TextEditingController();
     UserRole role = UserRole.server;
+    bool obscurePassword = true;
+    String? errorMsg;
 
     showDialog(
       context: context,
@@ -102,11 +103,35 @@ class _PersonnelTab extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Nom complet')),
+                TextField(
+                  controller: nameCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(labelText: 'Nom complet'),
+                ),
                 const SizedBox(height: 8),
-                TextField(controller: emailCtrl, keyboardType: TextInputType.emailAddress, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Email')),
+                TextField(
+                  controller: emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(labelText: 'Email'),
+                ),
                 const SizedBox(height: 8),
-                TextField(controller: phoneCtrl, keyboardType: TextInputType.phone, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Téléphone')),
+                TextField(
+                  controller: passwordCtrl,
+                  obscureText: obscurePassword,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Mot de passe',
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        obscurePassword ? Icons.visibility_off : Icons.visibility,
+                        color: Colors.white54,
+                        size: 20,
+                      ),
+                      onPressed: () => setS(() => obscurePassword = !obscurePassword),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<UserRole>(
                   value: role,
@@ -114,11 +139,15 @@ class _PersonnelTab extends StatelessWidget {
                   dropdownColor: AppTheme.cardBg,
                   decoration: const InputDecoration(labelText: 'Rôle'),
                   items: UserRole.values.map((r) {
-                    final labels = ['Administrateur', 'Manager', 'Caissier(ère)', 'Cuisine', 'Serveur(se)'];
+                    const labels = ['Administrateur', 'Manager', 'Caissier(ère)', 'Cuisine', 'Serveur(se)'];
                     return DropdownMenuItem(value: r, child: Text(labels[r.index]));
                   }).toList(),
                   onChanged: (v) => setS(() => role = v!),
                 ),
+                if (errorMsg != null) ...[
+                  const SizedBox(height: 8),
+                  Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                ],
               ],
             ),
           ),
@@ -126,16 +155,29 @@ class _PersonnelTab extends StatelessWidget {
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
             ElevatedButton(
               onPressed: () async {
-                if (nameCtrl.text.isNotEmpty && emailCtrl.text.isNotEmpty) {
-                  await provider.addUserDirect(AppUser(
-                    id: const Uuid().v4(),
-                    name: nameCtrl.text,
-                    email: emailCtrl.text,
-                    phone: phoneCtrl.text,
+                final name     = nameCtrl.text.trim();
+                final email    = emailCtrl.text.trim();
+                final password = passwordCtrl.text;
+
+                if (name.isEmpty || email.isEmpty || password.isEmpty) {
+                  setS(() => errorMsg = 'Nom, email et mot de passe obligatoires.');
+                  return;
+                }
+                if (password.length < 6) {
+                  setS(() => errorMsg = 'Le mot de passe doit comporter au moins 6 caractères.');
+                  return;
+                }
+                setS(() => errorMsg = null);
+                try {
+                  await provider.addUser(
+                    name: name,
+                    email: email,
+                    password: password,
                     role: role,
-                    isActive: true,
-                  ));
+                  );
                   if (ctx.mounted) Navigator.pop(ctx);
+                } catch (e) {
+                  setS(() => errorMsg = e.toString().replaceAll(RegExp(r'\[.*?\]\s*'), ''));
                 }
               },
               child: const Text('Ajouter'),

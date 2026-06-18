@@ -665,13 +665,12 @@ class _UserFormDialogState extends State<_UserFormDialog> {
               await provider.addUser(
                 name: _nameCtrl.text.trim(),
                 email: _emailCtrl.text.trim(),
-                phone: _phoneCtrl.text.trim(),
                 password: _passwordCtrl.text,
                 role: _selectedRole,
               );
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Utilisateur ajouté dans Firestore'), backgroundColor: AppTheme.success),
+                const SnackBar(content: Text('Utilisateur créé (Auth + Firestore)'), backgroundColor: AppTheme.success),
               );
             }
             Navigator.pop(context);

@@ -28,6 +28,7 @@ class AppProvider extends ChangeNotifier {
   StreamSubscription? _subSuppliers;
   StreamSubscription? _subSupplierOrders;
   StreamSubscription? _subAttendances;
+  StreamSubscription? _subDailyCharges;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
@@ -134,45 +135,43 @@ class AppProvider extends ChangeNotifier {
   }
 
   // =================== CHARGES DU JOUR ===================
-  final List<Map<String, dynamic>> _dailyCharges = [];
-  List<Map<String, dynamic>> get dailyCharges => _dailyCharges;
+  // Alimentée exclusivement par le stream Firestore daily_charges
+  List<Map<String, dynamic>> _charges = [];
 
-  double get todayTotalCharges {
-    final today = DateTime.now();
-    return _dailyCharges
-      .where((c) {
-        final d = c['date'] as DateTime?;
-        return d != null && d.day == today.day && d.month == today.month && d.year == today.year;
-      })
-      .fold(0.0, (sum, c) => sum + ((c['amount'] as num?)?.toDouble() ?? 0.0));
+  /// Liste des charges du jour (filtrée par le stream Firestore côté client)
+  List<Map<String, dynamic>> get dailyCharges => _charges;
+
+  /// Alias conservé pour compatibilité avec cashier_screen.dart
+  List<Map<String, dynamic>> get todayCharges => _charges;
+
+  /// Total des charges du jour (déjà filtré par le stream)
+  double get todayTotalCharges =>
+      _charges.fold(0.0, (sum, c) => sum + ((c['amount'] as num?)?.toDouble() ?? 0.0));
+
+  Future<void> addDailyCharge({required String label, required double amount, String? note}) async {
+    final id        = _uuid.v4();
+    final createdBy = _currentUser?.name ?? 'Admin';
+    try {
+      await _firebase.addDailyCharge(
+        id: id, label: label, amount: amount,
+        note: note ?? '', createdBy: createdBy,
+      );
+      // Le stream Firestore met _charges à jour automatiquement
+    } catch (e) {
+      debugPrint('[AppProvider] addDailyCharge erreur: $e');
+      rethrow;
+    }
   }
 
-  List<Map<String, dynamic>> get todayCharges {
-    final today = DateTime.now();
-    return _dailyCharges.where((c) {
-      final d = c['date'] as DateTime?;
-      return d != null && d.day == today.day && d.month == today.month && d.year == today.year;
-    }).toList();
+  Future<void> removeDailyCharge(String id) async {
+    try {
+      await _firebase.removeDailyCharge(id);
+      // Le stream Firestore met _charges à jour automatiquement
+    } catch (e) {
+      debugPrint('[AppProvider] removeDailyCharge erreur: $e');
+      rethrow;
+    }
   }
-
-  void addDailyCharge({required String label, required double amount, String? note}) {
-    _dailyCharges.add({
-      'id': _uuid.v4(),
-      'label': label,
-      'amount': amount,
-      'note': note ?? '',
-      'date': DateTime.now(),
-    });
-    notifyListeners();
-  }
-
-  void removeDailyCharge(String id) {
-    _dailyCharges.removeWhere((c) => c['id'] == id);
-    notifyListeners();
-  }
-
-  // =================== ORDER COUNTER ===================
-  int _orderCounter = 100;
 
   // =================== NOTIFICATION CALLBACK ===================
   Function(Order)? onNewOrder;
@@ -397,6 +396,11 @@ class AppProvider extends ChangeNotifier {
       onError: (e) { debugPrint('[stream.attendances] ERREUR: $e'); },
       cancelOnError: false,
     );
+    _subDailyCharges = _firebase.streamDailyCharges().listen(
+      (list) { _charges = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.daily_charges] ERREUR: $e'); },
+      cancelOnError: false,
+    );
   }
 
   void _stopFirebaseStreams() {
@@ -408,6 +412,7 @@ class AppProvider extends ChangeNotifier {
     _subSuppliers?.cancel();
     _subSupplierOrders?.cancel();
     _subAttendances?.cancel();
+    _subDailyCharges?.cancel();
   }
 
   /// Déconnexion complète : signOut Firebase + nettoyage local.
@@ -422,6 +427,7 @@ class AppProvider extends ChangeNotifier {
     _currentUser = null;
     _users = []; _orders = []; _products = []; _stockItems = [];
     _suppliers = []; _supplierOrders = []; _messages = []; _attendances = [];
+    _charges = [];
     notifyListeners();
   }
 
@@ -433,6 +439,7 @@ class AppProvider extends ChangeNotifier {
     _currentUser = null;
     _users = []; _orders = []; _products = []; _stockItems = [];
     _suppliers = []; _supplierOrders = []; _messages = []; _attendances = [];
+    _charges = [];
     notifyListeners();
   }
 
@@ -446,10 +453,11 @@ class AppProvider extends ChangeNotifier {
     String? specialInstructions,
     bool isUrgent = false,
   }) async {
-    _orderCounter++;
+    // Numéro de commande unique via transaction Firestore (pas de RAM)
+    final orderNumber = await _firebase.getNextOrderNumber();
     final order = Order(
       id: _uuid.v4(),
-      orderNumber: _orderCounter,
+      orderNumber: orderNumber,
       tableNumber: tableNumber,
       serverName: serverName ?? _currentUser?.name,
       serverId: serverId,
@@ -683,9 +691,6 @@ class AppProvider extends ChangeNotifier {
   }
 
   // =================== USER MANAGEMENT (Firestore) ===================
-  Future<void> addUserDirect(AppUser user) async {
-    await _firebase.saveUser(user);
-  }
 
   Future<void> deleteUserFirestore(String id) async {
     await _firebase.deleteUser(id);
@@ -696,22 +701,34 @@ class AppProvider extends ChangeNotifier {
   }
 
   // =================== ATTENDANCE ===================
-  void markAttendance(String userId, AttendanceType type) {
+  Future<void> markAttendance(String userId, AttendanceType type) async {
     final today = DateTime.now();
     final dateKey = DateTime(today.year, today.month, today.day);
-    
-    var attendance = _attendances.firstWhere(
-      (a) => a.userId == userId && DateTime(a.date.year, a.date.month, a.date.day) == dateKey,
-      orElse: () {
-        final user = _users.firstWhere((u) => u.id == userId);
-        final newAttendance = Attendance(
-          id: _uuid.v4(), userId: userId, userName: user.name, date: today,
-        );
-        _attendances.add(newAttendance);
-        return newAttendance;
-      },
+
+    // Trouver ou créer la ligne de présence en mémoire
+    Attendance? attendance;
+    final idx = _attendances.indexWhere(
+      (a) => a.userId == userId &&
+             DateTime(a.date.year, a.date.month, a.date.day) == dateKey,
     );
 
+    if (idx != -1) {
+      attendance = _attendances[idx];
+    } else {
+      final user = _users.firstWhere(
+        (u) => u.id == userId,
+        orElse: () => AppUser(id: userId, name: 'Inconnu', email: '', phone: '', role: UserRole.server),
+      );
+      attendance = Attendance(
+        id: _uuid.v4(),
+        userId: userId,
+        userName: user.name,
+        date: today,
+      );
+      _attendances.add(attendance);
+    }
+
+    // Mise à jour de la ligne en mémoire
     if (type == AttendanceType.morning) {
       attendance.morningPresent = true;
       attendance.morningTime = DateTime.now();
@@ -719,6 +736,14 @@ class AppProvider extends ChangeNotifier {
       attendance.eveningPresent = true;
       attendance.eveningTime = DateTime.now();
     }
+
+    // Persistance Firestore
+    try {
+      await _firebase.saveAttendance(attendance);
+    } catch (e) {
+      debugPrint('[AppProvider] markAttendance — saveAttendance erreur: $e');
+    }
+
     notifyListeners();
   }
 
@@ -829,27 +854,27 @@ class AppProvider extends ChangeNotifier {
     return _orders.where((o) => o.createdAt.day == today.day && o.createdAt.month == today.month).length;
   }
 
-  // =================== GESTION UTILISATEURS (ADMIN) ===================
+  // =================== GESTION UTILISATEURS ADMIN ===================
 
-  // =================== GESTION UTILISATEURS ADMIN (Firestore) ===================
-
-  Future<void> addUser({
+  /// Point d'entrée unique pour créer un utilisateur.
+  /// Crée le compte Firebase Auth PUIS le document Firestore.
+  /// Si Auth échoue → exception propagée (pas de doc Firestore créé).
+  Future<AppUser> addUser({
     required String name,
     required String email,
-    required String phone,
     required String password,
     required UserRole role,
   }) async {
-    final newUser = AppUser(
-      id: _uuid.v4(),
+    final createdBy = _currentUser?.name ?? 'Admin';
+    final newUser = await _firebase.createUserWithAuth(
       name: name,
       email: email,
-      phone: phone,
+      password: password,
       role: role,
-      isActive: true,
+      createdBy: createdBy,
     );
-    await _firebase.saveUser(newUser);
     // Le stream Firestore met _users à jour automatiquement
+    return newUser;
   }
 
   Future<void> updateUser(

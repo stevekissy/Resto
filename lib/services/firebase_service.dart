@@ -72,6 +72,50 @@ class FirebaseService {
 
   Future<void> signOut() async => await _auth.signOut();
 
+  /// Crée un compte Firebase Auth + document Firestore en une seule opération atomique.
+  /// - Si Auth échoue  → exception propagée, aucun doc Firestore créé.
+  /// - Si Firestore échoue après Auth → rollback impossible côté Auth (limitation Firebase)
+  ///   mais l'exception est propagée pour affichage clair dans l'UI.
+  /// Retourne l'AppUser créé.
+  Future<AppUser> createUserWithAuth({
+    required String name,
+    required String email,
+    required String password,
+    required UserRole role,
+    required String createdBy,
+  }) async {
+    // ÉTAPE 1 — Créer le compte Firebase Auth
+    final credential = await _auth.createUserWithEmailAndPassword(
+      email: email.trim(),
+      password: password,
+    );
+    final uid = credential.user!.uid;
+
+    // ÉTAPE 2 — Créer le document Firestore (uniquement si Auth a réussi)
+    final newUser = AppUser(
+      id: uid,
+      name: name,
+      email: email.trim(),
+      phone: '',
+      role: role,
+      isActive: true,
+    );
+    await _db.collection('users').doc(uid).set({
+      'id': uid,
+      'name': name,
+      'email': email.trim(),
+      'role': role.index,
+      'isActive': true,
+      'isOnline': false,
+      'phone': '',
+      'createdAt': FieldValue.serverTimestamp(),
+      'createdBy': createdBy,
+    });
+
+    debugPrint('[FirebaseService] ✅ Utilisateur créé Auth+Firestore : $email ($uid)');
+    return newUser;
+  }
+
   /// Lecture synchrone — peut retourner null brièvement au démarrage Web.
   /// Préférer resolveAuthState() pour la reprise de session au boot.
   User? get currentFirebaseUser => _auth.currentUser;
@@ -199,6 +243,32 @@ class FirebaseService {
 
   Future<void> deleteProduct(String productId) async {
     await _db.collection('products').doc(productId).delete();
+  }
+
+  // =================== ORDER COUNTER ===================
+
+  /// Retourne le prochain numéro de commande unique via transaction Firestore.
+  /// Collection : counters  |  Document : orderCounter  |  Champ : lastNumber
+  /// Utilise runTransaction() pour éviter tout doublon même en cas de
+  /// créations simultanées depuis plusieurs postes.
+  Future<int> getNextOrderNumber() async {
+    final counterRef = _db.collection('counters').doc('orderCounter');
+    int nextNumber = 101;
+    await _db.runTransaction((txn) async {
+      final snap = await txn.get(counterRef);
+      if (snap.exists) {
+        final last = (snap.data()!['lastNumber'] as num?)?.toInt() ?? 100;
+        nextNumber = last + 1;
+      } else {
+        nextNumber = 101;
+      }
+      txn.set(counterRef, {
+        'lastNumber': nextNumber,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    });
+    debugPrint('[FirebaseService] getNextOrderNumber → $nextNumber');
+    return nextNumber;
   }
 
   // =================== ORDERS ===================
@@ -533,6 +603,66 @@ class FirebaseService {
 
   Future<void> saveAttendance(Attendance attendance) async {
     await _db.collection('attendances').doc(attendance.id).set(attendance.toMap());
+  }
+
+  // =================== DAILY CHARGES ===================
+
+  /// Stream des charges du jour — filtre en mémoire sur la date du jour.
+  /// Collection : daily_charges  |  Champs : label, amount, date, createdAt, createdBy
+  /// Pas de .where() avec Timestamp → on récupère toutes les charges
+  /// et on filtre côté client pour éviter tout index composite.
+  Stream<List<Map<String, dynamic>>> streamDailyCharges() {
+    return _db.collection('daily_charges').snapshots().map((snap) {
+      final today = DateTime.now();
+      final list = <Map<String, dynamic>>[];
+      for (final doc in snap.docs) {
+        try {
+          final data = doc.data();
+          final date = _toDateTime(data['date']);
+          list.add({
+            'id':        doc.id,
+            'label':     data['label']     as String? ?? '',
+            'amount':    (data['amount']   as num?)?.toDouble() ?? 0.0,
+            'note':      data['note']      as String? ?? '',
+            'date':      date,
+            'createdBy': data['createdBy'] as String? ?? '',
+          });
+        } catch (e) {
+          debugPrint('[stream.daily_charges] doc ${doc.id}: $e');
+        }
+      }
+      // Filtrer sur la date du jour côté client
+      final todayCharges = list.where((c) {
+        final d = c['date'] as DateTime;
+        return d.year == today.year && d.month == today.month && d.day == today.day;
+      }).toList();
+      todayCharges.sort((a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
+      return todayCharges;
+    });
+  }
+
+  Future<void> addDailyCharge({
+    required String id,
+    required String label,
+    required double amount,
+    required String createdBy,
+    String note = '',
+  }) async {
+    await _db.collection('daily_charges').doc(id).set({
+      'id':        id,
+      'label':     label,
+      'amount':    amount,
+      'note':      note,
+      'date':      FieldValue.serverTimestamp(),
+      'createdAt': FieldValue.serverTimestamp(),
+      'createdBy': createdBy,
+    });
+    debugPrint('[FirebaseService] Charge ajoutée : $label ($amount)');
+  }
+
+  Future<void> removeDailyCharge(String id) async {
+    await _db.collection('daily_charges').doc(id).delete();
+    debugPrint('[FirebaseService] Charge supprimée : $id');
   }
 
   // =================== RECEIPTS ===================
