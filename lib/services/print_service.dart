@@ -140,12 +140,9 @@ class PrintService {
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  //  BUILD HTML — Facture d'Encaissement PROVISOIRE (80mm)
-  //  Étape 1 : affiche commande + total, PAS de détails paiement
-  // ─────────────────────────────────────────────────────────────────────
-
-  // ─────────────────────────────────────────────────────────────────────
-  //  BUILD HTML — Facture d'Encaissement PROVISOIRE (80mm)
+  //  BUILD HTML — Facture d'Encaissement PROVISOIRE
+  //  Style : reproduit fidèlement le modèle officiel Sankadio
+  //  (tableau Désignation|Réf|PU|Qté|Total, lignes rouges, totaux encadrés)
   //  Étape 1 : commande + total, PAS de détails paiement
   // ─────────────────────────────────────────────────────────────────────
   String _buildCashoutHtml({
@@ -153,25 +150,35 @@ class PrintService {
     required String cashoutInvoiceNumber,
     String? cashierName,
   }) {
-    final dateStr = _dateFmt.format(DateTime.now());
-    final itemsHtml = order.items.map((item) => '''
-      <tr>
-        <td class="item-name">${_escape(item.productName)}</td>
-        <td class="item-qty">×${item.quantity}</td>
-        <td class="item-price">${_fmt.format(item.unitPrice)} F</td>
-        <td class="item-total">${_fmt.format(item.totalPrice)} F</td>
-      </tr>
-    ''').join('');
+    final now     = DateTime.now();
+    final dateFmt2 = DateFormat('yyyy-MM-dd HH:mm:ss');
+    final dateStr = dateFmt2.format(now);
+    final year    = now.year.toString();
+
+    // Numéro de facture format : XXXXXX-XXXX (ex : 194156-4546)
+    final invoiceDisplay = cashoutInvoiceNumber;
+    // Référence table : KG-N (table number)
+    final refTable = 'KG-${order.tableNumber}';
+
+    // Lignes articles
+    final itemsRows = order.items.map((item) {
+      final refItem = 'P${item.productId.isNotEmpty ? item.productId.substring(0, item.productId.length.clamp(0, 4)).toUpperCase() : "---"}';
+      return '''
+        <tr>
+          <td class="td-designation">${_escape(item.productName)}</td>
+          <td class="td-ref">$refItem</td>
+          <td class="td-pu">${_fmt.format(item.unitPrice)}</td>
+          <td class="td-qte">${item.quantity}</td>
+          <td class="td-total">${_fmt.format(item.totalPrice)}</td>
+        </tr>''';
+    }).join('');
 
     final discountRow = order.discount > 0
-        ? '<tr class="discount-row"><td colspan="3">Remise</td><td>-${_fmt.format(order.discount)} F</td></tr>'
-        : '';
-
-    final serverRow = order.serverName != null
-        ? '<tr><td class="info-label">Serveur</td><td class="info-value">${_escape(order.serverName!)}</td></tr>'
-        : '';
-    final cashierRow = cashierName != null
-        ? '<tr><td class="info-label">Caissier</td><td class="info-value">${_escape(cashierName)}</td></tr>'
+        ? '''<tr class="discount-row">
+          <td class="td-designation" colspan="3"><em>Remise accordée</em></td>
+          <td class="td-qte"></td>
+          <td class="td-total">-${_fmt.format(order.discount)}</td>
+        </tr>'''
         : '';
 
     return '''<!DOCTYPE html>
@@ -180,48 +187,301 @@ class PrintService {
   <meta charset="UTF-8">
   <title>Facture Encaissement #${order.orderNumber}</title>
   <style>
-    ${_thermalCss()}
-    .receipt-type { color: #1565C0; border: 2px solid #1565C0; padding: 3px 8px; border-radius: 4px; letter-spacing: 1px; }
-    .provisional-banner { background: #E3F2FD; border: 1px dashed #1565C0; padding: 4px 8px; text-align: center; font-size: 9px; color: #1565C0; margin: 6px 0; border-radius: 4px; }
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 10.5px;
+      color: #000;
+      background: #fff;
+      width: 80mm;
+      max-width: 80mm;
+    }
+
+    .receipt {
+      width: 78mm;
+      margin: 0 auto;
+      padding: 4mm 1mm;
+    }
+
+    /* ── En-tête ── */
+    .header-top {
+      text-align: center;
+      margin-bottom: 4px;
+    }
+    .logo-img {
+      width: 55px;
+      height: 55px;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto 3px auto;
+    }
+    .resto-name {
+      font-size: 13px;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+      margin-bottom: 1px;
+    }
+
+    /* ── Ligne rouge épaisse ── */
+    .red-bar-thick {
+      border: none;
+      border-top: 3px solid #CC0000;
+      margin: 5px 0 3px 0;
+    }
+    .red-bar-thin {
+      border: none;
+      border-top: 1px solid #CC0000;
+      margin: 3px 0;
+    }
+
+    /* ── Bloc méta-infos (numéro, date, exercice) ── */
+    .meta-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 4px;
+    }
+    .meta-table td {
+      font-size: 10px;
+      padding: 1px 2px;
+      vertical-align: top;
+    }
+    .meta-label { color: #555; width: 38%; }
+    .meta-value { font-weight: bold; }
+
+    /* ── Titre facture surligné ── */
+    .invoice-title-block {
+      text-align: center;
+      margin: 6px 0 4px 0;
+    }
+    .invoice-title {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      background: #FFCCCC;
+      color: #CC0000;
+      border: 1.5px solid #CC0000;
+      border-radius: 3px;
+      padding: 2px 10px;
+    }
+
+    /* ── Tableau articles ── */
+    .items-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 4px 0;
+    }
+    .items-table thead tr {
+      background: #CC0000;
+      color: #fff;
+    }
+    .items-table thead th {
+      font-size: 9.5px;
+      font-weight: bold;
+      padding: 3px 2px;
+      text-align: left;
+      border: none;
+    }
+    .items-table tbody tr {
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .items-table tbody tr:nth-child(even) {
+      background: #FFF5F5;
+    }
+    .items-table tbody td {
+      font-size: 10px;
+      padding: 3px 2px;
+      vertical-align: top;
+    }
+
+    /* Largeurs colonnes */
+    .td-designation { width: 35%; }
+    .td-ref         { width: 12%; text-align: center; }
+    .td-pu          { width: 18%; text-align: right; }
+    .td-qte         { width: 8%;  text-align: center; }
+    .td-total       { width: 20%; text-align: right; font-weight: bold; }
+
+    /* ── Totaux ── */
+    .totals-block {
+      margin: 4px 0;
+      border: 1.5px solid #CC0000;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .totals-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .totals-table td {
+      font-size: 10.5px;
+      padding: 2.5px 6px;
+    }
+    .totals-table tr:not(:last-child) td {
+      border-bottom: 1px solid #f0c0c0;
+    }
+    .totals-table td:last-child {
+      text-align: right;
+      font-weight: bold;
+    }
+    .total-net-row {
+      background: #CC0000;
+      color: #fff !important;
+    }
+    .total-net-row td {
+      font-size: 12px;
+      font-weight: bold;
+      padding: 4px 6px;
+      color: #fff;
+    }
+    .discount-row td { color: #B71C1C; font-style: italic; }
+
+    /* ── Bandeau provisoire ── */
+    .prov-banner {
+      background: #FFF3CD;
+      border: 1px dashed #FF8800;
+      text-align: center;
+      font-size: 9px;
+      color: #885500;
+      padding: 3px 6px;
+      border-radius: 3px;
+      margin: 5px 0;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── Pied de page ── */
+    .footer-thick-bar {
+      border: none;
+      border-top: 2px solid #000;
+      margin: 6px 0 3px 0;
+    }
+    .footer-block {
+      text-align: center;
+      font-size: 9.5px;
+      line-height: 1.5;
+    }
+    .footer-name {
+      font-size: 11px;
+      font-weight: bold;
+      margin-bottom: 1px;
+    }
+    .footer-contact {
+      color: #333;
+      font-size: 9px;
+    }
+
+    /* ── Screen preview ── */
+    @media screen {
+      body { background: #f5f5f5; display: flex; justify-content: center; padding: 20px; }
+      .receipt { background: #fff; box-shadow: 0 2px 16px rgba(0,0,0,0.18); padding: 14px; }
+    }
+    @media print {
+      body { background: #fff; width: 80mm; }
+      .receipt { box-shadow: none; }
+      .print-btn { display: none; }
+    }
   </style>
 </head>
 <body>
   <div class="receipt">
-    <div class="header">
+
+    <!-- ══ EN-TÊTE ══ -->
+    <div class="header-top">
       <img src="${_logoBase64()}" alt="Logo" class="logo-img" />
-      <div class="restaurant-name">RESTAURANT SANKADIOKRO</div>
-      <div class="restaurant-sub">Yopougon Millionnaire</div>
-      <div class="restaurant-sub">Abidjan - Côte d\'Ivoire</div>
-      <div class="restaurant-sub">Tél : 0757564300 / 0594114223</div>
-      <div class="divider-double"></div>
-      <div class="receipt-title receipt-type">FACTURE D\'ENCAISSEMENT</div>
+      <div class="resto-name">RESTAURANT SANKADIOKRO</div>
     </div>
-    <div class="provisional-banner">PROVISOIRE — En attente de règlement</div>
-    <table class="info-table">
-      <tr><td class="info-label">N° Facture</td><td class="info-value">$cashoutInvoiceNumber</td></tr>
-      <tr><td class="info-label">N° Commande</td><td class="info-value">#${order.orderNumber}</td></tr>
-      <tr><td class="info-label">Table</td><td class="info-value">${_escape(order.tableNumber)}</td></tr>
-      <tr><td class="info-label">Date</td><td class="info-value">$dateStr</td></tr>
-      $serverRow
-      $cashierRow
+
+    <!-- Ligne rouge épaisse -->
+    <hr class="red-bar-thick">
+
+    <!-- ══ TITRE FACTURE ENCAISSEMENT ══ -->
+    <div class="invoice-title-block">
+      <span class="invoice-title">FACTURE D&#x27;ENCAISSEMENT</span>
+    </div>
+
+    <!-- Méta-informations -->
+    <table class="meta-table">
+      <tr>
+        <td class="meta-label">Facture n° :</td>
+        <td class="meta-value">$invoiceDisplay</td>
+      </tr>
+      <tr>
+        <td class="meta-label">Réf :</td>
+        <td class="meta-value">$refTable</td>
+      </tr>
+      <tr>
+        <td class="meta-label">Date :</td>
+        <td class="meta-value">$dateStr</td>
+      </tr>
+      <tr>
+        <td class="meta-label">Exercice :</td>
+        <td class="meta-value">$year</td>
+      </tr>
+      ${cashierName != null ? '<tr><td class="meta-label">Caissier :</td><td class="meta-value">${_escape(cashierName)}</td></tr>' : ''}
     </table>
-    <div class="divider"></div>
+
+    <hr class="red-bar-thin">
+
+    <!-- ══ TABLEAU ARTICLES ══ -->
     <table class="items-table">
-      <thead><tr><th class="item-name">Article</th><th class="item-qty">Qté</th><th class="item-price">P.U</th><th class="item-total">Total</th></tr></thead>
-      <tbody>$itemsHtml</tbody>
+      <thead>
+        <tr>
+          <th class="td-designation">Désignation</th>
+          <th class="td-ref">Réf</th>
+          <th class="td-pu">PU</th>
+          <th class="td-qte">Qté</th>
+          <th class="td-total">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        $itemsRows
+        $discountRow
+      </tbody>
     </table>
-    <div class="divider"></div>
-    <table class="totals-table">
-      <tr><td colspan="3">Sous-total</td><td>${_fmt.format(order.subtotal)} F CFA</td></tr>
-      $discountRow
-      <tr class="total-row"><td colspan="3"><strong>TOTAL À PAYER</strong></td><td><strong>${_fmt.format(order.totalAmount)} F CFA</strong></td></tr>
-    </table>
-    <div class="divider-double"></div>
-    <div class="footer">
-      <p style="font-size:10px; color:#1565C0;">Le règlement sera effectué à la caisse.</p>
-      <p class="merci">Merci pour votre visite !</p>
-      <p class="footer-small">— SANKADIOKRO — Facture provisoire —</p>
+
+    <hr class="red-bar-thin">
+
+    <!-- ══ TOTAUX ENCADRÉS ══ -->
+    <div class="totals-block">
+      <table class="totals-table">
+        <tr>
+          <td>Total HT</td>
+          <td>${_fmt.format(order.subtotal)} fcfa</td>
+        </tr>
+        <tr>
+          <td>Total TTC</td>
+          <td>${_fmt.format(order.subtotal)} fcfa</td>
+        </tr>
+        <tr class="total-net-row">
+          <td>Net à payer</td>
+          <td>${_fmt.format(order.totalAmount)} fcfa</td>
+        </tr>
+      </table>
     </div>
+
+    <!-- Bandeau provisoire -->
+    <div class="prov-banner">&#9888; PROVISOIRE — En attente de règlement</div>
+
+    <!-- ══ PIED DE PAGE OFFICIEL ══ -->
+    <hr class="footer-thick-bar">
+    <div class="footer-block">
+      <div class="footer-name">RESTAURANT SANKADIOKRO</div>
+      <div class="footer-contact">Yopougon millionnaire derrière le groupe</div>
+      <div class="footer-contact">scolaire Saint Louis non loin de la CITE BHCI</div>
+      <div class="footer-contact">restaurantsankadiokro@gmail.com</div>
+      <div class="footer-contact">Tel : 23 45 81 66 &nbsp;-&nbsp; Cel : 07 04 29 47</div>
+    </div>
+
+    <!-- Bouton impression (masqué à l'impression) -->
+    <div style="text-align:center; margin-top:14px;" class="print-btn">
+      <button onclick="window.print()"
+        style="padding:8px 22px; background:#CC0000; color:#fff; border:none; border-radius:5px; cursor:pointer; font-size:12px; font-weight:bold;">
+        Imprimer / Télécharger PDF
+      </button>
+    </div>
+
   </div>
 </body>
 </html>''';
@@ -804,11 +1064,13 @@ class PrintService {
   //  Utilitaires
   // ─────────────────────────────────────────────────────────────────────
 
-  /// Génère un numéro de reçu unique basé sur la date + orderNumber
+  /// Génère un numéro de facture d'encaissement au format Sankadio : HHMMSS-OOOO
+  /// Exemple : 194156-4546  (heure 19:41:56 + orderNumber 4546)
   static String generateReceiptNumber(int orderNumber) {
     final now = DateTime.now();
-    final prefix = DateFormat('yyyyMMdd').format(now);
-    return 'REC-$prefix-${orderNumber.toString().padLeft(4, '0')}';
+    final timePart = DateFormat('HHmmss').format(now);
+    final orderPart = orderNumber.toString().padLeft(4, '0');
+    return '$timePart-$orderPart';
   }
 
   /// Génère un numéro de règlement unique
