@@ -11,7 +11,7 @@ import '../../services/print_service.dart';
 //  CashierScreen — Workflow caisse 2 étapes
 //  Tab 1 : Commandes à encaisser   (cashStatus == pending_cashout)
 //  Tab 2 : Factures en attente      (cashStatus == awaiting_payment)
-//  Tab 3 : Point de Caisse          (settlementInvoiceGenerated == true)
+//  Tab 3 : Point de Caisse          (design original restauré)
 // ════════════════════════════════════════════════════════════════════════════
 class CashierScreen extends StatefulWidget {
   const CashierScreen({super.key});
@@ -60,7 +60,7 @@ class _CashierScreenState extends State<CashierScreen>
                     isLabelVisible: tab1Count > 0,
                     child: const Icon(Icons.point_of_sale, size: 16),
                   ),
-                  text: 'Commandes à encaisser',
+                  text: 'Caisse',
                 ),
                 Tab(
                   icon: Badge(
@@ -68,7 +68,7 @@ class _CashierScreenState extends State<CashierScreen>
                     isLabelVisible: tab2Count > 0,
                     child: const Icon(Icons.receipt_long, size: 16),
                   ),
-                  text: 'En attente de règlement',
+                  text: 'Factures',
                 ),
                 const Tab(
                   icon: Icon(Icons.bar_chart, size: 16),
@@ -95,8 +95,9 @@ class _CashierScreenState extends State<CashierScreen>
 
 // ════════════════════════════════════════════════════════════════════════════
 //  TAB 1 — Commandes à encaisser (cashStatus == pending_cashout)
-//  Affiche : commande, table, articles, total.
-//  Bouton : "Encaisser" → génère facture provisoire → passe en awaiting_payment
+//  Affiche : numéro, table, articles, total UNIQUEMENT
+//  Pas de mode de paiement, pas de montant versé à cette étape
+//  Bouton "Encaisser" → génère facture provisoire → passe en Tab 2
 // ════════════════════════════════════════════════════════════════════════════
 class _CaisseTab extends StatefulWidget {
   const _CaisseTab();
@@ -126,8 +127,10 @@ class _CaisseTabState extends State<_CaisseTab> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Commande #${order.orderNumber}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
-            Text('Table : ${order.tableNumber}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+            Text('Commande #${order.orderNumber}',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+            Text('Table : ${order.tableNumber}',
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(12),
@@ -139,7 +142,8 @@ class _CaisseTabState extends State<_CaisseTab> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Montant à encaisser', style: TextStyle(color: AppTheme.textSecondary)),
+                  const Text('Montant à encaisser',
+                    style: TextStyle(color: AppTheme.textSecondary)),
                   Text('${_fmt.format(order.totalAmount)} F CFA',
                     style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 16)),
                 ],
@@ -160,7 +164,7 @@ class _CaisseTabState extends State<_CaisseTab> {
           ElevatedButton.icon(
             onPressed: () => Navigator.pop(ctx, true),
             icon: const Icon(Icons.receipt_long, size: 16),
-            label: const Text('Générer la facture'),
+            label: const Text('Encaisser'),
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
           ),
         ],
@@ -172,7 +176,6 @@ class _CaisseTabState extends State<_CaisseTab> {
     setState(() => _processing = true);
     try {
       await provider.cashoutOrder(order.id);
-      // Imprimer la facture d'encaissement provisoire
       final invoiceNumber = PrintService.generateReceiptNumber(order.orderNumber);
       PrintService().printCashoutInvoice(
         order: order,
@@ -182,7 +185,7 @@ class _CaisseTabState extends State<_CaisseTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Facture d\'encaissement #${order.orderNumber} générée — En attente de règlement'),
+            content: Text('Facture #${order.orderNumber} générée — En attente de règlement'),
             backgroundColor: AppTheme.primary,
             duration: const Duration(seconds: 3),
           ),
@@ -212,39 +215,66 @@ class _CaisseTabState extends State<_CaisseTab> {
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  const Icon(Icons.point_of_sale, color: AppTheme.primary, size: 18),
+                  const Icon(Icons.receipt_long, color: AppTheme.primary, size: 18),
                   const SizedBox(width: 8),
-                  Text(
-                    'Commandes à encaisser (${orders.length})',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primary.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text('Étape 1 / 2', style: TextStyle(color: AppTheme.primary, fontSize: 11)),
-                  ),
+                  Text('Commandes à encaisser (${orders.length})',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
                 ],
               ),
             ),
             Expanded(
               child: orders.isEmpty
                 ? const EmptyState(
-                    icon: Icons.check_circle_outline,
+                    icon: Icons.check_circle,
                     title: 'Tout est encaissé !',
-                    subtitle: 'Aucune commande en attente d\'encaissement.',
+                    subtitle: 'Aucune commande en attente de paiement',
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     itemCount: orders.length,
-                    itemBuilder: (ctx, i) => _OrderCard(
-                      order: orders[i],
-                      fmt: _fmt,
-                      onEncaisser: _processing ? null : () => _encaisser(ctx, orders[i], provider),
-                    ),
+                    itemBuilder: (ctx, i) {
+                      final order = orders[i];
+                      return GlassCard(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // En-tête commande
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('#${order.orderNumber} - Table ${order.tableNumber}',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+                                Text('${_fmt.format(order.totalAmount)} F CFA',
+                                  style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 16)),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            // Articles uniquement — pas de mode paiement, pas de montant versé
+                            ...order.items.map((item) => Padding(
+                              padding: const EdgeInsets.only(bottom: 2),
+                              child: Text('${item.quantity}× ${item.productName}',
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                            )),
+                            const SizedBox(height: 8),
+                            // Bouton Encaisser
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: _processing ? null : () => _encaisser(ctx, order, provider),
+                                icon: const Icon(Icons.receipt_long, size: 16),
+                                label: const Text('Encaisser', style: TextStyle(fontWeight: FontWeight.w700)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.success,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
             ),
           ],
@@ -259,127 +289,11 @@ class _CaisseTabState extends State<_CaisseTab> {
   }
 }
 
-// Carte commande Tab 1
-class _OrderCard extends StatelessWidget {
-  final Order order;
-  final NumberFormat fmt;
-  final VoidCallback? onEncaisser;
-
-  const _OrderCard({required this.order, required this.fmt, this.onEncaisser});
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassCard(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // En-tête
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primary.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text('#${order.orderNumber}',
-                      style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 13)),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.table_restaurant, color: AppTheme.textSecondary, size: 12),
-                        const SizedBox(width: 4),
-                        Text('Table ${order.tableNumber}',
-                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              // Badge statut commande
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: order.statusColor.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(order.statusLabel,
-                  style: TextStyle(color: order.statusColor, fontSize: 10, fontWeight: FontWeight.w600)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-
-          // Articles (lecture seule — PAS de mode paiement ici)
-          ...order.items.map((item) => Padding(
-            padding: const EdgeInsets.only(bottom: 3),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.fiber_manual_record, color: AppTheme.textSecondary, size: 8),
-                    const SizedBox(width: 6),
-                    Text('${item.quantity}×  ${item.productName}',
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                  ],
-                ),
-                Text('${fmt.format(item.totalPrice)} F',
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-              ],
-            ),
-          )),
-
-          const Divider(color: Color(0xFF2A2A5A), height: 16),
-
-          // Total
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('TOTAL', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-              Text('${fmt.format(order.totalAmount)} F CFA',
-                style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 18)),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-
-          // Bouton Encaisser
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: onEncaisser,
-              icon: const Icon(Icons.receipt_long, size: 16),
-              label: const Text('Encaisser', style: TextStyle(fontWeight: FontWeight.w700)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 //  TAB 2 — Factures en attente de règlement (cashStatus == awaiting_payment)
-//  Affiche la facture d'encaissement provisoire.
-//  Bouton : "Régler" → dialog paiement → règlement définitif
+//  Affiche les factures d'encaissement provisoires
+//  Bouton "Régler" → dialog avec mode paiement + montant versé + monnaie rendue
+//  → génère facture de règlement définitive → comptabilise dans le Point Caisse
 // ════════════════════════════════════════════════════════════════════════════
 class _FacturesEnAttenteTab extends StatefulWidget {
   const _FacturesEnAttenteTab();
@@ -409,8 +323,6 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
               paymentMethod: paymentMethod,
               amountPaid: amountPaid,
             );
-
-            // Imprimer la facture de règlement définitive
             final settlementNumber = PrintService.generateSettlementNumber(order.orderNumber);
             final amountDue = order.totalAmount;
             final change = (amountPaid - amountDue).clamp(0.0, double.infinity);
@@ -422,11 +334,10 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
               changeAmount: change,
               cashierName: provider.currentUser?.name,
             );
-
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Règlement définitif #${order.orderNumber} enregistré — ${_fmt.format(amountDue)} F CFA'),
+                  content: Text('Règlement #${order.orderNumber} enregistré — ${_fmt.format(amountDue)} F CFA'),
                   backgroundColor: AppTheme.success,
                   duration: const Duration(seconds: 4),
                 ),
@@ -459,21 +370,10 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  const Icon(Icons.hourglass_top, color: Color(0xFFFF9800), size: 18),
+                  const Icon(Icons.hourglass_top, color: AppTheme.warning, size: 18),
                   const SizedBox(width: 8),
-                  Text(
-                    'En attente de règlement (${orders.length})',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF9800).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text('Étape 2 / 2', style: TextStyle(color: Color(0xFFFF9800), fontSize: 11)),
-                  ),
+                  Text('Factures en attente de règlement (${orders.length})',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
                 ],
               ),
             ),
@@ -482,23 +382,101 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
                 ? const EmptyState(
                     icon: Icons.task_alt,
                     title: 'Aucune facture en attente',
-                    subtitle: 'Toutes les factures provisoires ont été réglées.',
+                    subtitle: 'Toutes les factures ont été réglées.',
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     itemCount: orders.length,
-                    itemBuilder: (ctx, i) => _FactureEnAttenteCard(
-                      order: orders[i],
-                      fmt: _fmt,
-                      onRegler: _processing ? null : () => _regler(context, orders[i], provider),
-                      onReimprimer: () {
-                        PrintService().printCashoutInvoice(
-                          order: orders[i],
-                          cashoutInvoiceNumber: orders[i].cashoutInvoiceNumber ?? PrintService.generateReceiptNumber(orders[i].orderNumber),
-                          cashierName: provider.currentUser?.name,
-                        );
-                      },
-                    ),
+                    itemBuilder: (ctx, i) {
+                      final order = orders[i];
+                      return GlassCard(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        border: Border.all(
+                          color: AppTheme.warning.withValues(alpha: 0.4),
+                          width: 1.5,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // En-tête
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('#${order.orderNumber} - Table ${order.tableNumber}',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.warning.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(5),
+                                  ),
+                                  child: const Text('EN ATTENTE', style: TextStyle(color: AppTheme.warning, fontSize: 10, fontWeight: FontWeight.w700)),
+                                ),
+                              ],
+                            ),
+                            if (order.cashoutInvoiceNumber != null) ...[
+                              const SizedBox(height: 3),
+                              Text('Réf. : ${order.cashoutInvoiceNumber}',
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                            ],
+                            const SizedBox(height: 6),
+                            // Articles
+                            ...order.items.map((item) => Padding(
+                              padding: const EdgeInsets.only(bottom: 2),
+                              child: Text('${item.quantity}× ${item.productName}',
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                            )),
+                            const SizedBox(height: 6),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('Montant dû',
+                                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                                Text('${_fmt.format(order.totalAmount)} F CFA',
+                                  style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w800, fontSize: 16)),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () {
+                                      PrintService().printCashoutInvoice(
+                                        order: order,
+                                        cashoutInvoiceNumber: order.cashoutInvoiceNumber ?? PrintService.generateReceiptNumber(order.orderNumber),
+                                        cashierName: provider.currentUser?.name,
+                                      );
+                                    },
+                                    icon: const Icon(Icons.print_outlined, size: 14),
+                                    label: const Text('Réimprimer', style: TextStyle(fontSize: 12)),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppTheme.textSecondary,
+                                      side: BorderSide(color: AppTheme.textSecondary.withValues(alpha: 0.4)),
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  flex: 2,
+                                  child: ElevatedButton.icon(
+                                    onPressed: _processing ? null : () => _regler(context, order, provider),
+                                    icon: const Icon(Icons.payments, size: 16),
+                                    label: const Text('Régler', style: TextStyle(fontWeight: FontWeight.w700)),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppTheme.success,
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
             ),
           ],
@@ -513,144 +491,9 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
   }
 }
 
-// Carte facture en attente Tab 2
-class _FactureEnAttenteCard extends StatelessWidget {
-  final Order order;
-  final NumberFormat fmt;
-  final VoidCallback? onRegler;
-  final VoidCallback? onReimprimer;
-
-  const _FactureEnAttenteCard({
-    required this.order,
-    required this.fmt,
-    this.onRegler,
-    this.onReimprimer,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final dateFmt = DateFormat('dd/MM HH:mm');
-    final cashoutTime = order.cashoutAt != null ? dateFmt.format(order.cashoutAt!) : '--';
-
-    return GlassCard(
-      margin: const EdgeInsets.only(bottom: 10),
-      border: Border.all(color: const Color(0xFFFF9800).withValues(alpha: 0.4), width: 1.5),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // En-tête
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF9800).withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text('#${order.orderNumber}',
-                      style: const TextStyle(color: Color(0xFFFF9800), fontWeight: FontWeight.w700, fontSize: 13)),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('Table ${order.tableNumber}',
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                ],
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  const Text('FACTURE PROVISOIRE', style: TextStyle(color: Color(0xFFFF9800), fontSize: 9, fontWeight: FontWeight.w600)),
-                  Text('Encaissé le $cashoutTime',
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9)),
-                ],
-              ),
-            ],
-          ),
-
-          if (order.cashoutInvoiceNumber != null) ...[
-            const SizedBox(height: 4),
-            Text('Réf. : ${order.cashoutInvoiceNumber}',
-              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
-          ],
-          if (order.cashierName != null) ...[
-            Text('Caissier(ère) : ${order.cashierName}',
-              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
-          ],
-
-          const Divider(color: Color(0xFF2A2A5A), height: 14),
-
-          // Articles
-          ...order.items.map((item) => Padding(
-            padding: const EdgeInsets.only(bottom: 3),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('${item.quantity}×  ${item.productName}',
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                Text('${fmt.format(item.totalPrice)} F',
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-              ],
-            ),
-          )),
-
-          const Divider(color: Color(0xFF2A2A5A), height: 14),
-
-          // Montant dû
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('MONTANT DÛ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-              Text('${fmt.format(order.totalAmount)} F CFA',
-                style: const TextStyle(color: Color(0xFFFF9800), fontWeight: FontWeight.w800, fontSize: 18)),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-
-          // Boutons
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onReimprimer,
-                  icon: const Icon(Icons.print_outlined, size: 14),
-                  label: const Text('Réimprimer', style: TextStyle(fontSize: 12)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTheme.textSecondary,
-                    side: BorderSide(color: AppTheme.textSecondary.withValues(alpha: 0.4)),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton.icon(
-                  onPressed: onRegler,
-                  icon: const Icon(Icons.payments, size: 16),
-                  label: const Text('Régler', style: TextStyle(fontWeight: FontWeight.w700)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.success,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
-//  DIALOG DE RÈGLEMENT — affiché après clic "Régler"
-//  Affiche : mode paiement, montant à payer, montant reçu, monnaie rendue
-//  Collecte : mode paiement + montant reçu
+//  DIALOG DE RÈGLEMENT — affiché après clic "Régler" (Tab 2)
+//  Affiche SEULEMENT à cette étape : mode paiement, montant versé, monnaie rendue
 // ════════════════════════════════════════════════════════════════════════════
 class _ReglementDialog extends StatefulWidget {
   final Order order;
@@ -673,20 +516,13 @@ class _ReglementDialogState extends State<_ReglementDialog> {
   String _paymentMethod = 'Espèces';
   final _amountController = TextEditingController();
   double _amountPaid = 0;
+
   double get _change => (_amountPaid - widget.order.totalAmount).clamp(0.0, double.infinity);
   bool get _isValid => _amountPaid >= widget.order.totalAmount || _paymentMethod != 'Espèces';
-
-  final List<Map<String, dynamic>> _paymentMethods = [
-    {'label': 'Espèces',    'icon': Icons.money,          'color': const Color(0xFF4CAF50)},
-    {'label': 'Mobile Money','icon': Icons.phone_android,  'color': const Color(0xFF2196F3)},
-    {'label': 'Carte',      'icon': Icons.credit_card,    'color': const Color(0xFF9C27B0)},
-    {'label': 'Chèque',     'icon': Icons.receipt,        'color': const Color(0xFFFF9800)},
-  ];
 
   @override
   void initState() {
     super.initState();
-    // Pré-remplir avec le montant exact
     _amountPaid = widget.order.totalAmount;
     _amountController.text = widget.order.totalAmount.toStringAsFixed(0);
     _amountController.addListener(() {
@@ -703,549 +539,453 @@ class _ReglementDialogState extends State<_ReglementDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final dateFmt = DateFormat('dd/MM/yyyy HH:mm');
-
     return AlertDialog(
-      backgroundColor: const Color(0xFF1A1A3E),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      contentPadding: EdgeInsets.zero,
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          const Icon(Icons.payments, color: AppTheme.success),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Règlement', style: TextStyle(color: Colors.white, fontSize: 16)),
+              Text('Commande #${widget.order.orderNumber} — Table ${widget.order.tableNumber}',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+            ],
+          ),
+        ],
+      ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // En-tête coloré
+            // Montant dû
             Container(
-              padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF1565C0), Color(0xFF0D47A1)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(20),
-                  topRight: Radius.circular(20),
-                ),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
               ),
-              child: Column(
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.payments, color: Colors.white, size: 20),
-                      SizedBox(width: 8),
-                      Text('RÈGLEMENT', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16, letterSpacing: 1)),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Commande #${widget.order.orderNumber}',
-                            style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                          Text('Table ${widget.order.tableNumber}',
-                            style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(dateFmt.format(DateTime.now()),
-                            style: const TextStyle(color: Colors.white70, fontSize: 11)),
-                          Text(widget.cashierName,
-                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Montant dû
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('MONTANT À PAYER', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                        Text('${widget.fmt.format(widget.order.totalAmount)} F CFA',
-                          style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 20)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Mode de paiement
-                  const Text('Mode de paiement', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _paymentMethods.map((pm) {
-                      final isSelected = _paymentMethod == pm['label'];
-                      final color = pm['color'] as Color;
-                      return InkWell(
-                        onTap: () => setState(() => _paymentMethod = pm['label'] as String),
-                        borderRadius: BorderRadius.circular(8),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: isSelected ? color.withValues(alpha: 0.25) : Colors.white.withValues(alpha: 0.06),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: isSelected ? color : Colors.white24,
-                              width: isSelected ? 2 : 1,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(pm['icon'] as IconData, color: isSelected ? color : AppTheme.textSecondary, size: 16),
-                              const SizedBox(width: 6),
-                              Text(pm['label'] as String,
-                                style: TextStyle(
-                                  color: isSelected ? color : AppTheme.textSecondary,
-                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal,
-                                  fontSize: 13,
-                                )),
-                            ],
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Montant reçu
-                  const Text('Montant reçu', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _amountController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
-                    decoration: InputDecoration(
-                      suffixText: 'F CFA',
-                      suffixStyle: const TextStyle(color: AppTheme.textSecondary),
-                      filled: true,
-                      fillColor: Colors.white.withValues(alpha: 0.08),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFF2A2A5A)),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: AppTheme.primary, width: 2),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Monnaie rendue
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: _change > 0
-                        ? AppTheme.success.withValues(alpha: 0.12)
-                        : Colors.white.withValues(alpha: 0.04),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: _change > 0
-                          ? AppTheme.success.withValues(alpha: 0.5)
-                          : Colors.white12,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              _change > 0 ? Icons.arrow_circle_down : Icons.remove_circle_outline,
-                              color: _change > 0 ? AppTheme.success : AppTheme.textSecondary,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 8),
-                            const Text('Monnaie rendue', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                          ],
-                        ),
-                        Text(
-                          '${widget.fmt.format(_change)} F CFA',
-                          style: TextStyle(
-                            color: _change > 0 ? AppTheme.success : AppTheme.textSecondary,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // Avertissement si montant insuffisant (espèces)
-                  if (_paymentMethod == 'Espèces' && _amountPaid < widget.order.totalAmount && _amountPaid > 0) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red.withValues(alpha: 0.4)),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.warning_amber, color: Colors.orange, size: 16),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              'Montant insuffisant (manque ${widget.fmt.format(widget.order.totalAmount - _amountPaid)} F)',
-                              style: const TextStyle(color: Colors.orange, fontSize: 11),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-
-            // Boutons
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.textSecondary,
-                        side: const BorderSide(color: Colors.white24),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      child: const Text('Annuler'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      onPressed: _isValid
-                        ? () => widget.onConfirm(_paymentMethod, _amountPaid > 0 ? _amountPaid : widget.order.totalAmount)
-                        : null,
-                      icon: const Icon(Icons.check_circle, size: 16),
-                      label: const Text('Confirmer le règlement', style: TextStyle(fontWeight: FontWeight.w700)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.success,
-                        foregroundColor: Colors.white,
-                        disabledBackgroundColor: Colors.grey.shade800,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  TAB 3 — Point de Caisse (settlementInvoiceGenerated == true seulement)
-// ════════════════════════════════════════════════════════════════════════════
-class _PointCaisseTab extends StatelessWidget {
-  const _PointCaisseTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final provider = context.watch<AppProvider>();
-    final fmt = NumberFormat('#,###', 'fr_FR');
-    final dateFmt = DateFormat('dd/MM HH:mm');
-
-    // Uniquement les règlements définitifs du jour
-    final today = DateTime.now();
-    final settled = provider.settledOrders.where((o) =>
-      o.createdAt.day == today.day &&
-      o.createdAt.month == today.month &&
-      o.createdAt.year == today.year
-    ).toList()
-      ..sort((a, b) => (b.settledAt ?? b.createdAt).compareTo(a.settledAt ?? a.createdAt));
-
-    final totalRevenue = settled.fold(0.0, (s, o) => s + o.totalAmount);
-    final revenueByMethod = provider.todayRevenueByPaymentMethod;
-    final totalOrders = settled.length;
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Résumé du jour ──
-          _SummaryCard(
-            totalRevenue: totalRevenue,
-            totalOrders: totalOrders,
-            fmt: fmt,
-          ),
-
-          const SizedBox(height: 16),
-
-          // ── Répartition par mode de paiement ──
-          if (revenueByMethod.isNotEmpty) ...[
-            GlassCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.pie_chart, color: AppTheme.primary, size: 16),
-                      SizedBox(width: 8),
-                      Text('Répartition par mode de paiement',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  ...revenueByMethod.entries.map((e) {
-                    final pct = totalRevenue > 0 ? (e.value / totalRevenue * 100) : 0.0;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(e.key, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                              Text('${fmt.format(e.value)} F (${pct.toStringAsFixed(1)}%)',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          LinearProgressIndicator(
-                            value: totalRevenue > 0 ? e.value / totalRevenue : 0,
-                            backgroundColor: Colors.white12,
-                            color: AppTheme.primary,
-                            borderRadius: BorderRadius.circular(4),
-                            minHeight: 6,
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
+                  const Text('MONTANT DÛ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  Text('${widget.fmt.format(widget.order.totalAmount)} F CFA',
+                    style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 18)),
                 ],
               ),
             ),
             const SizedBox(height: 16),
-          ],
 
-          // ── Liste des règlements ──
-          Row(
-            children: [
-              const Icon(Icons.history, color: AppTheme.primary, size: 16),
-              const SizedBox(width: 8),
-              Text(
-                'Règlements du jour (${settled.length})',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14),
+            // Mode de paiement
+            const Text('Mode de paiement', style: TextStyle(color: Colors.white, fontSize: 13)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: ['Espèces', 'Mobile Money', 'Carte Bancaire', 'Chèque'].map((m) {
+                final selected = _paymentMethod == m;
+                return ChoiceChip(
+                  label: Text(m),
+                  selected: selected,
+                  onSelected: (_) => setState(() => _paymentMethod = m),
+                  selectedColor: AppTheme.primary.withValues(alpha: 0.25),
+                  backgroundColor: AppTheme.surfaceLight,
+                  labelStyle: TextStyle(
+                    color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
+                    fontSize: 12,
+                  ),
+                  side: BorderSide(
+                    color: selected ? AppTheme.primary : Colors.transparent,
+                    width: selected ? 1.5 : 0,
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 14),
+
+            // Montant versé
+            const Text('Montant versé', style: TextStyle(color: Colors.white, fontSize: 13)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+              decoration: InputDecoration(
+                suffixText: 'F CFA',
+                suffixStyle: const TextStyle(color: AppTheme.textSecondary),
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.07),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: Color(0xFF2A2A5A)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppTheme.primary, width: 2),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Monnaie rendue
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _change > 0
+                  ? AppTheme.success.withValues(alpha: 0.1)
+                  : Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _change > 0
+                    ? AppTheme.success.withValues(alpha: 0.5)
+                    : Colors.white12,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Monnaie rendue', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  Text('${widget.fmt.format(_change)} F CFA',
+                    style: TextStyle(
+                      color: _change > 0 ? AppTheme.success : AppTheme.textSecondary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    )),
+                ],
+              ),
+            ),
+
+            // Avertissement montant insuffisant
+            if (_paymentMethod == 'Espèces' && _amountPaid > 0 && _amountPaid < widget.order.totalAmount) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber, color: Colors.orange, size: 14),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Montant insuffisant (manque ${widget.fmt.format(widget.order.totalAmount - _amountPaid)} F)',
+                        style: const TextStyle(color: Colors.orange, fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
+        ),
+        ElevatedButton.icon(
+          onPressed: _isValid
+            ? () => widget.onConfirm(_paymentMethod, _amountPaid > 0 ? _amountPaid : widget.order.totalAmount)
+            : null,
+          icon: const Icon(Icons.check_circle, size: 16),
+          label: const Text('Confirmer le règlement', style: TextStyle(fontWeight: FontWeight.w700)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.success,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: Colors.grey.shade800,
           ),
-          const SizedBox(height: 10),
+        ),
+      ],
+    );
+  }
+}
 
-          if (settled.isEmpty)
-            const EmptyState(
-              icon: Icons.receipt_long,
-              title: 'Aucun règlement aujourd\'hui',
-              subtitle: 'Les règlements définitifs apparaîtront ici.',
-            )
-          else
-            ...settled.map((order) => GlassCard(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: [
-                  // Numéro commande
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: AppTheme.success.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Center(
-                      child: Text('#${order.orderNumber}',
-                        style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700, fontSize: 12),
-                        textAlign: TextAlign.center),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  // Infos
-                  Expanded(
+// ════════════════════════════════════════════════════════════════════════════
+//  TAB 3 — Point de Caisse
+//  DESIGN ORIGINAL RESTAURÉ — identique au commit 1078c42
+//  Comptabilise UNIQUEMENT settlementInvoiceGenerated == true (règlements définitifs)
+// ════════════════════════════════════════════════════════════════════════════
+class _PointCaisseTab extends StatefulWidget {
+  const _PointCaisseTab();
+
+  @override
+  State<_PointCaisseTab> createState() => _PointCaisseTabState();
+}
+
+class _PointCaisseTabState extends State<_PointCaisseTab> {
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<AppProvider>();
+    final fmt = NumberFormat('#,###', 'fr_FR');
+    final today = DateTime.now();
+
+    // UNIQUEMENT les règlements définitifs (settlementInvoiceGenerated == true)
+    final todayPaid = provider.orders.where((o) =>
+      o.settlementInvoiceGenerated &&
+      o.isPaid &&
+      o.createdAt.day == today.day &&
+      o.createdAt.month == today.month &&
+      o.createdAt.year == today.year
+    ).toList();
+
+    final totalCash = todayPaid.where((o) => o.paymentMethod == 'Espèces').fold<double>(0, (s, o) => s + o.totalAmount);
+    final totalMobile = todayPaid.where((o) => o.paymentMethod != null && o.paymentMethod != 'Espèces' && o.paymentMethod != 'Carte Bancaire').fold<double>(0, (s, o) => s + o.totalAmount);
+    final totalCard = todayPaid.where((o) => o.paymentMethod == 'Carte Bancaire').fold<double>(0, (s, o) => s + o.totalAmount);
+    final totalCharges = provider.todayTotalCharges;
+    final netRevenue = provider.todayRevenue - totalCharges;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // En-tête
+          GlassCard(
+            border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
+            child: Column(
+              children: [
+                const Text('POINT DE CAISSE DU JOUR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1)),
+                const SizedBox(height: 4),
+                Text(DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(today),
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Stats en grille
+          GridView.count(
+            crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12,
+            shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), childAspectRatio: 1.2,
+            children: [
+              StatCard(title: 'Recette Brute', value: '${fmt.format(provider.todayRevenue)} F', icon: Icons.payments, color: AppTheme.success),
+              StatCard(title: 'Charges du Jour', value: '${fmt.format(totalCharges)} F', icon: Icons.money_off, color: AppTheme.error),
+              StatCard(title: 'Recette Nette', value: '${fmt.format(netRevenue)} F', icon: Icons.account_balance_wallet, color: netRevenue >= 0 ? AppTheme.primary : AppTheme.error),
+              StatCard(title: 'Commandes', value: todayPaid.length.toString(), icon: Icons.receipt_long, color: AppTheme.warning),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Modes de paiement
+          GlassCard(
+            child: Column(
+              children: [
+                const SectionHeader(title: 'Détail par Mode de Paiement', icon: Icons.pie_chart_outline),
+                const SizedBox(height: 14),
+                ...[
+                  ['Espèces', totalCash, AppTheme.warning, Icons.money],
+                  ['Mobile Money', totalMobile, const Color(0xFF9C27B0), Icons.phone_android],
+                  ['Carte Bancaire', totalCard, AppTheme.primary, Icons.credit_card],
+                ].map((row) {
+                  final total = provider.todayRevenue;
+                  final pct = total > 0 ? (row[1] as double) / total : 0.0;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Table ${order.tableNumber}',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
                         Row(
                           children: [
-                            const Icon(Icons.access_time, color: AppTheme.textSecondary, size: 11),
-                            const SizedBox(width: 3),
-                            Text(
-                              order.settledAt != null ? dateFmt.format(order.settledAt!) : '--',
-                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
-                            ),
-                            const SizedBox(width: 8),
-                            if (order.paymentMethod != null) ...[
-                              const Icon(Icons.payment, color: AppTheme.textSecondary, size: 11),
-                              const SizedBox(width: 3),
-                              Text(order.paymentMethod!,
-                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-                            ],
+                            Icon(row[3] as IconData, color: row[2] as Color, size: 18),
+                            const SizedBox(width: 10),
+                            Expanded(child: Text(row[0] as String, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13))),
+                            Text('${fmt.format(row[1])} F', style: TextStyle(color: row[2] as Color, fontWeight: FontWeight.w700, fontSize: 13)),
                           ],
                         ),
-                        if (order.settlementInvoiceNumber != null)
-                          Text(order.settlementInvoiceNumber!,
-                            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9)),
+                        const SizedBox(height: 4),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: pct,
+                            backgroundColor: AppTheme.surfaceLight,
+                            valueColor: AlwaysStoppedAnimation<Color>(row[2] as Color),
+                            minHeight: 6,
+                          ),
+                        ),
                       ],
                     ),
-                  ),
-                  // Montant
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('${fmt.format(order.totalAmount)} F',
-                        style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w800, fontSize: 15)),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  );
+                }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // ===== CHARGES DU JOUR =====
+          GlassCard(
+            border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    const SectionHeader(title: 'Charges du Jour', icon: Icons.money_off),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: () => _showAddChargeDialog(context, provider),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                         decoration: BoxDecoration(
-                          color: AppTheme.success.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(4),
+                          color: AppTheme.error.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: AppTheme.error.withValues(alpha: 0.4)),
                         ),
-                        child: const Text('RÉGLÉ', style: TextStyle(color: AppTheme.success, fontSize: 9, fontWeight: FontWeight.w700)),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.add, color: AppTheme.error, size: 14),
+                            SizedBox(width: 4),
+                            Text('Ajouter', style: TextStyle(color: AppTheme.error, fontSize: 11, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
                       ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (provider.todayCharges.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text('Aucune charge enregistrée aujourd\'hui',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  )
+                else ...[
+                  ...provider.todayCharges.map((charge) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.circle, color: AppTheme.error, size: 8),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(charge['label'] as String,
+                                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13)),
+                              if ((charge['note'] as String?)?.isNotEmpty == true)
+                                Text(charge['note'] as String,
+                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                            ],
+                          ),
+                        ),
+                        Text('${fmt.format(charge['amount'])} F',
+                          style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700, fontSize: 13)),
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: () => provider.removeDailyCharge(charge['id'] as String),
+                          child: const Icon(Icons.close, color: AppTheme.textSecondary, size: 16),
+                        ),
+                      ],
+                    ),
+                  )),
+                  const Divider(color: Color(0xFF2A2A5A)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('TOTAL CHARGES',
+                        style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700)),
+                      Text('${fmt.format(totalCharges)} F CFA',
+                        style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w900, fontSize: 16)),
                     ],
                   ),
                 ],
-              ),
-            )),
-        ],
-      ),
-    );
-  }
-}
-
-// Widget résumé point de caisse
-class _SummaryCard extends StatelessWidget {
-  final double totalRevenue;
-  final int totalOrders;
-  final NumberFormat fmt;
-
-  const _SummaryCard({required this.totalRevenue, required this.totalOrders, required this.fmt});
-
-  @override
-  Widget build(BuildContext context) {
-    final dateFmt = DateFormat('EEEE dd MMMM yyyy', 'fr_FR');
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0D47A1), Color(0xFF1565C0), Color(0xFF2196F3)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(color: const Color(0xFF2196F3).withValues(alpha: 0.3), blurRadius: 16, offset: const Offset(0, 6)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('POINT DE CAISSE', style: TextStyle(color: Colors.white70, fontSize: 11, letterSpacing: 1.5, fontWeight: FontWeight.w600)),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Text('Aujourd\'hui', style: TextStyle(color: Colors.white, fontSize: 11)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(dateFmt.format(DateTime.now()),
-            style: const TextStyle(color: Colors.white54, fontSize: 11)),
-          const SizedBox(height: 16),
-          Text(
-            '${fmt.format(totalRevenue)} F CFA',
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 30, letterSpacing: 1),
-          ),
-          const SizedBox(height: 4),
-          const Text('Total des règlements définitifs', style: TextStyle(color: Colors.white70, fontSize: 12)),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _StatBadge(label: 'Factures réglées', value: '$totalOrders', icon: Icons.check_circle),
-              const SizedBox(width: 16),
-              _StatBadge(label: 'Moyenne / facture',
-                value: totalOrders > 0 ? '${fmt.format(totalRevenue / totalOrders)} F' : '--',
-                icon: Icons.trending_up),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatBadge extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-
-  const _StatBadge({required this.label, required this.value, required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: Colors.white70, size: 18),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                Text(label, style: const TextStyle(color: Colors.white60, fontSize: 10)),
               ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Dernières transactions
+          GlassCard(
+            child: Column(
+              children: [
+                const SectionHeader(title: 'Dernières Transactions', icon: Icons.history),
+                const SizedBox(height: 12),
+                ...todayPaid.take(10).map((o) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('#${o.orderNumber} Table ${o.tableNumber}',
+                        style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12)),
+                      Text(o.paymentMethod ?? '-',
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                      Text('${fmt.format(o.totalAmount)} F',
+                        style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600, fontSize: 12)),
+                    ],
+                  ),
+                )),
+                if (todayPaid.isEmpty)
+                  const EmptyState(icon: Icons.receipt, title: 'Aucune transaction aujourd\'hui'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddChargeDialog(BuildContext context, AppProvider provider) {
+    final labelCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    final noteCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Ajouter une charge'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: labelCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Libellé *',
+                hintText: 'Ex: Électricité, Salaire, Achat...',
+                prefixIcon: Icon(Icons.label_outline, size: 18),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: amountCtrl,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Montant (F CFA) *',
+                prefixIcon: Icon(Icons.money, color: AppTheme.error, size: 18),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: noteCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Note (optionnel)',
+                prefixIcon: Icon(Icons.notes_outlined, size: 18),
+              ),
             ),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final label = labelCtrl.text.trim();
+              final amount = double.tryParse(amountCtrl.text);
+              if (label.isNotEmpty && amount != null && amount > 0) {
+                provider.addDailyCharge(label: label, amount: amount, note: noteCtrl.text.trim());
+                Navigator.pop(context);
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            child: const Text('Ajouter'),
+          ),
+        ],
       ),
     );
   }
