@@ -315,42 +315,20 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
         fmt: _fmt,
         cashierName: provider.currentUser?.name ?? 'Caissier',
         onConfirm: (paymentMethod, amountPaid) async {
-          Navigator.pop(ctx);
-          setState(() => _processing = true);
-          try {
-            await provider.settleOrder(
-              order.id,
-              paymentMethod: paymentMethod,
-              amountPaid: amountPaid,
+          // Enregistrement Firestore — les erreurs sont gérées dans _handleConfirm
+          await provider.settleOrder(
+            order.id,
+            paymentMethod: paymentMethod,
+            amountPaid: amountPaid,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Règlement #${order.orderNumber} enregistré — ${_fmt.format(order.totalAmount)} F CFA'),
+                backgroundColor: AppTheme.success,
+                duration: const Duration(seconds: 3),
+              ),
             );
-            final settlementNumber = PrintService.generateSettlementNumber(order.orderNumber);
-            final amountDue = order.totalAmount;
-            final change = (amountPaid - amountDue).clamp(0.0, double.infinity);
-            PrintService().printSettlementInvoice(
-              order: order,
-              settlementInvoiceNumber: settlementNumber,
-              paymentMethod: paymentMethod,
-              amountPaid: amountPaid,
-              changeAmount: change,
-              cashierName: provider.currentUser?.name,
-            );
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Règlement #${order.orderNumber} enregistré — ${_fmt.format(amountDue)} F CFA'),
-                  backgroundColor: AppTheme.success,
-                  duration: const Duration(seconds: 4),
-                ),
-              );
-            }
-          } catch (e) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Erreur règlement : $e'), backgroundColor: Colors.red),
-              );
-            }
-          } finally {
-            if (mounted) setState(() => _processing = false);
           }
         },
       ),
@@ -492,14 +470,24 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  DIALOG DE RÈGLEMENT — affiché après clic "Régler" (Tab 2)
-//  Affiche SEULEMENT à cette étape : mode paiement, montant versé, monnaie rendue
+//  DIALOG DE RÈGLEMENT — 2 phases dans le même dialog
+//
+//  Phase 1 : Saisie paiement (mode + montant versé + monnaie rendue)
+//            → [Confirmer le règlement]
+//
+//  Phase 2 : Succès — le règlement est enregistré + comptabilisé
+//            → [🖨️ Imprimer la facture définitive]  [Fermer]
+//
+//  Le callback onConfirm effectue l'enregistrement Firestore (async).
+//  Le dialog passe en Phase 2 après succès.
 // ════════════════════════════════════════════════════════════════════════════
 class _ReglementDialog extends StatefulWidget {
   final Order order;
   final NumberFormat fmt;
   final String cashierName;
-  final void Function(String paymentMethod, double amountPaid) onConfirm;
+  /// Appelé avec (paymentMethod, amountPaid) au clic "Confirmer".
+  /// Doit effectuer l'enregistrement Firestore.
+  final Future<void> Function(String paymentMethod, double amountPaid) onConfirm;
 
   const _ReglementDialog({
     required this.order,
@@ -513,9 +501,18 @@ class _ReglementDialog extends StatefulWidget {
 }
 
 class _ReglementDialogState extends State<_ReglementDialog> {
+  // ── Phase 1 : saisie ─────────────────────────────────────────────────
   String _paymentMethod = 'Espèces';
   final _amountController = TextEditingController();
   double _amountPaid = 0;
+  bool _confirming = false;  // spinner pendant l'enregistrement
+
+  // ── Phase 2 : succès ─────────────────────────────────────────────────
+  bool _settled = false;
+  String? _settlementNumber;
+  double? _settledAmountPaid;
+  double? _settledChange;
+  String? _settledPaymentMethod;
 
   double get _change => (_amountPaid - widget.order.totalAmount).clamp(0.0, double.infinity);
   bool get _isValid => _amountPaid >= widget.order.totalAmount || _paymentMethod != 'Espèces';
@@ -526,7 +523,9 @@ class _ReglementDialogState extends State<_ReglementDialog> {
     _amountPaid = widget.order.totalAmount;
     _amountController.text = widget.order.totalAmount.toStringAsFixed(0);
     _amountController.addListener(() {
-      final val = double.tryParse(_amountController.text.replaceAll(' ', '').replaceAll(',', '.')) ?? 0;
+      final val = double.tryParse(
+        _amountController.text.replaceAll(' ', '').replaceAll(',', '.'),
+      ) ?? 0;
       setState(() => _amountPaid = val);
     });
   }
@@ -537,8 +536,62 @@ class _ReglementDialogState extends State<_ReglementDialog> {
     super.dispose();
   }
 
+  // ── Action : confirmer le règlement ──────────────────────────────────
+  Future<void> _handleConfirm() async {
+    final amountPaid = _amountPaid > 0 ? _amountPaid : widget.order.totalAmount;
+    final paymentMethod = _paymentMethod;
+    final amountDue = widget.order.totalAmount;
+    final change = (amountPaid - amountDue).clamp(0.0, double.infinity);
+    final settlementNumber = PrintService.generateSettlementNumber(widget.order.orderNumber);
+
+    setState(() => _confirming = true);
+    try {
+      await widget.onConfirm(paymentMethod, amountPaid);
+      // Succès → passer en Phase 2
+      if (mounted) {
+        setState(() {
+          _settled = true;
+          _settlementNumber = settlementNumber;
+          _settledAmountPaid = amountPaid;
+          _settledChange = change;
+          _settledPaymentMethod = paymentMethod;
+          _confirming = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _confirming = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  // ── Impression de la facture définitive ──────────────────────────────
+  void _printSettlement() {
+    PrintService().printSettlementInvoice(
+      order: widget.order,
+      settlementInvoiceNumber: _settlementNumber!,
+      paymentMethod: _settledPaymentMethod!,
+      amountPaid: _settledAmountPaid!,
+      changeAmount: _settledChange!,
+      cashierName: widget.cashierName,
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  BUILD
+  // ════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    return _settled ? _buildSuccessPhase(context) : _buildInputPhase(context);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  PHASE 1 — Saisie du paiement (design original conservé)
+  // ─────────────────────────────────────────────────────────────────────
+  Widget _buildInputPhase(BuildContext context) {
     return AlertDialog(
       backgroundColor: AppTheme.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -591,7 +644,7 @@ class _ReglementDialogState extends State<_ReglementDialog> {
                 return ChoiceChip(
                   label: Text(m),
                   selected: selected,
-                  onSelected: (_) => setState(() => _paymentMethod = m),
+                  onSelected: _confirming ? null : (_) => setState(() => _paymentMethod = m),
                   selectedColor: AppTheme.primary.withValues(alpha: 0.25),
                   backgroundColor: AppTheme.surfaceLight,
                   labelStyle: TextStyle(
@@ -613,6 +666,7 @@ class _ReglementDialogState extends State<_ReglementDialog> {
             const SizedBox(height: 6),
             TextField(
               controller: _amountController,
+              enabled: !_confirming,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
               decoration: InputDecoration(
@@ -685,19 +739,37 @@ class _ReglementDialogState extends State<_ReglementDialog> {
                 ),
               ),
             ],
+
+            // Spinner pendant l'enregistrement
+            if (_confirming) ...[
+              const SizedBox(height: 16),
+              const Center(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.success)),
+                    SizedBox(width: 10),
+                    Text('Enregistrement en cours…',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: _confirming ? null : () => Navigator.pop(context),
           child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
         ),
         ElevatedButton.icon(
-          onPressed: _isValid
-            ? () => widget.onConfirm(_paymentMethod, _amountPaid > 0 ? _amountPaid : widget.order.totalAmount)
-            : null,
-          icon: const Icon(Icons.check_circle, size: 16),
+          onPressed: (_isValid && !_confirming) ? _handleConfirm : null,
+          icon: _confirming
+            ? const SizedBox(width: 14, height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+            : const Icon(Icons.check_circle, size: 16),
           label: const Text('Confirmer le règlement', style: TextStyle(fontWeight: FontWeight.w700)),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppTheme.success,
@@ -706,6 +778,161 @@ class _ReglementDialogState extends State<_ReglementDialog> {
           ),
         ),
       ],
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  PHASE 2 — Règlement validé : afficher bouton d'impression
+  // ─────────────────────────────────────────────────────────────────────
+  Widget _buildSuccessPhase(BuildContext context) {
+    final fmt = widget.fmt;
+    final amountDue = widget.order.totalAmount;
+
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: AppTheme.success.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.check_circle, color: AppTheme.success, size: 24),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Paiement enregistré', style: TextStyle(color: Colors.white, fontSize: 16)),
+              Text('Commande #${widget.order.orderNumber} — Table ${widget.order.tableNumber}',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+            ],
+          ),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Bandeau RÉGLÉE
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.success.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.success.withValues(alpha: 0.5)),
+              ),
+              child: Column(
+                children: [
+                  const Icon(Icons.task_alt, color: AppTheme.success, size: 28),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${fmt.format(amountDue)} F CFA',
+                    style: const TextStyle(
+                      color: AppTheme.success,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 22,
+                    ),
+                  ),
+                  const Text('RÉGLÉE', style: TextStyle(
+                    color: AppTheme.success,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    letterSpacing: 2,
+                  )),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Récapitulatif règlement
+            _buildSummaryRow('N° Règlement', _settlementNumber ?? '—', isBold: true),
+            _buildSummaryRow('Mode de paiement', _settledPaymentMethod ?? '—'),
+            _buildSummaryRow('Montant versé', '${fmt.format(_settledAmountPaid ?? 0)} F CFA'),
+            _buildSummaryRow('Monnaie rendue', '${fmt.format(_settledChange ?? 0)} F CFA',
+              valueColor: (_settledChange ?? 0) > 0 ? AppTheme.success : null),
+            _buildSummaryRow('Caissier', widget.cashierName),
+            const SizedBox(height: 6),
+
+            // Séparateur
+            const Divider(color: Color(0xFF2A2A5A), thickness: 1),
+            const SizedBox(height: 6),
+
+            // Note comptabilisation
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.bar_chart, color: AppTheme.primary, size: 14),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Comptabilisé dans le Point de Caisse',
+                      style: TextStyle(color: AppTheme.primary, fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Bouton impression principal
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _printSettlement,
+                icon: const Icon(Icons.print, size: 18),
+                label: const Text(
+                  'Imprimer la facture définitive',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fermer', style: TextStyle(color: AppTheme.textSecondary)),
+        ),
+      ],
+    );
+  }
+
+  // Helper ligne récapitulatif
+  Widget _buildSummaryRow(String label, String value, {bool isBold = false, Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? Colors.white,
+              fontSize: 12,
+              fontWeight: isBold ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
