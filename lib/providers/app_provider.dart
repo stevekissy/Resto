@@ -545,12 +545,14 @@ class AppProvider extends ChangeNotifier {
   /// ÉTAPE 1 — Encaissement : génère la facture d'encaissement provisoire.
   /// cashStatus → awaiting_payment  |  cashoutInvoiceGenerated = true
   /// NE compte PAS dans le total caisse.
-  Future<void> cashoutOrder(String orderId, {double discount = 0}) async {
+  /// Retourne le numéro de facture généré pour que l'UI l'utilise
+  /// immédiatement (même numéro sauvegardé en Firestore et imprimé).
+  Future<String> cashoutOrder(String orderId, {double discount = 0}) async {
     final order = _orders.firstWhere(
       (o) => o.id == orderId,
       orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
     );
-    if (order.id.isEmpty) return;
+    if (order.id.isEmpty) return '';
 
     final cashierId   = _currentUser?.id   ?? '';
     final cashierName = _currentUser?.name ?? 'Caissier';
@@ -569,6 +571,7 @@ class AppProvider extends ChangeNotifier {
       serverName: order.serverName,
     );
     // Le stream Firestore met _orders à jour automatiquement
+    return invoiceNumber;
   }
 
   /// ÉTAPE 2 — Règlement : finalise le paiement définitif.

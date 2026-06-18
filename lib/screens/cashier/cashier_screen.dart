@@ -192,9 +192,9 @@ class _CaisseTabState extends State<_CaisseTab> {
 
     setState(() => _processing = true);
     try {
-      await provider.cashoutOrder(order.id);
-      final invoiceNumber =
-          PrintService.generateReceiptNumber(order.orderNumber);
+      // cashoutOrder() retourne le numéro généré ET sauvegardé en Firestore.
+      // On utilise ce même numéro pour le PDF — pas de double génération.
+      final invoiceNumber = await provider.cashoutOrder(order.id);
       PrintService().printCashoutInvoice(
         order: order,
         cashoutInvoiceNumber: invoiceNumber,
@@ -202,8 +202,7 @@ class _CaisseTabState extends State<_CaisseTab> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              'Facture #${order.orderNumber} générée — En attente de règlement'),
+          content: Text('Facture d\'encaissement générée — En attente de règlement'),
           backgroundColor: AppTheme.primary,
           duration: const Duration(seconds: 3),
         ));

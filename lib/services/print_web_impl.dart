@@ -12,25 +12,48 @@ void webPrint() {
   }
 }
 
-/// Ouvre une nouvelle fenêtre avec le HTML du reçu et lance l'impression
+/// Ouvre une nouvelle fenêtre avec le HTML du reçu et lance l'impression.
+/// Utilise une Blob URL pour contourner le blocage de document.write()
+/// par les navigateurs modernes (Chrome, Firefox, Safari).
 void webOpenPrintWindow(String htmlContent) {
   try {
-    final printWindow = js.context.callMethod('open', ['', '_blank', 'width=400,height=700']);
-    if (printWindow != null) {
-      printWindow.callMethod('document.write', [htmlContent]);
-      printWindow['document'].callMethod('close', []);
-      // Délai pour laisser le rendu se faire avant print()
+    // Encode le HTML en bytes UTF-8 via TextEncoder
+    final encoder = js.JsObject(js.context['TextEncoder'] as js.JsFunction);
+    final bytes = encoder.callMethod('encode', [htmlContent]);
+
+    // Crée un Blob HTML depuis les bytes encodés
+    final blobOptions = js.JsObject.jsify({'type': 'text/html; charset=utf-8'});
+    final blob = js.JsObject(
+      js.context['Blob'] as js.JsFunction,
+      [
+        js.JsArray.from([bytes]),
+        blobOptions,
+      ],
+    );
+
+    // Génère une URL objet temporaire pointant sur le Blob
+    final url = js.context['URL'].callMethod('createObjectURL', [blob]) as String;
+
+    // Ouvre le Blob URL dans un nouvel onglet — le navigateur l'affiche immédiatement
+    final win = js.context.callMethod('open', [url, '_blank']);
+
+    if (win != null) {
+      // Déclenche l'impression après un court délai pour laisser le rendu se faire
       js.context.callMethod('setTimeout', [
         js.allowInterop(() {
           try {
-            printWindow.callMethod('print', []);
+            win.callMethod('print', []);
+          } catch (_) {}
+          // Libère la mémoire : révoque l'URL objet après usage
+          try {
+            js.context['URL'].callMethod('revokeObjectURL', [url]);
           } catch (_) {}
         }),
-        500,
+        800,
       ]);
     }
   } catch (e) {
-    // Fallback : simple window.print() sur la page courante
+    // Fallback : impression de la page courante si Blob API indisponible
     try {
       js.context.callMethod('print', []);
     } catch (_) {}
