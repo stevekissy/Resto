@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
-import '../services/print_service.dart';
 
 class AppProvider extends ChangeNotifier {
   final _uuid = const Uuid();
@@ -50,24 +49,6 @@ class AppProvider extends ChangeNotifier {
   List<Order> get preparingOrders => _orders.where((o) => o.status == OrderStatus.preparing).toList();
   List<Order> get readyOrders => _orders.where((o) => o.status == OrderStatus.ready).toList();
   List<Order> get servedOrders => _orders.where((o) => o.status == OrderStatus.served).toList();
-
-  // ── Getters caisse 2 étapes ─────────────────────────────────────────
-  /// Commandes prêtes/servies non encore encaissées (Tab 1 — bouton Encaisser)
-  List<Order> get pendingCashoutOrders => _orders.where((o) =>
-    (o.status == OrderStatus.ready || o.status == OrderStatus.served) &&
-    o.cashStatus == CashStatus.pending_cashout &&
-    !o.isPaid
-  ).toList();
-
-  /// Commandes avec facture d'encaissement provisoire, en attente de règlement (Tab 2 — bouton Régler)
-  List<Order> get awaitingPaymentOrders => _orders.where((o) =>
-    o.cashStatus == CashStatus.awaiting_payment && !o.isPaid
-  ).toList();
-
-  /// Commandes réglées définitivement (Tab 3 — Point de caisse)
-  List<Order> get settledOrders => _orders.where((o) =>
-    o.settlementInvoiceGenerated && o.isPaid
-  ).toList();
 
   // =================== PRODUCTS ===================
   List<Product> _products = [];
@@ -477,7 +458,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  /// Méthode héritée — conservée pour compatibilité (préférer cashoutOrder/settleOrder)
   Future<void> payOrder(String orderId, String paymentMethod, double discount, {double amountPaid = 0}) async {
     final order = _orders.firstWhere((o) => o.id == orderId, orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []));
     if (order.id.isEmpty) return;
@@ -488,77 +468,6 @@ class AppProvider extends ChangeNotifier {
     order.status = OrderStatus.served;
     order.servedAt = DateTime.now();
     await _firebase.updateOrder(order);
-  }
-
-  // ── CAISSE 2 ÉTAPES ────────────────────────────────────────────────
-
-  /// ÉTAPE 1 — Encaissement : génère la facture d'encaissement provisoire.
-  /// cashStatus → awaiting_payment  |  cashoutInvoiceGenerated = true
-  /// NE compte PAS dans le total caisse.
-  Future<void> cashoutOrder(String orderId, {double discount = 0}) async {
-    final order = _orders.firstWhere(
-      (o) => o.id == orderId,
-      orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
-    );
-    if (order.id.isEmpty) return;
-
-    final cashierId   = _currentUser?.id   ?? '';
-    final cashierName = _currentUser?.name ?? 'Caissier';
-    final invoiceNumber = PrintService.generateReceiptNumber(order.orderNumber);
-
-    await _firebase.cashoutOrder(
-      orderId: orderId,
-      cashoutInvoiceNumber: invoiceNumber,
-      cashierId: cashierId,
-      cashierName: cashierName,
-      amountDue: order.totalAmount - discount,
-      discount: discount,
-      items: order.items.map((i) => i.toMap()).toList(),
-      orderNumber: order.orderNumber,
-      tableNumber: order.tableNumber,
-      serverName: order.serverName,
-    );
-    // Le stream Firestore met _orders à jour automatiquement
-  }
-
-  /// ÉTAPE 2 — Règlement : finalise le paiement définitif.
-  /// cashStatus → paid  |  isPaid = true  |  settlementInvoiceGenerated = true
-  /// COMPTE dans le total caisse (todayRevenue).
-  Future<void> settleOrder(
-    String orderId, {
-    required String paymentMethod,
-    required double amountPaid,
-    double discount = 0,
-  }) async {
-    final order = _orders.firstWhere(
-      (o) => o.id == orderId,
-      orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
-    );
-    if (order.id.isEmpty) return;
-
-    final cashierId   = _currentUser?.id   ?? '';
-    final cashierName = _currentUser?.name ?? 'Caissier';
-    final amountDue   = order.totalAmount - discount;
-    final change      = (amountPaid - amountDue).clamp(0.0, double.infinity);
-    final settlementNumber = PrintService.generateSettlementNumber(order.orderNumber);
-    final cashoutNumber    = order.cashoutInvoiceNumber ?? PrintService.generateReceiptNumber(order.orderNumber);
-
-    await _firebase.settleOrder(
-      orderId: orderId,
-      settlementInvoiceNumber: settlementNumber,
-      cashoutInvoiceNumber: cashoutNumber,
-      cashierId: cashierId,
-      cashierName: cashierName,
-      paymentMethod: paymentMethod,
-      amountDue: amountDue,
-      amountPaid: amountPaid,
-      changeAmount: change,
-      orderNumber: order.orderNumber,
-      tableNumber: order.tableNumber,
-      items: order.items.map((i) => i.toMap()).toList(),
-      serverName: order.serverName,
-    );
-    // Le stream Firestore met _orders à jour automatiquement
   }
 
   /// Sauvegarde un reçu dans Firestore (collection receipts)
@@ -729,35 +638,11 @@ class AppProvider extends ChangeNotifier {
   }
 
   // =================== STATISTICS ===================
-  /// Revenu du jour — compte UNIQUEMENT les règlements définitifs (settlementInvoiceGenerated == true)
-  /// Les factures d'encaissement provisoires (cashStatus == awaiting_payment) ne sont PAS comptées.
   double get todayRevenue {
     final today = DateTime.now();
     return _orders
-      .where((o) =>
-        o.settlementInvoiceGenerated &&
-        o.isPaid &&
-        o.createdAt.day == today.day &&
-        o.createdAt.month == today.month &&
-        o.createdAt.year == today.year)
-      .fold(0.0, (sum, o) => sum + o.totalAmount);
-  }
-
-  /// Revenu du jour par mode de paiement (point de caisse détaillé)
-  Map<String, double> get todayRevenueByPaymentMethod {
-    final today = DateTime.now();
-    final settled = _orders.where((o) =>
-      o.settlementInvoiceGenerated &&
-      o.isPaid &&
-      o.createdAt.day == today.day &&
-      o.createdAt.month == today.month &&
-      o.createdAt.year == today.year);
-    final map = <String, double>{};
-    for (final o in settled) {
-      final method = o.paymentMethod ?? 'Espèces';
-      map[method] = (map[method] ?? 0) + o.totalAmount;
-    }
-    return map;
+      .where((o) => o.isPaid && o.createdAt.day == today.day && o.createdAt.month == today.month)
+      .fold(0, (sum, o) => sum + o.totalAmount);
   }
 
   Map<String, int> get topProducts {

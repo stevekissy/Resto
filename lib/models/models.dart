@@ -2,11 +2,6 @@ import 'package:flutter/material.dart';
 
 // =================== ENUMS ===================
 enum OrderStatus { pending, preparing, ready, served, cancelled }
-// Statut de caisse : distinct de OrderStatus (cycle de vie paiement)
-// pending_cashout  → prêt à encaisser (commande ready/served non payée)
-// awaiting_payment → facture d'encaissement générée, en attente de règlement
-// paid             → règlement définitif effectué
-enum CashStatus { pending_cashout, awaiting_payment, paid }
 enum UserRole { admin, manager, cashier, kitchen, server }
 enum StockAlertType { lowStock, outOfStock, expired }
 enum MessageType { text, image, file, call }
@@ -171,25 +166,9 @@ class Order {
   double amountPaid; // Montant versé par le client
   double get change => (amountPaid - totalAmount).clamp(0, double.infinity);
 
-  // ── Cycle de vie caisse (2 étapes) ──────────────────────────────────
-  CashStatus cashStatus;          // Statut dans le cycle de caisse
-  bool cashoutInvoiceGenerated;   // Facture d'encaissement (provisoire) générée
-  bool settlementInvoiceGenerated;// Facture de règlement (définitive) générée
-
-  // Infos encaissement (étape 1 — provisoire)
-  String? cashoutInvoiceNumber;
-  DateTime? cashoutAt;
-  String? cashierId;
-  String? cashierName;
-
-  // Infos règlement (étape 2 — définitif)
-  String? settlementInvoiceNumber;
-  DateTime? settledAt;
-  double changeAmount;            // Monnaie rendue
-
-  // Statuts d'impression hérités (rétrocompatibilité)
-  bool receiptPrinted;
-  bool settlementPrinted;
+  // Statuts d'impression — mis à jour dans Firestore après chaque impression
+  bool receiptPrinted;    // Reçu d'encaissement imprimé
+  bool settlementPrinted; // Reçu de règlement imprimé
 
   Order({
     required this.id,
@@ -208,16 +187,6 @@ class Order {
     this.isPaid = false,
     this.paymentMethod,
     this.amountPaid = 0,
-    this.cashStatus = CashStatus.pending_cashout,
-    this.cashoutInvoiceGenerated = false,
-    this.settlementInvoiceGenerated = false,
-    this.cashoutInvoiceNumber,
-    this.cashoutAt,
-    this.cashierId,
-    this.cashierName,
-    this.settlementInvoiceNumber,
-    this.settledAt,
-    this.changeAmount = 0,
     this.receiptPrinted = false,
     this.settlementPrinted = false,
   }) : createdAt = createdAt ?? DateTime.now();
@@ -262,18 +231,6 @@ class Order {
     'servedAt': servedAt?.millisecondsSinceEpoch,
     'discount': discount, 'isPaid': isPaid, 'paymentMethod': paymentMethod,
     'amountPaid': amountPaid,
-    // Cycle caisse 2 étapes
-    'cashStatus': cashStatus.index,
-    'cashoutInvoiceGenerated': cashoutInvoiceGenerated,
-    'settlementInvoiceGenerated': settlementInvoiceGenerated,
-    'cashoutInvoiceNumber': cashoutInvoiceNumber,
-    'cashoutAt': cashoutAt?.millisecondsSinceEpoch,
-    'cashierId': cashierId,
-    'cashierName': cashierName,
-    'settlementInvoiceNumber': settlementInvoiceNumber,
-    'settledAt': settledAt?.millisecondsSinceEpoch,
-    'changeAmount': changeAmount,
-    // Rétrocompatibilité
     'receiptPrinted': receiptPrinted,
     'settlementPrinted': settlementPrinted,
   };
@@ -293,17 +250,6 @@ class Order {
     isPaid: map['isPaid'] ?? false,
     paymentMethod: map['paymentMethod'],
     amountPaid: (map['amountPaid'] as num?)?.toDouble() ?? 0,
-    // Cycle caisse 2 étapes
-    cashStatus: CashStatus.values[map['cashStatus'] as int? ?? 0],
-    cashoutInvoiceGenerated: map['cashoutInvoiceGenerated'] as bool? ?? false,
-    settlementInvoiceGenerated: map['settlementInvoiceGenerated'] as bool? ?? false,
-    cashoutInvoiceNumber: map['cashoutInvoiceNumber'] as String?,
-    cashoutAt: map['cashoutAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['cashoutAt'] as int) : null,
-    cashierId: map['cashierId'] as String?,
-    cashierName: map['cashierName'] as String?,
-    settlementInvoiceNumber: map['settlementInvoiceNumber'] as String?,
-    settledAt: map['settledAt'] != null ? DateTime.fromMillisecondsSinceEpoch(map['settledAt'] as int) : null,
-    changeAmount: (map['changeAmount'] as num?)?.toDouble() ?? 0,
     receiptPrinted: map['receiptPrinted'] as bool? ?? false,
     settlementPrinted: map['settlementPrinted'] as bool? ?? false,
   );
