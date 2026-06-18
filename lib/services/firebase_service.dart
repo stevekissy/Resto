@@ -247,6 +247,14 @@ class FirebaseService {
             receiptPrinted: data['receiptPrinted'] as bool? ?? false,
             settlementPrinted:
                 data['settlementPrinted'] as bool? ?? false,
+            serverId: data['serverId'] as String?,
+            serverEmail: data['serverEmail'] as String?,
+            updatedAt: _toDateTimeNullable(data['updatedAt']),
+            cancelledAt: _toDateTimeNullable(data['cancelledAt']),
+            cancelledBy: data['cancelledBy'] as String?,
+            cancelReason: data['cancelReason'] as String?,
+            paymentStatus: data['paymentStatus'] as String?,
+            settlementStatus: data['settlementStatus'] as String?,
           );
         } catch (e) {
           debugPrint('[stream.orders] doc ${d.id}: $e');
@@ -299,6 +307,46 @@ class FirebaseService {
 
   Future<void> deleteOrder(String orderId) async {
     await _db.collection('orders').doc(orderId).delete();
+  }
+
+  /// Met à jour les articles et infos d'une commande (modification)
+  Future<void> updateOrderItems({
+    required String orderId,
+    required List<OrderItem> items,
+    required String tableNumber,
+    String? serverName,
+    String? serverId,
+    String? serverEmail,
+    String? specialInstructions,
+    bool? isUrgent,
+    double discount = 0,
+  }) async {
+    final updates = <String, dynamic>{
+      'items': items.map((i) => i.toMap()).toList(),
+      'tableNumber': tableNumber,
+      'discount': discount,
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    };
+    if (serverName != null) updates['serverName'] = serverName;
+    if (serverId != null)   updates['serverId']   = serverId;
+    if (serverEmail != null) updates['serverEmail'] = serverEmail;
+    if (specialInstructions != null) updates['specialInstructions'] = specialInstructions;
+    if (isUrgent != null)   updates['isUrgent']   = isUrgent;
+    await _db.collection('orders').doc(orderId).update(updates);
+  }
+
+  /// Annule une commande (orderStatus = cancelled)
+  Future<void> cancelOrder({
+    required String orderId,
+    required String cancelledBy,
+    required String cancelReason,
+  }) async {
+    await _db.collection('orders').doc(orderId).update({
+      'status': OrderStatus.cancelled.index,
+      'cancelledAt': DateTime.now().millisecondsSinceEpoch,
+      'cancelledBy': cancelledBy,
+      'cancelReason': cancelReason,
+    });
   }
 
   // =================== STOCK ===================

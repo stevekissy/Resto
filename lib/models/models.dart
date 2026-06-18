@@ -191,6 +191,20 @@ class Order {
   bool receiptPrinted;
   bool settlementPrinted;
 
+  // ── Statuts de paiement Firestore (string) ───────────────────────────
+  String? paymentStatus;     // 'paid' après règlement définitif
+  String? settlementStatus;  // 'completed' après règlement définitif
+
+  // ── Responsable de table (serveur assigné) ──────────────────────────
+  String? serverId;
+  String? serverEmail;
+
+  // ── Cycle de vie modification / annulation ──────────────────────────
+  DateTime? updatedAt;
+  DateTime? cancelledAt;
+  String? cancelledBy;
+  String? cancelReason;
+
   Order({
     required this.id,
     required this.orderNumber,
@@ -220,6 +234,14 @@ class Order {
     this.changeAmount = 0,
     this.receiptPrinted = false,
     this.settlementPrinted = false,
+    this.serverId,
+    this.serverEmail,
+    this.updatedAt,
+    this.cancelledAt,
+    this.cancelledBy,
+    this.cancelReason,
+    this.paymentStatus,
+    this.settlementStatus,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.totalPrice);
@@ -276,6 +298,16 @@ class Order {
     // Rétrocompatibilité
     'receiptPrinted': receiptPrinted,
     'settlementPrinted': settlementPrinted,
+    // Responsable de table
+    'serverId': serverId,
+    'serverEmail': serverEmail,
+    // Modification / annulation
+    'updatedAt': updatedAt?.millisecondsSinceEpoch,
+    'cancelledAt': cancelledAt?.millisecondsSinceEpoch,
+    'cancelledBy': cancelledBy,
+    'cancelReason': cancelReason,
+    'paymentStatus': paymentStatus,
+    'settlementStatus': settlementStatus,
   };
 
   factory Order.fromMap(Map<String, dynamic> map) => Order(
@@ -306,6 +338,18 @@ class Order {
     changeAmount: (map['changeAmount'] as num?)?.toDouble() ?? 0,
     receiptPrinted: map['receiptPrinted'] as bool? ?? false,
     settlementPrinted: map['settlementPrinted'] as bool? ?? false,
+    serverId: map['serverId'] as String?,
+    serverEmail: map['serverEmail'] as String?,
+    updatedAt: map['updatedAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['updatedAt'] as int)
+        : null,
+    cancelledAt: map['cancelledAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['cancelledAt'] as int)
+        : null,
+    cancelledBy: map['cancelledBy'] as String?,
+    cancelReason: map['cancelReason'] as String?,
+    paymentStatus: map['paymentStatus'] as String?,
+    settlementStatus: map['settlementStatus'] as String?,
   );
 }
 

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
@@ -77,6 +76,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
   bool _isUrgent = false;
   String _selectedCategory = 'Tous';
   String _searchQuery = '';
+  AppUser? _selectedServer;
 
   final List<String> _quickComments = [
     'Sans piment', 'Très chaud', 'Portion supplémentaire', 'Livraison',
@@ -88,6 +88,12 @@ class _NewOrderTabState extends State<NewOrderTab> {
     _tableController.dispose();
     _notesController.dispose();
     super.dispose();
+  }
+
+  List<AppUser> _getServers(AppProvider provider) {
+    return provider.users
+        .where((u) => u.role == UserRole.server && u.isActive)
+        .toList();
   }
 
   double get _cartTotal => _cartItems.fold(0, (sum, item) => sum + item.totalPrice);
@@ -145,6 +151,9 @@ class _NewOrderTabState extends State<NewOrderTab> {
       items: List.from(_cartItems),
       specialInstructions: _notesController.text.isEmpty ? null : _notesController.text,
       isUrgent: _isUrgent,
+      serverId: _selectedServer?.id,
+      serverName: _selectedServer?.name,
+      serverEmail: _selectedServer?.email,
     );
 
     if (!mounted) return;
@@ -153,6 +162,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
       _tableController.clear();
       _notesController.clear();
       _isUrgent = false;
+      _selectedServer = null;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -275,6 +285,36 @@ class _NewOrderTabState extends State<NewOrderTab> {
                         prefixIcon: Icon(Icons.table_restaurant, color: AppTheme.primary, size: 18),
                         contentPadding: EdgeInsets.symmetric(vertical: 10, horizontal: 12),
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    // ── Responsable de table (serveurs actifs) ──────────
+                    Consumer<AppProvider>(
+                      builder: (_, prov, __) {
+                        final servers = _getServers(prov);
+                        return DropdownButtonFormField<AppUser?>(
+                          value: _selectedServer,
+                          dropdownColor: AppTheme.surface,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            hintText: 'Responsable de table',
+                            prefixIcon: const Icon(Icons.person_outline, color: AppTheme.primary, size: 18),
+                            contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                            hintStyle: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                          ),
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          items: [
+                            const DropdownMenuItem<AppUser?>(
+                              value: null,
+                              child: Text('— Aucun serveur —', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                            ),
+                            ...servers.map((s) => DropdownMenuItem<AppUser?>(
+                              value: s,
+                              child: Text(s.name, style: const TextStyle(color: Colors.white, fontSize: 12), overflow: TextOverflow.ellipsis),
+                            )),
+                          ],
+                          onChanged: (v) => setState(() => _selectedServer = v),
+                        );
+                      },
                     ),
                     const SizedBox(height: 8),
                     Row(
@@ -736,6 +776,17 @@ class _OrderListCard extends StatelessWidget {
               )).toList(),
             ),
           ),
+          // Infos serveur si présent
+          if (order.serverName != null) ...[                                           
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.person_outline, color: AppTheme.textSecondary, size: 13),
+                const SizedBox(width: 4),
+                Text('Serveur : ${order.serverName}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+              ],
+            ),
+          ],
           // Status actions
           if (order.status != OrderStatus.served && order.status != OrderStatus.cancelled) ...[
             const SizedBox(height: 10),
@@ -750,34 +801,346 @@ class _OrderListCard extends StatelessWidget {
   }
 
   List<Widget> _buildActions(BuildContext context, Order order, AppProvider provider) {
+    // Boutons de progression (existants — ne pas modifier)
+    Widget? progressBtn;
     if (order.status == OrderStatus.pending) {
-      return [
-        ElevatedButton.icon(
-          onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.preparing),
-          icon: const Icon(Icons.restaurant, size: 14),
-          label: const Text('Commencer', style: TextStyle(fontSize: 12)),
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.preparing, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-        ),
-      ];
+      progressBtn = ElevatedButton.icon(
+        onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.preparing),
+        icon: const Icon(Icons.restaurant, size: 14),
+        label: const Text('Commencer', style: TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.preparing, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+      );
     } else if (order.status == OrderStatus.preparing) {
-      return [
-        ElevatedButton.icon(
-          onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.ready),
-          icon: const Icon(Icons.check_circle, size: 14),
-          label: const Text('Prêt', style: TextStyle(fontSize: 12)),
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.ready, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-        ),
-      ];
+      progressBtn = ElevatedButton.icon(
+        onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.ready),
+        icon: const Icon(Icons.check_circle, size: 14),
+        label: const Text('Prêt', style: TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.ready, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+      );
     } else if (order.status == OrderStatus.ready) {
-      return [
-        ElevatedButton.icon(
-          onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.served),
-          icon: const Icon(Icons.done_all, size: 14),
-          label: const Text('Servi', style: TextStyle(fontSize: 12)),
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-        ),
-      ];
+      progressBtn = ElevatedButton.icon(
+        onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.served),
+        icon: const Icon(Icons.done_all, size: 14),
+        label: const Text('Servi', style: TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+      );
     }
-    return [];
+
+    // Boutons Modifier + Annuler (seulement si non servie / non payée / non annulée)
+    final canEdit = !order.isPaid &&
+        order.status != OrderStatus.served &&
+        order.status != OrderStatus.cancelled;
+
+    final editBtn = canEdit
+        ? OutlinedButton.icon(
+            onPressed: () => _showEditDialog(context, order, provider),
+            icon: const Icon(Icons.edit_outlined, size: 13),
+            label: const Text('Modifier', style: TextStyle(fontSize: 11)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.primary,
+              side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.5)),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            ),
+          )
+        : null;
+
+    final cancelBtn = canEdit
+        ? OutlinedButton.icon(
+            onPressed: () => _showCancelDialog(context, order, provider),
+            icon: const Icon(Icons.cancel_outlined, size: 13),
+            label: const Text('Annuler', style: TextStyle(fontSize: 11)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.error,
+              side: BorderSide(color: AppTheme.error.withValues(alpha: 0.5)),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            ),
+          )
+        : null;
+
+    return [
+      if (cancelBtn != null) cancelBtn,
+      if (editBtn != null) ...[const SizedBox(width: 6), editBtn],
+      if (progressBtn != null) ...[const SizedBox(width: 6), progressBtn],
+    ];
+  }
+
+  void _showCancelDialog(BuildContext context, Order order, AppProvider provider) {
+    final reasonCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.cancel, color: AppTheme.error),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('Annuler #${order.orderNumber}',
+                  style: const TextStyle(color: Colors.white, fontSize: 15)),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Table ${order.tableNumber} — ${order.totalAmount.toStringAsFixed(0)} F CFA',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+            const SizedBox(height: 14),
+            const Text('Raison de l\'annulation *',
+                style: TextStyle(color: Colors.white, fontSize: 13)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: reasonCtrl,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              maxLines: 2,
+              decoration: const InputDecoration(
+                hintText: 'Ex: Erreur de saisie, client parti...',
+                contentPadding: EdgeInsets.all(10),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fermer', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              final reason = reasonCtrl.text.trim();
+              if (reason.isEmpty) return;
+              Navigator.pop(context);
+              try {
+                await provider.cancelOrder(orderId: order.id, cancelReason: reason);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text('Commande #${order.orderNumber} annulée'),
+                    backgroundColor: AppTheme.error,
+                  ));
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text('Erreur : $e'),
+                    backgroundColor: Colors.red,
+                  ));
+                }
+              }
+            },
+            icon: const Icon(Icons.cancel, size: 14),
+            label: const Text('Confirmer l\'annulation'),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error, foregroundColor: Colors.white),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditDialog(BuildContext context, Order order, AppProvider provider) {
+    showDialog(
+      context: context,
+      builder: (_) => _EditOrderDialog(order: order, provider: provider),
+    );
+  }
+}
+
+// ── Dialog Modifier Commande ─────────────────────────────────────────────────
+class _EditOrderDialog extends StatefulWidget {
+  final Order order;
+  final AppProvider provider;
+  const _EditOrderDialog({required this.order, required this.provider});
+
+  @override
+  State<_EditOrderDialog> createState() => _EditOrderDialogState();
+}
+
+class _EditOrderDialogState extends State<_EditOrderDialog> {
+  late TextEditingController _tableCtrl;
+  late List<OrderItem> _items;
+  AppUser? _selectedServer;
+
+  @override
+  void initState() {
+    super.initState();
+    _tableCtrl = TextEditingController(text: widget.order.tableNumber);
+    _items = widget.order.items.map((i) => OrderItem(
+      productId: i.productId,
+      productName: i.productName,
+      quantity: i.quantity,
+      unitPrice: i.unitPrice,
+      specialComment: i.specialComment,
+    )).toList();
+    // Pré-sélectionner le serveur actuel si présent
+    if (widget.order.serverId != null) {
+      try {
+        _selectedServer = widget.provider.users.firstWhere(
+          (u) => u.id == widget.order.serverId,
+        );
+      } catch (_) {
+        _selectedServer = null;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _tableCtrl.dispose();
+    super.dispose();
+  }
+
+  double get _total => _items.fold(0, (s, i) => s + i.totalPrice);
+
+  List<AppUser> get _servers => widget.provider.users
+      .where((u) => u.role == UserRole.server && u.isActive)
+      .toList();
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          const Icon(Icons.edit, color: AppTheme.primary),
+          const SizedBox(width: 8),
+          Text('Modifier #${widget.order.orderNumber}',
+              style: const TextStyle(color: Colors.white, fontSize: 15)),
+        ],
+      ),
+      content: SizedBox(
+        width: 400,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Table
+              TextField(
+                controller: _tableCtrl,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  hintText: 'N° de table',
+                  prefixIcon: Icon(Icons.table_restaurant, color: AppTheme.primary, size: 18),
+                  contentPadding: EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                ),
+              ),
+              const SizedBox(height: 10),
+              // Responsable
+              DropdownButtonFormField<AppUser?>(
+                value: _selectedServer,
+                dropdownColor: AppTheme.surface,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  hintText: 'Responsable de table',
+                  prefixIcon: Icon(Icons.person_outline, color: AppTheme.primary, size: 18),
+                  contentPadding: EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                  hintStyle: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                ),
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+                items: [
+                  const DropdownMenuItem<AppUser?>(
+                    value: null,
+                    child: Text('— Aucun serveur —', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  ),
+                  ..._servers.map((s) => DropdownMenuItem<AppUser?>(
+                    value: s,
+                    child: Text(s.name, style: const TextStyle(color: Colors.white, fontSize: 12), overflow: TextOverflow.ellipsis),
+                  )),
+                ],
+                onChanged: (v) => setState(() => _selectedServer = v),
+              ),
+              const SizedBox(height: 12),
+              // Articles
+              const Text('Articles', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+              const SizedBox(height: 6),
+              ..._items.map((item) => Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceLight,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFF2A2A5A)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(item.productName, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                    ),
+                    IconButton(
+                      onPressed: () => setState(() { item.quantity = (item.quantity - 1).clamp(1, 99); }),
+                      icon: const Icon(Icons.remove_circle_outline, size: 18, color: AppTheme.error),
+                      padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Text('${item.quantity}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                    ),
+                    IconButton(
+                      onPressed: () => setState(() { item.quantity++; }),
+                      icon: const Icon(Icons.add_circle_outline, size: 18, color: AppTheme.success),
+                      padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      onPressed: () => setState(() => _items.removeWhere((i) => i.productId == item.productId)),
+                      icon: const Icon(Icons.close, size: 16, color: AppTheme.textSecondary),
+                      padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              )).toList(),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text('Total : ${_total.toStringAsFixed(0)} F CFA',
+                      style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 13)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
+        ),
+        ElevatedButton.icon(
+          onPressed: _items.isEmpty ? null : () async {
+            if (_tableCtrl.text.trim().isEmpty) return;
+            Navigator.pop(context);
+            try {
+              await widget.provider.updateOrderItems(
+                orderId: widget.order.id,
+                items: _items,
+                tableNumber: _tableCtrl.text.trim(),
+                serverId: _selectedServer?.id,
+                serverName: _selectedServer?.name,
+                serverEmail: _selectedServer?.email,
+              );
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('Commande #${widget.order.orderNumber} mise à jour'),
+                  backgroundColor: AppTheme.success,
+                ));
+              }
+            } catch (e) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('Erreur : $e'), backgroundColor: Colors.red,
+                ));
+              }
+            }
+          },
+          icon: const Icon(Icons.save, size: 14),
+          label: const Text('Enregistrer'),
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white),
+        ),
+      ],
+    );
   }
 }

@@ -441,6 +441,8 @@ class AppProvider extends ChangeNotifier {
     required String tableNumber,
     required List<OrderItem> items,
     String? serverName,
+    String? serverId,
+    String? serverEmail,
     String? specialInstructions,
     bool isUrgent = false,
   }) async {
@@ -450,6 +452,8 @@ class AppProvider extends ChangeNotifier {
       orderNumber: _orderCounter,
       tableNumber: tableNumber,
       serverName: serverName ?? _currentUser?.name,
+      serverId: serverId,
+      serverEmail: serverEmail,
       items: items,
       specialInstructions: specialInstructions,
       isUrgent: isUrgent,
@@ -457,6 +461,44 @@ class AppProvider extends ChangeNotifier {
     await _firebase.saveOrder(order);
     onNewOrder?.call(order);
     return order;
+  }
+
+  /// Modifie les articles / infos d'une commande existante (tant que non servie)
+  Future<void> updateOrderItems({
+    required String orderId,
+    required List<OrderItem> items,
+    required String tableNumber,
+    String? serverName,
+    String? serverId,
+    String? serverEmail,
+    String? specialInstructions,
+    bool? isUrgent,
+    double discount = 0,
+  }) async {
+    await _firebase.updateOrderItems(
+      orderId: orderId,
+      items: items,
+      tableNumber: tableNumber,
+      serverName: serverName,
+      serverId: serverId,
+      serverEmail: serverEmail,
+      specialInstructions: specialInstructions,
+      isUrgent: isUrgent,
+      discount: discount,
+    );
+  }
+
+  /// Annule une commande (orderStatus = cancelled)
+  Future<void> cancelOrder({
+    required String orderId,
+    required String cancelReason,
+  }) async {
+    final cancelledBy = _currentUser?.name ?? 'Inconnu';
+    await _firebase.cancelOrder(
+      orderId: orderId,
+      cancelledBy: cancelledBy,
+      cancelReason: cancelReason,
+    );
   }
 
   Future<void> updateOrderStatus(String orderId, OrderStatus status) async {

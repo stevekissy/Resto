@@ -372,21 +372,30 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
             final amountDue = order.totalAmount;
             final change =
                 (amountPaid - amountDue).clamp(0.0, double.infinity);
+            final cashierName = provider.currentUser?.name;
+            // Impression automatique
             PrintService().printSettlementInvoice(
               order: order,
               settlementInvoiceNumber: settlementNumber,
               paymentMethod: paymentMethod,
               amountPaid: amountPaid,
               changeAmount: change,
-              cashierName: provider.currentUser?.name,
+              cashierName: cashierName,
             );
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(
-                    'Règlement #${order.orderNumber} enregistré — ${_fmt.format(amountDue)} F CFA'),
-                backgroundColor: AppTheme.success,
-                duration: const Duration(seconds: 4),
-              ));
+              // ── Dialog de succès avec bouton Imprimer facture définitive ──
+              await showDialog(
+                context: context,
+                builder: (dctx) => _ReglementSuccessDialog(
+                  order: order,
+                  settlementNumber: settlementNumber,
+                  paymentMethod: paymentMethod,
+                  amountPaid: amountPaid,
+                  changeAmount: change,
+                  cashierName: cashierName,
+                  fmt: _fmt,
+                ),
+              );
             }
           } catch (e) {
             if (mounted) {
@@ -593,6 +602,142 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
             child: const Center(child: CircularProgressIndicator()),
           ),
       ],
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  DIALOG SUCCÈS RÈGLEMENT — bouton "Imprimer la facture définitive"
+// ════════════════════════════════════════════════════════════════════════════
+class _ReglementSuccessDialog extends StatelessWidget {
+  final Order order;
+  final String settlementNumber;
+  final String paymentMethod;
+  final double amountPaid;
+  final double changeAmount;
+  final String? cashierName;
+  final NumberFormat fmt;
+
+  const _ReglementSuccessDialog({
+    required this.order,
+    required this.settlementNumber,
+    required this.paymentMethod,
+    required this.amountPaid,
+    required this.changeAmount,
+    required this.cashierName,
+    required this.fmt,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppTheme.success.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.check_circle, color: AppTheme.success, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Règlement confirmé',
+                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                Text('Commande #${order.orderNumber}',
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+              ],
+            ),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Récapitulatif
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppTheme.success.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.success.withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              children: [
+                _Row('N° Facture', settlementNumber),
+                _Row('Table', 'Table ${order.tableNumber}'),
+                _Row('Mode paiement', paymentMethod),
+                _Row('Montant réglé', '${fmt.format(order.totalAmount)} F CFA'),
+                _Row('Montant versé', '${fmt.format(amountPaid)} F CFA'),
+                _Row('Monnaie rendue', '${fmt.format(changeAmount)} F CFA',
+                    valueColor: changeAmount > 0 ? AppTheme.success : null),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Bouton Imprimer la facture définitive
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                PrintService().printSettlementInvoice(
+                  order: order,
+                  settlementInvoiceNumber: settlementNumber,
+                  paymentMethod: paymentMethod,
+                  amountPaid: amountPaid,
+                  changeAmount: changeAmount,
+                  cashierName: cashierName,
+                );
+              },
+              icon: const Icon(Icons.print, size: 18),
+              label: const Text('Imprimer la facture définitive',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2E7D32),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'La facture s\'ouvrira dans une nouvelle fenêtre pour impression ou téléchargement PDF.',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fermer', style: TextStyle(color: AppTheme.textSecondary)),
+        ),
+      ],
+    );
+  }
+
+  Widget _Row(String label, String value, {Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+          Text(value, style: TextStyle(
+            color: valueColor ?? Colors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: 12,
+          )),
+        ],
+      ),
     );
   }
 }
@@ -884,6 +1029,9 @@ class _PointCaisseTab extends StatefulWidget {
 }
 
 class _PointCaisseTabState extends State<_PointCaisseTab> {
+  bool _showRecetteVente = false;
+  DateTime _recetteDate = DateTime.now();
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
@@ -1039,6 +1187,95 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
                     ),
                   );
                 }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // ── Recette de Vente ──────────────────────────────────────────────
+          GlassCard(
+            border: Border.all(color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    const SectionHeader(title: 'Recette de Vente', icon: Icons.bar_chart),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: () => setState(() => _showRecetteVente = !_showRecetteVente),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1565C0).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(_showRecetteVente ? Icons.expand_less : Icons.expand_more,
+                                color: const Color(0xFF42A5F5), size: 14),
+                            const SizedBox(width: 4),
+                            Text(_showRecetteVente ? 'Masquer' : 'Afficher',
+                                style: const TextStyle(color: Color(0xFF42A5F5), fontSize: 11, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (_showRecetteVente) ...[
+                  const SizedBox(height: 10),
+                  // Filtre date
+                  Row(
+                    children: [
+                      const Icon(Icons.calendar_today, color: AppTheme.textSecondary, size: 14),
+                      const SizedBox(width: 6),
+                      Text(DateFormat('dd/MM/yyyy', 'fr_FR').format(_recetteDate),
+                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: _recetteDate,
+                            firstDate: DateTime(2024),
+                            lastDate: DateTime.now(),
+                            builder: (ctx, child) => Theme(
+                              data: Theme.of(ctx).copyWith(
+                                colorScheme: const ColorScheme.dark(
+                                  primary: AppTheme.primary,
+                                  surface: AppTheme.surface,
+                                ),
+                              ),
+                              child: child!,
+                            ),
+                          );
+                          if (picked != null) setState(() => _recetteDate = picked);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.edit_calendar, color: AppTheme.primary, size: 13),
+                              SizedBox(width: 4),
+                              Text('Changer', style: TextStyle(color: AppTheme.primary, fontSize: 11)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _RecetteVenteTable(
+                    orders: provider.orders,
+                    filterDate: _recetteDate,
+                    fmt: fmt,
+                  ),
+                ],
               ],
             ),
           ),
@@ -1278,4 +1515,199 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
       ),
     );
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Recette de Vente — tableau produits vendus
+//  Filtre : paymentStatus=paid + settlementStatus=completed
+// ════════════════════════════════════════════════════════════════════════════
+class _RecetteVenteTable extends StatelessWidget {
+  final List<Order> orders;
+  final DateTime filterDate;
+  final NumberFormat fmt;
+
+  const _RecetteVenteTable({
+    required this.orders,
+    required this.filterDate,
+    required this.fmt,
+  });
+
+  List<Order> get _filteredOrders {
+    return orders.where((o) {
+      if (o.paymentStatus != 'paid') return false;
+      if (o.settlementStatus != 'completed') return false;
+      final settled = o.settledAt;
+      if (settled == null) return false;
+      return settled.day == filterDate.day &&
+          settled.month == filterDate.month &&
+          settled.year == filterDate.year;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final paid = _filteredOrders;
+
+    if (paid.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(
+          child: Text('Aucune vente pour cette date.',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+        ),
+      );
+    }
+
+    // Agréger par produit
+    final Map<String, _ProductStat> stats = {};
+    for (final order in paid) {
+      for (final item in order.items) {
+        final key = item.productName;
+        if (stats.containsKey(key)) {
+          stats[key]!.quantity += item.quantity;
+          stats[key]!.totalAmount += item.totalPrice;
+          stats[key]!.orderCount++;
+        } else {
+          stats[key] = _ProductStat(
+            productName: item.productName,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalAmount: item.totalPrice,
+            orderCount: 1,
+          );
+        }
+      }
+    }
+
+    final rows = stats.values.toList()
+      ..sort((a, b) => b.totalAmount.compareTo(a.totalAmount));
+    final grandTotal = rows.fold<double>(0, (s, r) => s + r.totalAmount);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // En-tête tableau
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: AppTheme.primary.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: const Row(
+            children: [
+              Expanded(flex: 4, child: Text('Produit', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700))),
+              SizedBox(width: 4),
+              Expanded(flex: 1, child: Text('Qté', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700), textAlign: TextAlign.center)),
+              Expanded(flex: 2, child: Text('P.U', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700), textAlign: TextAlign.right)),
+              Expanded(flex: 2, child: Text('Total', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700), textAlign: TextAlign.right)),
+              Expanded(flex: 1, child: Text('Cmds', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700), textAlign: TextAlign.center)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        // Lignes produits
+        ...rows.map((r) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Row(
+            children: [
+              Expanded(flex: 4, child: Text(r.productName, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis)),
+              const SizedBox(width: 4),
+              Expanded(flex: 1, child: Text('${r.quantity}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600), textAlign: TextAlign.center)),
+              Expanded(flex: 2, child: Text('${fmt.format(r.unitPrice)} F', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11), textAlign: TextAlign.right)),
+              Expanded(flex: 2, child: Text('${fmt.format(r.totalAmount)} F', style: const TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w600), textAlign: TextAlign.right)),
+              Expanded(flex: 1, child: Text('${r.orderCount}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11), textAlign: TextAlign.center)),
+            ],
+          ),
+        )),
+        const Divider(color: Color(0xFF2A2A5A)),
+        // Total général
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('${paid.length} commande(s) réglée(s)',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+            Text('TOTAL : ${fmt.format(grandTotal)} F CFA',
+                style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w900, fontSize: 14)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Bouton Imprimer / Export PDF
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () => _printRecetteVente(rows, grandTotal, paid.length),
+            icon: const Icon(Icons.print, size: 16),
+            label: const Text('Imprimer / Export PDF', style: TextStyle(fontWeight: FontWeight.w700)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1565C0),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _printRecetteVente(List<_ProductStat> rows, double grandTotal, int nbOrders) {
+    final dateStr = DateFormat('dd/MM/yyyy', 'fr_FR').format(filterDate);
+    final rowsHtml = rows.map((r) => '''
+      <tr>
+        <td style="padding:5px 8px; text-align:left;">${_esc(r.productName)}</td>
+        <td style="padding:5px 8px; text-align:center;">${r.quantity}</td>
+        <td style="padding:5px 8px; text-align:right;">${fmt.format(r.unitPrice)} F</td>
+        <td style="padding:5px 8px; text-align:right; font-weight:600; color:#5C6BC0;">${fmt.format(r.totalAmount)} F</td>
+        <td style="padding:5px 8px; text-align:center; color:#888;">${r.orderCount}</td>
+      </tr>''').join();
+
+    final html = '''
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<title>Recette de Vente — $dateStr</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+  h1 { font-size: 18px; color: #1a237e; margin-bottom: 4px; }
+  .sub { color: #555; font-size: 13px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { background: #1a237e; color: #fff; padding: 8px; font-size: 12px; }
+  tbody tr:nth-child(even) { background: #f5f5f5; }
+  tfoot td { font-weight: bold; background: #e8eaf6; padding: 8px; }
+  @media print { button { display:none; } }
+</style></head>
+<body>
+  <h1>RECETTE DE VENTE — RESTAURANT SANKADIOKRO</h1>
+  <div class="sub">Date : $dateStr &nbsp;|&nbsp; $nbOrders commande(s) réglée(s)</div>
+  <table>
+    <thead><tr><th style="text-align:left">Produit</th><th>Qté</th><th style="text-align:right">P.U</th><th style="text-align:right">Total</th><th>Cmds</th></tr></thead>
+    <tbody>$rowsHtml</tbody>
+    <tfoot><tr><td colspan="3"><strong>TOTAL GÉNÉRAL</strong></td><td style="text-align:right; font-size:15px; color:#2E7D32;"><strong>${fmt.format(grandTotal)} F CFA</strong></td><td></td></tr></tfoot>
+  </table>
+  <br/>
+  <button onclick="window.print()" style="padding:10px 24px; background:#1a237e; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:14px;">Imprimer / Télécharger PDF</button>
+</body></html>''';
+
+    PrintService.openHtmlInNewTab(html);
+  }
+
+  String _esc(String s) => s
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;');
+}
+
+class _ProductStat {
+  final String productName;
+  int quantity;
+  final double unitPrice;
+  double totalAmount;
+  int orderCount;
+
+  _ProductStat({
+    required this.productName,
+    required this.quantity,
+    required this.unitPrice,
+    required this.totalAmount,
+    required this.orderCount,
+  });
 }
