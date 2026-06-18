@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import 'package:uuid/uuid.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../../models/models.dart';
 import '../../services/print_service.dart';
 
+// ════════════════════════════════════════════════════════════════════════════
+//  CashierScreen — Workflow caisse 2 étapes
+//  Tab 1 : Commandes à encaisser   (cashStatus == pending_cashout)
+//  Tab 2 : Factures en attente      (cashStatus == awaiting_payment)
+//  Tab 3 : Point de Caisse          (design original restauré)
+// ════════════════════════════════════════════════════════════════════════════
 class CashierScreen extends StatefulWidget {
   const CashierScreen({super.key});
 
@@ -15,7 +20,8 @@ class CashierScreen extends StatefulWidget {
   State<CashierScreen> createState() => _CashierScreenState();
 }
 
-class _CashierScreenState extends State<CashierScreen> with SingleTickerProviderStateMixin {
+class _CashierScreenState extends State<CashierScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
@@ -32,9 +38,29 @@ class _CashierScreenState extends State<CashierScreen> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
+    final provider = context.watch<AppProvider>();
+    final tab1Count = provider.pendingCashoutOrders.length;
+    final tab2Count = provider.awaitingPaymentOrders.length;
+
     return Scaffold(
       body: Column(
         children: [
+          // ── BANDEAU DE VÉRIFICATION — à supprimer après confirmation Netlify ──
+          Container(
+            width: double.infinity,
+            color: const Color(0xFF1B5E20),
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: const Text(
+              'CAISSE DESIGN RESTAURÉ v2 — Workflow 2 étapes',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
           Container(
             color: AppTheme.surface,
             child: TabBar(
@@ -43,10 +69,27 @@ class _CashierScreenState extends State<CashierScreen> with SingleTickerProvider
               labelColor: AppTheme.primary,
               unselectedLabelColor: AppTheme.textSecondary,
               isScrollable: true,
-              tabs: const [
-                Tab(text: 'Caisse', icon: Icon(Icons.point_of_sale, size: 16)),
-                Tab(text: 'Factures', icon: Icon(Icons.receipt, size: 16)),
-                Tab(text: 'Point de Caisse', icon: Icon(Icons.bar_chart, size: 16)),
+              tabs: [
+                Tab(
+                  icon: Badge(
+                    label: Text('$tab1Count'),
+                    isLabelVisible: tab1Count > 0,
+                    child: const Icon(Icons.point_of_sale, size: 16),
+                  ),
+                  text: 'Caisse',
+                ),
+                Tab(
+                  icon: Badge(
+                    label: Text('$tab2Count'),
+                    isLabelVisible: tab2Count > 0,
+                    child: const Icon(Icons.receipt_long, size: 16),
+                  ),
+                  text: 'Factures',
+                ),
+                const Tab(
+                  icon: Icon(Icons.bar_chart, size: 16),
+                  text: 'Point de Caisse',
+                ),
               ],
             ),
           ),
@@ -55,7 +98,7 @@ class _CashierScreenState extends State<CashierScreen> with SingleTickerProvider
               controller: _tabController,
               children: const [
                 _CaisseTab(),
-                _FacturesTab(),
+                _FacturesEnAttenteTab(),
                 _PointCaisseTab(),
               ],
             ),
@@ -66,7 +109,12 @@ class _CashierScreenState extends State<CashierScreen> with SingleTickerProvider
   }
 }
 
-// =================== CAISSE TAB ===================
+// ════════════════════════════════════════════════════════════════════════════
+//  TAB 1 — Commandes à encaisser (cashStatus == pending_cashout)
+//  Affiche : numéro, table, articles, total UNIQUEMENT
+//  Pas de mode de paiement, pas de montant versé à cette étape
+//  Bouton "Encaisser" → génère facture provisoire → passe en Tab 2
+// ════════════════════════════════════════════════════════════════════════════
 class _CaisseTab extends StatefulWidget {
   const _CaisseTab();
 
@@ -75,1036 +123,614 @@ class _CaisseTab extends StatefulWidget {
 }
 
 class _CaisseTabState extends State<_CaisseTab> {
-  Order? _selectedOrder;
+  final _fmt = NumberFormat('#,###', 'fr_FR');
+  bool _processing = false;
+
+  Future<void> _encaisser(BuildContext context, Order order, AppProvider provider) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.receipt_long, color: AppTheme.primary),
+            SizedBox(width: 8),
+            Text('Générer la facture', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Commande #${order.orderNumber}',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+            Text('Table : ${order.tableNumber}',
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Montant à encaisser',
+                    style: TextStyle(color: AppTheme.textSecondary)),
+                  Text('${_fmt.format(order.totalAmount)} F CFA',
+                    style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 16)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Une facture d\'encaissement provisoire sera générée.\nLe règlement définitif se fera à l\'étape suivante.',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.receipt_long, size: 16),
+            label: const Text('Encaisser'),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) return;
+
+    setState(() => _processing = true);
+    try {
+      await provider.cashoutOrder(order.id);
+      final invoiceNumber = PrintService.generateReceiptNumber(order.orderNumber);
+      PrintService().printCashoutInvoice(
+        order: order,
+        cashoutInvoiceNumber: invoiceNumber,
+        cashierName: provider.currentUser?.name,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Facture #${order.orderNumber} générée — En attente de règlement'),
+            backgroundColor: AppTheme.primary,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    final unpaidOrders = provider.orders.where((o) =>
-      (o.status == OrderStatus.ready || o.status == OrderStatus.served) && !o.isPaid
-    ).toList();
+    final orders = provider.pendingCashoutOrders;
 
-    return Row(
+    return Stack(
       children: [
-        // Orders list
-        Expanded(
-          flex: 5,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    const Icon(Icons.receipt_long, color: AppTheme.primary, size: 18),
-                    const SizedBox(width: 8),
-                    Text('Commandes à encaisser (${unpaidOrders.length})',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
-                  ],
-                ),
+        Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Icon(Icons.receipt_long, color: AppTheme.primary, size: 18),
+                  const SizedBox(width: 8),
+                  Text('Commandes à encaisser (${orders.length})',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+                ],
               ),
-              Expanded(
-                child: unpaidOrders.isEmpty
-                  ? const EmptyState(icon: Icons.check_circle, title: 'Tout est encaissé !', subtitle: 'Aucune commande en attente de paiement')
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      itemCount: unpaidOrders.length,
-                      itemBuilder: (ctx, i) {
-                        final order = unpaidOrders[i];
-                        final isSelected = _selectedOrder?.id == order.id;
-                        return GlassCard(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          border: Border.all(
-                            color: isSelected ? AppTheme.primary : const Color(0xFF2A2A5A),
-                            width: isSelected ? 2 : 1,
-                          ),
-                          onTap: () => setState(() => _selectedOrder = order),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text('#${order.orderNumber} - Table ${order.tableNumber}',
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
-                                  Text('${order.totalAmount.toStringAsFixed(0)} F CFA',
-                                    style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 16)),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              ...order.items.map((item) => Padding(
-                                padding: const EdgeInsets.only(bottom: 2),
-                                child: Text('${item.quantity}× ${item.productName}',
-                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                              )),
-                              if (isSelected) ...[
-                                const SizedBox(height: 8),
-                                ElevatedButton.icon(
-                                  onPressed: () => _showPaymentDialog(context, order, provider),
-                                  icon: const Icon(Icons.payment, size: 16),
-                                  label: const Text('Encaisser'),
-                                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
-                                ),
+            ),
+            Expanded(
+              child: orders.isEmpty
+                ? const EmptyState(
+                    icon: Icons.check_circle,
+                    title: 'Tout est encaissé !',
+                    subtitle: 'Aucune commande en attente de paiement',
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    itemCount: orders.length,
+                    itemBuilder: (ctx, i) {
+                      final order = orders[i];
+                      return GlassCard(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // En-tête commande
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('#${order.orderNumber} - Table ${order.tableNumber}',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+                                Text('${_fmt.format(order.totalAmount)} F CFA',
+                                  style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 16)),
                               ],
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-              ),
-            ],
-          ),
+                            ),
+                            const SizedBox(height: 6),
+                            // Articles uniquement — pas de mode paiement, pas de montant versé
+                            ...order.items.map((item) => Padding(
+                              padding: const EdgeInsets.only(bottom: 2),
+                              child: Text('${item.quantity}× ${item.productName}',
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                            )),
+                            const SizedBox(height: 8),
+                            // Bouton Encaisser
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: _processing ? null : () => _encaisser(ctx, order, provider),
+                                icon: const Icon(Icons.receipt_long, size: 16),
+                                label: const Text('Encaisser', style: TextStyle(fontWeight: FontWeight.w700)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.success,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+            ),
+          ],
         ),
-        // Selected order detail
-        if (_selectedOrder != null)
+        if (_processing)
           Container(
-            width: 300,
-            decoration: BoxDecoration(
-              color: AppTheme.surface,
-              border: Border(left: BorderSide(color: const Color(0xFF2A2A5A))),
-            ),
-            child: _OrderDetail(
-              order: _selectedOrder!,
-              onPay: (method, discount, amountPaid) async {
-                await provider.payOrder(_selectedOrder!.id, method, discount, amountPaid: amountPaid);
-                if (!mounted) return;
-                _showInvoice(context, _selectedOrder!, amountPaid);
-                setState(() => _selectedOrder = null);
-              },
-            ),
+            color: Colors.black45,
+            child: const Center(child: CircularProgressIndicator()),
           ),
       ],
     );
   }
+}
 
-  void _showPaymentDialog(BuildContext context, Order order, AppProvider provider) {
-    showDialog(
+// ════════════════════════════════════════════════════════════════════════════
+//  TAB 2 — Factures en attente de règlement (cashStatus == awaiting_payment)
+//  Affiche les factures d'encaissement provisoires
+//  Bouton "Régler" → dialog avec mode paiement + montant versé + monnaie rendue
+//  → génère facture de règlement définitive → comptabilise dans le Point Caisse
+// ════════════════════════════════════════════════════════════════════════════
+class _FacturesEnAttenteTab extends StatefulWidget {
+  const _FacturesEnAttenteTab();
+
+  @override
+  State<_FacturesEnAttenteTab> createState() => _FacturesEnAttenteTabState();
+}
+
+class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
+  final _fmt = NumberFormat('#,###', 'fr_FR');
+  bool _processing = false;
+
+  Future<void> _regler(BuildContext context, Order order, AppProvider provider) async {
+    await showDialog(
       context: context,
-      builder: (_) => _PaymentDialog(
+      barrierDismissible: false,
+      builder: (ctx) => _ReglementDialog(
         order: order,
-        onPay: (method, discount, amountPaid) async {
-          await provider.payOrder(order.id, method, discount, amountPaid: amountPaid);
-          if (!context.mounted) return;
-          Navigator.pop(context);
-          _showInvoice(context, order, amountPaid);
-          setState(() => _selectedOrder = null);
+        fmt: _fmt,
+        cashierName: provider.currentUser?.name ?? 'Caissier',
+        onConfirm: (paymentMethod, amountPaid) async {
+          Navigator.pop(ctx);
+          setState(() => _processing = true);
+          try {
+            await provider.settleOrder(
+              order.id,
+              paymentMethod: paymentMethod,
+              amountPaid: amountPaid,
+            );
+            final settlementNumber = PrintService.generateSettlementNumber(order.orderNumber);
+            final amountDue = order.totalAmount;
+            final change = (amountPaid - amountDue).clamp(0.0, double.infinity);
+            PrintService().printSettlementInvoice(
+              order: order,
+              settlementInvoiceNumber: settlementNumber,
+              paymentMethod: paymentMethod,
+              amountPaid: amountPaid,
+              changeAmount: change,
+              cashierName: provider.currentUser?.name,
+            );
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Règlement #${order.orderNumber} enregistré — ${_fmt.format(amountDue)} F CFA'),
+                  backgroundColor: AppTheme.success,
+                  duration: const Duration(seconds: 4),
+                ),
+              );
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Erreur règlement : $e'), backgroundColor: Colors.red),
+              );
+            }
+          } finally {
+            if (mounted) setState(() => _processing = false);
+          }
         },
       ),
     );
   }
 
-  void _showInvoice(BuildContext context, Order order, double amountPaid) {
-    Navigator.push(context, MaterialPageRoute(
-      builder: (_) => InvoiceScreen(order: order, amountPaid: amountPaid),
-    ));
-  }
-}
-
-// =================== ORDER DETAIL ===================
-class _OrderDetail extends StatefulWidget {
-  final Order order;
-  final Function(String paymentMethod, double discount, double amountPaid) onPay;
-
-  const _OrderDetail({required this.order, required this.onPay});
-
-  @override
-  State<_OrderDetail> createState() => _OrderDetailState();
-}
-
-class _OrderDetailState extends State<_OrderDetail> {
-  String _paymentMethod = 'Espèces';
-  final _discountCtrl = TextEditingController(text: '0');
-  final _amountPaidCtrl = TextEditingController(text: '0');
-  final _methods = ['Espèces', 'Orange Money', 'MTN Money', 'Wave', 'Carte Bancaire', 'Moov Money'];
-
-  double get _discount => double.tryParse(_discountCtrl.text) ?? 0;
-  double get _total => (widget.order.subtotal - _discount).clamp(0, double.infinity);
-  double get _amountPaid => double.tryParse(_amountPaidCtrl.text) ?? 0;
-  double get _change => (_amountPaid - _total).clamp(0, double.infinity);
-  bool get _insufficientAmount => _amountPaid > 0 && _amountPaid < _total;
-
-  @override
-  void dispose() {
-    _discountCtrl.dispose();
-    _amountPaidCtrl.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final fmt = NumberFormat('#,###', 'fr_FR');
-    final order = widget.order;
+    final provider = context.watch<AppProvider>();
+    final orders = provider.awaitingPaymentOrders;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Facture d\'Encaissement', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
-          const SizedBox(height: 4),
-          Text('#${order.orderNumber} - Table ${order.tableNumber}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-          const SizedBox(height: 16),
-          // Articles
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: AppTheme.cardBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF2A2A5A))),
-            child: Column(
-              children: [
-                ...order.items.map((item) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(child: Text('${item.quantity}× ${item.productName}', style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12))),
-                      Text('${fmt.format(item.totalPrice)} F', style: const TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                )),
-                const Divider(color: Color(0xFF2A2A5A)),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Sous-total', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-                    Text('${fmt.format(order.subtotal)} F', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          // Remise
-          TextField(
-            controller: _discountCtrl,
-            keyboardType: TextInputType.number,
-            style: const TextStyle(color: Colors.white),
-            onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              labelText: 'Remise (F CFA)',
-              prefixIcon: Icon(Icons.discount_outlined, color: AppTheme.warning, size: 18),
-            ),
-          ),
-          const SizedBox(height: 14),
-          // Moyen de paiement
-          const Text('Moyen de paiement', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6, runSpacing: 6,
-            children: _methods.map((m) => GestureDetector(
-              onTap: () => setState(() => _paymentMethod = m),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _paymentMethod == m ? AppTheme.primary : AppTheme.surfaceLight,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: _paymentMethod == m ? AppTheme.primary : const Color(0xFF2A2A5A)),
-                ),
-                child: Text(m, style: TextStyle(color: _paymentMethod == m ? Colors.white : AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w600)),
-              ),
-            )).toList(),
-          ),
-          const SizedBox(height: 14),
-          // Total à payer
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12), border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4))),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('TOTAL À PAYER', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                Text('${fmt.format(_total)} F CFA', style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w900, fontSize: 18)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          // Montant versé
-          TextField(
-            controller: _amountPaidCtrl,
-            keyboardType: TextInputType.number,
-            style: const TextStyle(color: Colors.white),
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              labelText: 'Montant versé (F CFA)',
-              prefixIcon: const Icon(Icons.payments_outlined, color: AppTheme.success, size: 18),
-              errorText: _insufficientAmount ? 'Montant insuffisant' : null,
-            ),
-          ),
-          const SizedBox(height: 10),
-          // Monnaie rendue
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: _insufficientAmount
-                ? AppTheme.error.withValues(alpha: 0.15)
-                : AppTheme.success.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _insufficientAmount
-                ? AppTheme.error.withValues(alpha: 0.4)
-                : AppTheme.success.withValues(alpha: 0.4)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(children: [
-                  Icon(
-                    _insufficientAmount ? Icons.warning_amber_rounded : Icons.change_circle_outlined,
-                    color: _insufficientAmount ? AppTheme.error : AppTheme.success,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _insufficientAmount ? 'MANQUE' : 'MONNAIE RENDUE',
-                    style: TextStyle(
-                      color: _insufficientAmount ? AppTheme.error : AppTheme.success,
-                      fontWeight: FontWeight.w700, fontSize: 13,
-                    ),
-                  ),
-                ]),
-                Text(
-                  _amountPaid == 0
-                    ? '— F CFA'
-                    : _insufficientAmount
-                      ? '-${fmt.format(_total - _amountPaid)} F CFA'
-                      : '${fmt.format(_change)} F CFA',
-                  style: TextStyle(
-                    color: _insufficientAmount ? AppTheme.error : AppTheme.success,
-                    fontWeight: FontWeight.w900, fontSize: 17,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          PrimaryButton(
-            label: 'Encaisser',
-            icon: Icons.check_circle,
-            isFullWidth: true,
-            color: _insufficientAmount ? AppTheme.textSecondary : AppTheme.success,
-            onPressed: _insufficientAmount
-              ? null
-              : () => widget.onPay(_paymentMethod, _discount, _amountPaid),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// =================== PAYMENT DIALOG ===================
-class _PaymentDialog extends StatefulWidget {
-  final Order order;
-  final Function(String, double, double) onPay;
-
-  const _PaymentDialog({required this.order, required this.onPay});
-
-  @override
-  State<_PaymentDialog> createState() => _PaymentDialogState();
-}
-
-class _PaymentDialogState extends State<_PaymentDialog> {
-  String _method = 'Espèces';
-  final _discountCtrl = TextEditingController(text: '0');
-  final _amountPaidCtrl = TextEditingController(text: '0');
-  final _methods = ['Espèces', 'Orange Money', 'MTN Money', 'Wave', 'Carte Bancaire'];
-
-  double get _discount => double.tryParse(_discountCtrl.text) ?? 0;
-  double get _total => (widget.order.subtotal - _discount).clamp(0, double.infinity);
-  double get _amountPaid => double.tryParse(_amountPaidCtrl.text) ?? 0;
-  double get _change => (_amountPaid - _total).clamp(0, double.infinity);
-  bool get _insufficient => _amountPaid > 0 && _amountPaid < _total;
-
-  @override
-  void dispose() {
-    _discountCtrl.dispose();
-    _amountPaidCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final fmt = NumberFormat('#,###', 'fr_FR');
-    return AlertDialog(
-      title: Text('Paiement #${widget.order.orderNumber}'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Stack(
+      children: [
+        Column(
           children: [
-            Text('Sous-total: ${fmt.format(widget.order.subtotal)} F CFA',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppTheme.primary)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _discountCtrl,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(labelText: 'Remise (F CFA)'),
-            ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _method,
-              style: const TextStyle(color: Colors.white),
-              dropdownColor: AppTheme.cardBg,
-              decoration: const InputDecoration(labelText: 'Moyen de paiement'),
-              items: _methods.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-              onChanged: (v) => setState(() => _method = v!),
-            ),
-            const SizedBox(height: 12),
-            // Total
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
+            Padding(
+              padding: const EdgeInsets.all(12),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('TOTAL', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                  Text('${fmt.format(_total)} F CFA',
-                    style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w900, fontSize: 16)),
+                  const Icon(Icons.hourglass_top, color: AppTheme.warning, size: 18),
+                  const SizedBox(width: 8),
+                  Text('Factures en attente de règlement (${orders.length})',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            // Montant versé
-            TextField(
-              controller: _amountPaidCtrl,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-              onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(
-                labelText: 'Montant versé (F CFA)',
-                prefixIcon: const Icon(Icons.payments_outlined, color: AppTheme.success, size: 18),
-                errorText: _insufficient ? 'Montant insuffisant' : null,
-              ),
+            Expanded(
+              child: orders.isEmpty
+                ? const EmptyState(
+                    icon: Icons.task_alt,
+                    title: 'Aucune facture en attente',
+                    subtitle: 'Toutes les factures ont été réglées.',
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    itemCount: orders.length,
+                    itemBuilder: (ctx, i) {
+                      final order = orders[i];
+                      return GlassCard(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        border: Border.all(
+                          color: AppTheme.warning.withValues(alpha: 0.4),
+                          width: 1.5,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // En-tête
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('#${order.orderNumber} - Table ${order.tableNumber}',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.warning.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(5),
+                                  ),
+                                  child: const Text('EN ATTENTE', style: TextStyle(color: AppTheme.warning, fontSize: 10, fontWeight: FontWeight.w700)),
+                                ),
+                              ],
+                            ),
+                            if (order.cashoutInvoiceNumber != null) ...[
+                              const SizedBox(height: 3),
+                              Text('Réf. : ${order.cashoutInvoiceNumber}',
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                            ],
+                            const SizedBox(height: 6),
+                            // Articles
+                            ...order.items.map((item) => Padding(
+                              padding: const EdgeInsets.only(bottom: 2),
+                              child: Text('${item.quantity}× ${item.productName}',
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                            )),
+                            const SizedBox(height: 6),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('Montant dû',
+                                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                                Text('${_fmt.format(order.totalAmount)} F CFA',
+                                  style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w800, fontSize: 16)),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () {
+                                      PrintService().printCashoutInvoice(
+                                        order: order,
+                                        cashoutInvoiceNumber: order.cashoutInvoiceNumber ?? PrintService.generateReceiptNumber(order.orderNumber),
+                                        cashierName: provider.currentUser?.name,
+                                      );
+                                    },
+                                    icon: const Icon(Icons.print_outlined, size: 14),
+                                    label: const Text('Réimprimer', style: TextStyle(fontSize: 12)),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppTheme.textSecondary,
+                                      side: BorderSide(color: AppTheme.textSecondary.withValues(alpha: 0.4)),
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  flex: 2,
+                                  child: ElevatedButton.icon(
+                                    onPressed: _processing ? null : () => _regler(context, order, provider),
+                                    icon: const Icon(Icons.payments, size: 16),
+                                    label: const Text('Régler', style: TextStyle(fontWeight: FontWeight.w700)),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppTheme.success,
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
             ),
-            const SizedBox(height: 10),
-            // Monnaie rendue
-            if (_amountPaid > 0)
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: _insufficient ? AppTheme.error.withValues(alpha: 0.15) : AppTheme.success.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _insufficient ? AppTheme.error : AppTheme.success),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      _insufficient ? 'MANQUE' : 'MONNAIE RENDUE',
-                      style: TextStyle(color: _insufficient ? AppTheme.error : AppTheme.success, fontWeight: FontWeight.w700),
-                    ),
-                    Text(
-                      _insufficient
-                        ? '-${fmt.format(_total - _amountPaid)} F CFA'
-                        : '${fmt.format(_change)} F CFA',
-                      style: TextStyle(
-                        color: _insufficient ? AppTheme.error : AppTheme.success,
-                        fontWeight: FontWeight.w900, fontSize: 16,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
           ],
         ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
-        ElevatedButton(
-          onPressed: _insufficient ? null : () => widget.onPay(_method, _discount, _amountPaid),
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
-          child: const Text('Confirmer'),
-        ),
+        if (_processing)
+          Container(
+            color: Colors.black45,
+            child: const Center(child: CircularProgressIndicator()),
+          ),
       ],
     );
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════
-//  INVOICE SCREEN — Facture #commande avec impression réelle
-//  Deux reçus distincts : encaissement et règlement caisse
-// ══════════════════════════════════════════════════════════════════════
-class InvoiceScreen extends StatefulWidget {
+// ════════════════════════════════════════════════════════════════════════════
+//  DIALOG DE RÈGLEMENT — affiché après clic "Régler" (Tab 2)
+//  Affiche SEULEMENT à cette étape : mode paiement, montant versé, monnaie rendue
+// ════════════════════════════════════════════════════════════════════════════
+class _ReglementDialog extends StatefulWidget {
   final Order order;
-  final double amountPaid;
+  final NumberFormat fmt;
+  final String cashierName;
+  final void Function(String paymentMethod, double amountPaid) onConfirm;
 
-  const InvoiceScreen({super.key, required this.order, this.amountPaid = 0});
+  const _ReglementDialog({
+    required this.order,
+    required this.fmt,
+    required this.cashierName,
+    required this.onConfirm,
+  });
 
   @override
-  State<InvoiceScreen> createState() => _InvoiceScreenState();
+  State<_ReglementDialog> createState() => _ReglementDialogState();
 }
 
-class _InvoiceScreenState extends State<InvoiceScreen> {
-  final _printService = PrintService();
-  bool _printingEncaissement = false;
-  bool _printingReglement = false;
-  bool _receiptPrinted = false;
-  bool _settlementPrinted = false;
+class _ReglementDialogState extends State<_ReglementDialog> {
+  String _paymentMethod = 'Espèces';
+  final _amountController = TextEditingController();
+  double _amountPaid = 0;
+
+  double get _change => (_amountPaid - widget.order.totalAmount).clamp(0.0, double.infinity);
+  bool get _isValid => _amountPaid >= widget.order.totalAmount || _paymentMethod != 'Espèces';
 
   @override
   void initState() {
     super.initState();
-    _receiptPrinted = widget.order.receiptPrinted;
-    _settlementPrinted = widget.order.settlementPrinted;
+    _amountPaid = widget.order.totalAmount;
+    _amountController.text = widget.order.totalAmount.toStringAsFixed(0);
+    _amountController.addListener(() {
+      final val = double.tryParse(_amountController.text.replaceAll(' ', '').replaceAll(',', '.')) ?? 0;
+      setState(() => _amountPaid = val);
+    });
   }
 
-  // ── Impression Reçu d'Encaissement ──────────────────────────────────
-  Future<void> _printEncaissement() async {
-    if (_printingEncaissement) return;
-    setState(() => _printingEncaissement = true);
-
-    final provider = context.read<AppProvider>();
-    final receiptNumber = PrintService.generateReceiptNumber(widget.order.orderNumber);
-    final cashierName = provider.currentUser?.name;
-
-    try {
-      // 1. Générer et ouvrir le reçu HTML + window.print()
-      _printService.printEncaissement(
-        order: widget.order,
-        amountPaid: widget.amountPaid,
-        receiptNumber: receiptNumber,
-        cashierName: cashierName,
-      );
-
-      // 2. Sauvegarder le reçu dans Firestore
-      await provider.saveReceipt(
-        receiptId: const Uuid().v4(),
-        type: 'encaissement',
-        orderId: widget.order.id,
-        orderNumber: widget.order.orderNumber,
-        amount: widget.order.totalAmount,
-        paymentMethod: widget.order.paymentMethod ?? 'Espèces',
-        receiptNumber: receiptNumber,
-      );
-
-      // 3. Marquer receiptPrinted = true sur la commande
-      await provider.updateOrderPrintStatus(
-        orderId: widget.order.id,
-        receiptPrinted: true,
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _receiptPrinted = true;
-        _printingEncaissement = false;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(children: [
-            const Icon(Icons.print, color: Colors.white, size: 18),
-            const SizedBox(width: 10),
-            Expanded(child: Text('Reçu d\'encaissement $receiptNumber ouvert — Utilisez Ctrl+P / dialogue d\'impression')),
-          ]),
-          backgroundColor: AppTheme.success,
-          duration: const Duration(seconds: 4),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _printingEncaissement = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erreur impression : $e'), backgroundColor: AppTheme.error),
-      );
-    }
-  }
-
-  // ── Impression Reçu de Règlement Caisse ─────────────────────────────
-  Future<void> _printReglement() async {
-    if (_printingReglement) return;
-    setState(() => _printingReglement = true);
-
-    final provider = context.read<AppProvider>();
-    final settlementNumber = PrintService.generateSettlementNumber(widget.order.orderNumber);
-    final cashierName = provider.currentUser?.name;
-
-    try {
-      // 1. Générer et ouvrir le reçu de règlement HTML + window.print()
-      _printService.printReglement(
-        order: widget.order,
-        amountPaid: widget.amountPaid,
-        settlementNumber: settlementNumber,
-        cashierName: cashierName,
-      );
-
-      // 2. Sauvegarder le règlement dans Firestore
-      await provider.saveReceipt(
-        receiptId: const Uuid().v4(),
-        type: 'reglement',
-        orderId: widget.order.id,
-        orderNumber: widget.order.orderNumber,
-        amount: widget.order.totalAmount,
-        paymentMethod: widget.order.paymentMethod ?? 'Espèces',
-        settlementNumber: settlementNumber,
-      );
-
-      // 3. Marquer settlementPrinted = true sur la commande
-      await provider.updateOrderPrintStatus(
-        orderId: widget.order.id,
-        settlementPrinted: true,
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _settlementPrinted = true;
-        _printingReglement = false;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(children: [
-            const Icon(Icons.receipt_long, color: Colors.white, size: 18),
-            const SizedBox(width: 10),
-            Expanded(child: Text('Reçu de règlement $settlementNumber ouvert — Utilisez Ctrl+P / dialogue d\'impression')),
-          ]),
-          backgroundColor: AppTheme.warning,
-          duration: const Duration(seconds: 4),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _printingReglement = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erreur impression : $e'), backgroundColor: AppTheme.error),
-      );
-    }
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final fmt = NumberFormat('#,###', 'fr_FR');
-    final dateStr = DateFormat('dd/MM/yyyy HH:mm').format(widget.order.createdAt);
-    final change = (widget.amountPaid - widget.order.totalAmount).clamp(0.0, double.infinity);
-    final order = widget.order;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Facture #${order.orderNumber}'),
-        actions: [
-          // Bouton impression rapide encaissement dans l'AppBar
-          IconButton(
-            icon: _printingEncaissement
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : Icon(Icons.print, color: _receiptPrinted ? AppTheme.success : Colors.white),
-            tooltip: 'Imprimer reçu d\'encaissement',
-            onPressed: _printEncaissement,
-          ),
-          IconButton(
-            icon: const Icon(Icons.receipt_long),
-            tooltip: 'Imprimer reçu de règlement',
-            onPressed: _printReglement,
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          const Icon(Icons.payments, color: AppTheme.success),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Règlement', style: TextStyle(color: Colors.white, fontSize: 16)),
+              Text('Commande #${widget.order.orderNumber} — Table ${widget.order.tableNumber}',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+            ],
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+      content: SingleChildScrollView(
         child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Aperçu facture ──────────────────────────────────────
-            GlassCard(
-              border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
-              child: Column(
-                children: [
-                  // Header
-                  const Text('SANKADIOKRO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 22, letterSpacing: 3)),
-                  const Text('Restaurant Africain', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-                  const SizedBox(height: 8),
-                  Container(height: 2, color: AppTheme.primary),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: AppTheme.primary),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Text('FACTURE D\'ENCAISSEMENT',
-                        style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1)),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Infos commande
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: AppTheme.surfaceLight, borderRadius: BorderRadius.circular(10)),
-                    child: Column(
-                      children: [
-                        _InvoiceRow('N° Commande', '#${order.orderNumber}'),
-                        _InvoiceRow('Table', order.tableNumber),
-                        _InvoiceRow('Date', dateStr),
-                        if (order.serverName != null) _InvoiceRow('Serveur', order.serverName!),
-                        if (order.paymentMethod != null) _InvoiceRow('Paiement', order.paymentMethod!),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Entête articles
-                  const Row(children: [
-                    Expanded(flex: 5, child: Text('Article', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700))),
-                    Expanded(flex: 2, child: Text('Qté', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700))),
-                    Expanded(flex: 2, child: Text('P.U', textAlign: TextAlign.right, style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700))),
-                    Expanded(flex: 3, child: Text('Total', textAlign: TextAlign.right, style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w700))),
-                  ]),
-                  const Divider(color: Color(0xFF2A2A5A), height: 12),
-                  ...order.items.map((item) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 3),
-                    child: Row(children: [
-                      Expanded(flex: 5, child: Text(item.productName, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 11))),
-                      Expanded(flex: 2, child: Text('×${item.quantity}', textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 11))),
-                      Expanded(flex: 2, child: Text('${fmt.format(item.unitPrice)} F', textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11))),
-                      Expanded(flex: 3, child: Text('${fmt.format(item.totalPrice)} F', textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w600))),
-                    ]),
-                  )),
-                  const Divider(color: Color(0xFF2A2A5A)),
-
-                  // Totaux
-                  _TotalRow('Sous-total', '${fmt.format(order.subtotal)} F CFA'),
-                  if (order.discount > 0)
-                    _TotalRow('Remise', '-${fmt.format(order.discount)} F CFA', color: AppTheme.warning),
-                  _TotalRow('TOTAL', '${fmt.format(order.totalAmount)} F CFA', bold: true, color: AppTheme.primary),
-                  if (widget.amountPaid > 0) ...[
-                    const SizedBox(height: 4),
-                    const Divider(color: Color(0xFF2A2A5A)),
-                    _TotalRow('Montant reçu', '${fmt.format(widget.amountPaid)} F CFA', color: AppTheme.success),
-                    _TotalRow('Monnaie rendue', '${fmt.format(change)} F CFA',
-                        bold: true, color: change > 0 ? AppTheme.warning : AppTheme.textSecondary),
-                  ],
-                  const SizedBox(height: 12),
-                  Container(height: 2, color: AppTheme.primary),
-                  const SizedBox(height: 12),
-                  const Text('Merci pour votre visite !',
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontStyle: FontStyle.italic)),
-                  const Text('À bientôt chez SANKADIOKRO',
-                      style: TextStyle(color: AppTheme.primary, fontSize: 11)),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            // ── Statuts d'impression ────────────────────────────────
-            if (_receiptPrinted || _settlementPrinted)
-              GlassCard(
-                margin: const EdgeInsets.only(bottom: 16),
-                child: Column(
-                  children: [
-                    const Text('Statuts d\'impression',
-                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 8),
-                    Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                      _PrintStatusBadge(
-                        label: 'Encaissement',
-                        printed: _receiptPrinted,
-                        icon: Icons.print,
-                      ),
-                      _PrintStatusBadge(
-                        label: 'Règlement',
-                        printed: _settlementPrinted,
-                        icon: Icons.receipt_long,
-                      ),
-                    ]),
-                  ],
-                ),
-              ),
-
-            // ── Bouton 1 : Imprimer Reçu d'Encaissement ─────────────
-            _PrintButton(
-              label: 'Imprimer Facture d\'Encaissement',
-              sublabel: 'Reçu client — ticket thermique 80mm',
-              icon: Icons.print,
-              color: AppTheme.success,
-              isLoading: _printingEncaissement,
-              alreadyPrinted: _receiptPrinted,
-              onPressed: _printEncaissement,
-            ),
-
-            const SizedBox(height: 12),
-
-            // ── Bouton 2 : Imprimer Reçu de Règlement Caisse ─────────
-            _PrintButton(
-              label: 'Imprimer Facture de Règlement',
-              sublabel: 'Reçu caisse — avec signature caissier',
-              icon: Icons.receipt_long,
-              color: const Color(0xFFE65100),
-              isLoading: _printingReglement,
-              alreadyPrinted: _settlementPrinted,
-              onPressed: _printReglement,
-            ),
-
-            const SizedBox(height: 24),
-
-            // ── Info impression ──────────────────────────────────────
+            // Montant dû
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppTheme.primary.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
+                color: AppTheme.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
               ),
-              child: const Row(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Icon(Icons.info_outline, color: AppTheme.primary, size: 16),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Une nouvelle fenêtre s\'ouvre avec le reçu. Utilisez Ctrl+P (PC) ou le menu Partager (mobile) pour imprimer ou enregistrer en PDF.',
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 11),
-                    ),
+                  const Text('MONTANT DÛ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  Text('${widget.fmt.format(widget.order.totalAmount)} F CFA',
+                    style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 18)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Mode de paiement
+            const Text('Mode de paiement', style: TextStyle(color: Colors.white, fontSize: 13)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: ['Espèces', 'Mobile Money', 'Carte Bancaire', 'Chèque'].map((m) {
+                final selected = _paymentMethod == m;
+                return ChoiceChip(
+                  label: Text(m),
+                  selected: selected,
+                  onSelected: (_) => setState(() => _paymentMethod = m),
+                  selectedColor: AppTheme.primary.withValues(alpha: 0.25),
+                  backgroundColor: AppTheme.surfaceLight,
+                  labelStyle: TextStyle(
+                    color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
+                    fontSize: 12,
                   ),
+                  side: BorderSide(
+                    color: selected ? AppTheme.primary : Colors.transparent,
+                    width: selected ? 1.5 : 0,
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 14),
+
+            // Montant versé
+            const Text('Montant versé', style: TextStyle(color: Colors.white, fontSize: 13)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+              decoration: InputDecoration(
+                suffixText: 'F CFA',
+                suffixStyle: const TextStyle(color: AppTheme.textSecondary),
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.07),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: Color(0xFF2A2A5A)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppTheme.primary, width: 2),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Monnaie rendue
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _change > 0
+                  ? AppTheme.success.withValues(alpha: 0.1)
+                  : Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _change > 0
+                    ? AppTheme.success.withValues(alpha: 0.5)
+                    : Colors.white12,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Monnaie rendue', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  Text('${widget.fmt.format(_change)} F CFA',
+                    style: TextStyle(
+                      color: _change > 0 ? AppTheme.success : AppTheme.textSecondary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    )),
                 ],
               ),
             ),
 
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Widget : ligne de facture ────────────────────────────────────────
-class _InvoiceRow extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _InvoiceRow(this.label, this.value);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Widget : ligne de total ──────────────────────────────────────────
-class _TotalRow extends StatelessWidget {
-  final String label;
-  final String value;
-  final bool bold;
-  final Color? color;
-
-  const _TotalRow(this.label, this.value, {this.bold = false, this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label,
-              style: TextStyle(
-                color: bold ? Colors.white : AppTheme.textSecondary,
-                fontSize: bold ? 15 : 13,
-                fontWeight: bold ? FontWeight.w700 : FontWeight.normal,
-              )),
-          Text(value,
-              style: TextStyle(
-                color: color ?? Colors.white,
-                fontSize: bold ? 16 : 13,
-                fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
-              )),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Widget : bouton d'impression avec état ───────────────────────────
-class _PrintButton extends StatelessWidget {
-  final String label;
-  final String sublabel;
-  final IconData icon;
-  final Color color;
-  final bool isLoading;
-  final bool alreadyPrinted;
-  final VoidCallback onPressed;
-
-  const _PrintButton({
-    required this.label,
-    required this.sublabel,
-    required this.icon,
-    required this.color,
-    required this.isLoading,
-    required this.alreadyPrinted,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: isLoading ? null : onPressed,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-          decoration: BoxDecoration(
-            color: isLoading
-                ? AppTheme.surfaceLight
-                : color.withValues(alpha: alreadyPrinted ? 0.12 : 0.18),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isLoading
-                  ? AppTheme.textSecondary.withValues(alpha: 0.3)
-                  : color.withValues(alpha: alreadyPrinted ? 0.4 : 0.7),
-              width: 1.5,
-            ),
-          ),
-          child: Row(
-            children: [
-              // Icône ou spinner
+            // Avertissement montant insuffisant
+            if (_paymentMethod == 'Espèces' && _amountPaid > 0 && _amountPaid < widget.order.totalAmount) ...[
+              const SizedBox(height: 8),
               Container(
-                width: 42,
-                height: 42,
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: isLoading ? AppTheme.surfaceLight : color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
+                  color: Colors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
                 ),
-                child: isLoading
-                    ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5)))
-                    : Icon(alreadyPrinted ? Icons.check_circle : icon,
-                        color: alreadyPrinted ? AppTheme.success : color, size: 22),
-              ),
-              const SizedBox(width: 14),
-
-              // Labels
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Text(
-                      isLoading ? 'Impression en cours...' : label,
-                      style: TextStyle(
-                        color: isLoading ? AppTheme.textSecondary : Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      alreadyPrinted ? 'Déjà imprimé — réimprimer ?' : sublabel,
-                      style: TextStyle(
-                        color: alreadyPrinted ? AppTheme.success : AppTheme.textSecondary,
-                        fontSize: 11,
+                    const Icon(Icons.warning_amber, color: Colors.orange, size: 14),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Montant insuffisant (manque ${widget.fmt.format(widget.order.totalAmount - _amountPaid)} F)',
+                        style: const TextStyle(color: Colors.orange, fontSize: 11),
                       ),
                     ),
                   ],
                 ),
               ),
-
-              // Flèche
-              if (!isLoading)
-                Icon(Icons.arrow_forward_ios, color: color.withValues(alpha: 0.6), size: 14),
             ],
-          ),
+          ],
         ),
       ),
-    );
-  }
-}
-
-// ── Widget : badge statut d'impression ───────────────────────────────
-class _PrintStatusBadge extends StatelessWidget {
-  final String label;
-  final bool printed;
-  final IconData icon;
-
-  const _PrintStatusBadge({
-    required this.label,
-    required this.printed,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Icon(
-          printed ? Icons.check_circle : Icons.radio_button_unchecked,
-          color: printed ? AppTheme.success : AppTheme.textSecondary,
-          size: 20,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
         ),
-        const SizedBox(height: 4),
-        Text(label,
-            style: TextStyle(
-              color: printed ? AppTheme.success : AppTheme.textSecondary,
-              fontSize: 10,
-              fontWeight: printed ? FontWeight.w700 : FontWeight.normal,
-            )),
+        ElevatedButton.icon(
+          onPressed: _isValid
+            ? () => widget.onConfirm(_paymentMethod, _amountPaid > 0 ? _amountPaid : widget.order.totalAmount)
+            : null,
+          icon: const Icon(Icons.check_circle, size: 16),
+          label: const Text('Confirmer le règlement', style: TextStyle(fontWeight: FontWeight.w700)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.success,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: Colors.grey.shade800,
+          ),
+        ),
       ],
     );
   }
 }
 
-// =================== FACTURES TAB ===================
-class _FacturesTab extends StatelessWidget {
-  const _FacturesTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final provider = context.watch<AppProvider>();
-    final paidOrders = provider.orders.where((o) => o.isPaid).toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    final fmt = NumberFormat('#,###', 'fr_FR');
-
-    return paidOrders.isEmpty
-      ? const EmptyState(icon: Icons.receipt, title: 'Aucune facture', subtitle: 'Les factures encaissées apparaîtront ici')
-      : ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: paidOrders.length,
-          itemBuilder: (context, i) {
-            final order = paidOrders[i];
-            return GlassCard(
-              margin: const EdgeInsets.only(bottom: 10),
-              border: Border.all(color: AppTheme.success.withValues(alpha: 0.3)),
-              onTap: () => Navigator.push(context, MaterialPageRoute(
-                builder: (_) => InvoiceScreen(order: order, amountPaid: order.amountPaid),
-              )),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(color: AppTheme.success.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
-                    child: const Icon(Icons.receipt, color: AppTheme.success),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('#${order.orderNumber} - Table ${order.tableNumber}',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                        Text(DateFormat('dd/MM/yyyy HH:mm').format(order.createdAt),
-                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                        if (order.paymentMethod != null)
-                          Text(order.paymentMethod!, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-                      ],
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('${fmt.format(order.totalAmount)} F', style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w800, fontSize: 15)),
-                      const Icon(Icons.print, color: AppTheme.primary, size: 16),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-  }
-}
-
-// =================== POINT DE CAISSE TAB ===================
+// ════════════════════════════════════════════════════════════════════════════
+//  TAB 3 — Point de Caisse
+//  DESIGN ORIGINAL RESTAURÉ — identique au commit 1078c42
+//  Comptabilise UNIQUEMENT settlementInvoiceGenerated == true (règlements définitifs)
+// ════════════════════════════════════════════════════════════════════════════
 class _PointCaisseTab extends StatefulWidget {
   const _PointCaisseTab();
 
@@ -1118,7 +744,16 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
     final provider = context.watch<AppProvider>();
     final fmt = NumberFormat('#,###', 'fr_FR');
     final today = DateTime.now();
-    final todayPaid = provider.orders.where((o) => o.isPaid && o.createdAt.day == today.day && o.createdAt.month == today.month).toList();
+
+    // UNIQUEMENT les règlements définitifs (settlementInvoiceGenerated == true)
+    final todayPaid = provider.orders.where((o) =>
+      o.settlementInvoiceGenerated &&
+      o.isPaid &&
+      o.createdAt.day == today.day &&
+      o.createdAt.month == today.month &&
+      o.createdAt.year == today.year
+    ).toList();
+
     final totalCash = todayPaid.where((o) => o.paymentMethod == 'Espèces').fold<double>(0, (s, o) => s + o.totalAmount);
     final totalMobile = todayPaid.where((o) => o.paymentMethod != null && o.paymentMethod != 'Espèces' && o.paymentMethod != 'Carte Bancaire').fold<double>(0, (s, o) => s + o.totalAmount);
     final totalCard = todayPaid.where((o) => o.paymentMethod == 'Carte Bancaire').fold<double>(0, (s, o) => s + o.totalAmount);
@@ -1230,7 +865,8 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
                 if (provider.todayCharges.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Text('Aucune charge enregistrée aujourd\'hui', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                    child: Text('Aucune charge enregistrée aujourd\'hui',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
                   )
                 else ...[
                   ...provider.todayCharges.map((charge) => Padding(
@@ -1243,13 +879,16 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(charge['label'] as String, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13)),
+                              Text(charge['label'] as String,
+                                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13)),
                               if ((charge['note'] as String?)?.isNotEmpty == true)
-                                Text(charge['note'] as String, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                                Text(charge['note'] as String,
+                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
                             ],
                           ),
                         ),
-                        Text('${fmt.format(charge['amount'])} F', style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700, fontSize: 13)),
+                        Text('${fmt.format(charge['amount'])} F',
+                          style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700, fontSize: 13)),
                         const SizedBox(width: 6),
                         GestureDetector(
                           onTap: () => provider.removeDailyCharge(charge['id'] as String),
@@ -1262,8 +901,10 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('TOTAL CHARGES', style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700)),
-                      Text('${fmt.format(totalCharges)} F CFA', style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w900, fontSize: 16)),
+                      const Text('TOTAL CHARGES',
+                        style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700)),
+                      Text('${fmt.format(totalCharges)} F CFA',
+                        style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w900, fontSize: 16)),
                     ],
                   ),
                 ],
@@ -1282,9 +923,12 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('#${o.orderNumber} Table ${o.tableNumber}', style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12)),
-                      Text(o.paymentMethod ?? '-', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-                      Text('${fmt.format(o.totalAmount)} F', style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600, fontSize: 12)),
+                      Text('#${o.orderNumber} Table ${o.tableNumber}',
+                        style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12)),
+                      Text(o.paymentMethod ?? '-',
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                      Text('${fmt.format(o.totalAmount)} F',
+                        style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600, fontSize: 12)),
                     ],
                   ),
                 )),
@@ -1341,7 +985,10 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler'),
+          ),
           ElevatedButton(
             onPressed: () {
               final label = labelCtrl.text.trim();
