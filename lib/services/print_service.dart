@@ -21,7 +21,57 @@ class PrintService {
   final _dateFmt = DateFormat('dd/MM/yyyy HH:mm');
 
   // ─────────────────────────────────────────────────────────────────────
-  //  1. REÇU D'ENCAISSEMENT
+  //  FACTURE D'ENCAISSEMENT PROVISOIRE (Étape 1)
+  //  N'inclut PAS les informations de paiement.
+  //  Titre : "FACTURE D'ENCAISSEMENT" (provisoire)
+  // ─────────────────────────────────────────────────────────────────────
+  void printCashoutInvoice({
+    required Order order,
+    required String cashoutInvoiceNumber,
+    String? cashierName,
+  }) {
+    final html = _buildCashoutHtml(
+      order: order,
+      cashoutInvoiceNumber: cashoutInvoiceNumber,
+      cashierName: cashierName,
+    );
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    } else {
+      if (kDebugMode) debugPrint('[PrintService] Mobile: facture encaissement #$cashoutInvoiceNumber');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  FACTURE DE RÈGLEMENT DÉFINITIVE (Étape 2)
+  //  Inclut : mode paiement, montant payé, monnaie rendue, caissier.
+  //  Titre : "FACTURE DE RÈGLEMENT" (définitif)
+  // ─────────────────────────────────────────────────────────────────────
+  void printSettlementInvoice({
+    required Order order,
+    required String settlementInvoiceNumber,
+    required String paymentMethod,
+    required double amountPaid,
+    required double changeAmount,
+    String? cashierName,
+  }) {
+    final html = _buildSettlementHtml(
+      order: order,
+      settlementInvoiceNumber: settlementInvoiceNumber,
+      paymentMethod: paymentMethod,
+      amountPaid: amountPaid,
+      changeAmount: changeAmount,
+      cashierName: cashierName,
+    );
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    } else {
+      if (kDebugMode) debugPrint('[PrintService] Mobile: règlement #$settlementInvoiceNumber');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  3. REÇU D'ENCAISSEMENT (méthode héritée — conservée)
   // ─────────────────────────────────────────────────────────────────────
   void printEncaissement({
     required Order order,
@@ -70,8 +120,178 @@ class PrintService {
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  //  BUILD HTML — Reçu d'Encaissement (ticket thermique 80mm)
+  //  BUILD HTML — Facture d'Encaissement PROVISOIRE (80mm)
+  //  Étape 1 : affiche commande + total, PAS de détails paiement
   // ─────────────────────────────────────────────────────────────────────
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  BUILD HTML — Facture d'Encaissement PROVISOIRE (80mm)
+  //  Étape 1 : commande + total, PAS de détails paiement
+  // ─────────────────────────────────────────────────────────────────────
+  String _buildCashoutHtml({
+    required Order order,
+    required String cashoutInvoiceNumber,
+    String? cashierName,
+  }) {
+    final dateStr = _dateFmt.format(DateTime.now());
+    final itemsHtml = order.items.map((item) => '''
+      <tr>
+        <td class="item-name">${_escape(item.productName)}</td>
+        <td class="item-qty">×${item.quantity}</td>
+        <td class="item-price">${_fmt.format(item.unitPrice)} F</td>
+        <td class="item-total">${_fmt.format(item.totalPrice)} F</td>
+      </tr>
+    ''').join('');
+
+    final discountRow = order.discount > 0
+        ? '<tr class="discount-row"><td colspan="3">Remise</td><td>-${_fmt.format(order.discount)} F</td></tr>'
+        : '';
+
+    final serverRow = order.serverName != null
+        ? '<tr><td class="info-label">Serveur</td><td class="info-value">${_escape(order.serverName!)}</td></tr>'
+        : '';
+    final cashierRow = cashierName != null
+        ? '<tr><td class="info-label">Caissier</td><td class="info-value">${_escape(cashierName)}</td></tr>'
+        : '';
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Facture Encaissement #${order.orderNumber}</title>
+  <style>
+    ${_thermalCss()}
+    .receipt-type { color: #1565C0; border: 2px solid #1565C0; padding: 3px 8px; border-radius: 4px; letter-spacing: 1px; }
+    .provisional-banner { background: #E3F2FD; border: 1px dashed #1565C0; padding: 4px 8px; text-align: center; font-size: 9px; color: #1565C0; margin: 6px 0; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="receipt">
+    <div class="header">
+      <img src="${_logoBase64()}" alt="Logo" class="logo-img" />
+      <div class="restaurant-name">RESTAURANT SANKADIOKRO</div>
+      <div class="restaurant-sub">Yopougon Millionnaire</div>
+      <div class="restaurant-sub">Abidjan - Côte d\'Ivoire</div>
+      <div class="restaurant-sub">Tél : 0757564300 / 0594114223</div>
+      <div class="divider-double"></div>
+      <div class="receipt-title receipt-type">FACTURE D\'ENCAISSEMENT</div>
+    </div>
+    <div class="provisional-banner">PROVISOIRE — En attente de règlement</div>
+    <table class="info-table">
+      <tr><td class="info-label">N° Facture</td><td class="info-value">$cashoutInvoiceNumber</td></tr>
+      <tr><td class="info-label">N° Commande</td><td class="info-value">#${order.orderNumber}</td></tr>
+      <tr><td class="info-label">Table</td><td class="info-value">${_escape(order.tableNumber)}</td></tr>
+      <tr><td class="info-label">Date</td><td class="info-value">$dateStr</td></tr>
+      $serverRow
+      $cashierRow
+    </table>
+    <div class="divider"></div>
+    <table class="items-table">
+      <thead><tr><th class="item-name">Article</th><th class="item-qty">Qté</th><th class="item-price">P.U</th><th class="item-total">Total</th></tr></thead>
+      <tbody>$itemsHtml</tbody>
+    </table>
+    <div class="divider"></div>
+    <table class="totals-table">
+      <tr><td colspan="3">Sous-total</td><td>${_fmt.format(order.subtotal)} F CFA</td></tr>
+      $discountRow
+      <tr class="total-row"><td colspan="3"><strong>TOTAL À PAYER</strong></td><td><strong>${_fmt.format(order.totalAmount)} F CFA</strong></td></tr>
+    </table>
+    <div class="divider-double"></div>
+    <div class="footer">
+      <p style="font-size:10px; color:#1565C0;">Le règlement sera effectué à la caisse.</p>
+      <p class="merci">Merci pour votre visite !</p>
+      <p class="footer-small">— SANKADIOKRO — Facture provisoire —</p>
+    </div>
+  </div>
+</body>
+</html>''';
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  BUILD HTML — Facture de Règlement DÉFINITIVE (80mm)
+  //  Étape 2 : mode paiement, montant payé, monnaie rendue, caissier
+  // ─────────────────────────────────────────────────────────────────────
+  String _buildSettlementHtml({
+    required Order order,
+    required String settlementInvoiceNumber,
+    required String paymentMethod,
+    required double amountPaid,
+    required double changeAmount,
+    String? cashierName,
+  }) {
+    final dateStr = _dateFmt.format(DateTime.now());
+    final itemsHtml = order.items.map((item) =>
+      '<tr><td class="item-name">${_escape(item.productName)}</td>'
+      '<td class="item-qty" style="text-align:center">×${item.quantity}</td>'
+      '<td class="item-total">${_fmt.format(item.totalPrice)} F</td></tr>'
+    ).join('');
+
+    final cashierRow = cashierName != null
+        ? '<tr><td class="info-label">Caissier</td><td class="info-value">${_escape(cashierName)}</td></tr>'
+        : '';
+    final cashierSign = cashierName != null
+        ? '<p style="font-size:9px; text-align:center; margin:2px 0;">$cashierName</p>'
+        : '';
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Règlement Définitif #${order.orderNumber}</title>
+  <style>
+    ${_thermalCss()}
+    .receipt-type { color: #E65100; border: 2px solid #E65100; padding: 3px 8px; border-radius: 4px; letter-spacing: 1px; }
+    .status-paid { display: inline-block; background: #1B5E20; color: #fff; font-weight: bold; font-size: 13px; padding: 4px 16px; border-radius: 4px; letter-spacing: 2px; margin: 6px 0; }
+    .big-amount { font-size: 18px; font-weight: bold; text-align: center; border: 2px solid #333; padding: 6px; border-radius: 4px; margin: 6px 0; letter-spacing: 1px; }
+    .signature-box { border: 1px dashed #999; height: 40px; margin: 6px 0; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #999; font-size: 9px; }
+  </style>
+</head>
+<body>
+  <div class="receipt">
+    <div class="header">
+      <img src="${_logoBase64()}" alt="Logo" class="logo-img" />
+      <div class="restaurant-name">RESTAURANT SANKADIOKRO</div>
+      <div class="restaurant-sub">Yopougon Millionnaire</div>
+      <div class="restaurant-sub">Abidjan - Côte d\'Ivoire</div>
+      <div class="restaurant-sub">Tél : 0757564300 / 0594114223</div>
+      <div class="divider-double"></div>
+      <div class="receipt-title receipt-type">FACTURE DE RÈGLEMENT</div>
+    </div>
+    <table class="info-table">
+      <tr><td class="info-label">N° Règlement</td><td class="info-value">$settlementInvoiceNumber</td></tr>
+      <tr><td class="info-label">N° Commande</td><td class="info-value">#${order.orderNumber}</td></tr>
+      <tr><td class="info-label">Table</td><td class="info-value">${_escape(order.tableNumber)}</td></tr>
+      <tr><td class="info-label">Date</td><td class="info-value">$dateStr</td></tr>
+      $cashierRow
+      <tr><td class="info-label">Mode paiement</td><td class="info-value">${_escape(paymentMethod)}</td></tr>
+    </table>
+    <div class="divider"></div>
+    <div class="section-title">ARTICLES COMMANDÉS</div>
+    <table class="items-table"><tbody>$itemsHtml</tbody></table>
+    <div class="divider"></div>
+    <div class="section-title">DÉTAIL DU RÈGLEMENT</div>
+    <table class="totals-table">
+      <tr><td colspan="3">Montant à payer</td><td>${_fmt.format(order.totalAmount)} F CFA</td></tr>
+      <tr><td colspan="3">Montant reçu</td><td>${_fmt.format(amountPaid)} F CFA</td></tr>
+      <tr><td colspan="3">Monnaie rendue</td><td>${_fmt.format(changeAmount)} F CFA</td></tr>
+    </table>
+    <div class="big-amount">RÉGLÉ : ${_fmt.format(order.totalAmount)} F CFA</div>
+    <div style="text-align:center; margin: 8px 0;"><span class="status-paid">✓ RÉGLÉ</span></div>
+    <div class="divider"></div>
+    <div class="section-title">VISA CAISSIER(ÈRE)</div>
+    <div class="signature-box">Signature &amp; cachet caisse</div>
+    $cashierSign
+    <div class="divider-double"></div>
+    <div class="footer">
+      <p class="merci">Merci pour votre confiance !</p>
+      <p>SANKADIOKRO — Restaurant Africain</p>
+      <p class="footer-small">— Document de règlement définitif —</p>
+    </div>
+  </div>
+</body>
+</html>''';
+  }
+
   String _buildEncaissementHtml({
     required Order order,
     required double amountPaid,

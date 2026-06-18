@@ -507,4 +507,128 @@ class FirebaseService {
       await _db.collection('orders').doc(orderId).update(updates);
     }
   }
+
+  // =================== CAISSE 2 ÉTAPES ===================
+
+  /// ÉTAPE 1 — Encaissement provisoire.
+  /// cashStatus → awaiting_payment, crée doc dans cashout_invoices
+  Future<void> cashoutOrder({
+    required String orderId,
+    required String cashoutInvoiceNumber,
+    required String cashierId,
+    required String cashierName,
+    required double amountDue,
+    required double discount,
+    required List<Map<String, dynamic>> items,
+    required int orderNumber,
+    required String tableNumber,
+    String? serverName,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+    // 1. Mettre à jour la commande
+    await _db.collection('orders').doc(orderId).update({
+      'cashStatus': CashStatus.awaiting_payment.index,
+      'cashoutInvoiceGenerated': true,
+      'cashoutInvoiceNumber': cashoutInvoiceNumber,
+      'cashoutAt': nowMs,
+      'cashierId': cashierId,
+      'cashierName': cashierName,
+      'discount': discount,
+    });
+
+    // 2. Créer le document dans cashout_invoices
+    await _db.collection('cashout_invoices').doc(cashoutInvoiceNumber).set({
+      'id': cashoutInvoiceNumber,
+      'orderId': orderId,
+      'orderNumber': orderNumber,
+      'tableNumber': tableNumber,
+      'serverName': serverName,
+      'cashierId': cashierId,
+      'cashierName': cashierName,
+      'amountDue': amountDue,
+      'discount': discount,
+      'items': items,
+      'status': 'provisoire',
+      'createdAt': FieldValue.serverTimestamp(),
+      'cashoutAtMs': nowMs,
+    });
+
+    debugPrint('[FirebaseService] Encaissement ordre $orderId => $cashoutInvoiceNumber');
+  }
+
+  /// ÉTAPE 2 — Règlement définitif.
+  /// cashStatus → paid, isPaid = true, crée docs dans settlement_invoices + cash_reports
+  Future<void> settleOrder({
+    required String orderId,
+    required String settlementInvoiceNumber,
+    required String cashoutInvoiceNumber,
+    required String cashierId,
+    required String cashierName,
+    required String paymentMethod,
+    required double amountDue,
+    required double amountPaid,
+    required double changeAmount,
+    required int orderNumber,
+    required String tableNumber,
+    required List<Map<String, dynamic>> items,
+    String? serverName,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+    // 1. Mettre à jour la commande (définitivement payée)
+    await _db.collection('orders').doc(orderId).update({
+      'cashStatus': CashStatus.paid.index,
+      'settlementInvoiceGenerated': true,
+      'settlementInvoiceNumber': settlementInvoiceNumber,
+      'settledAt': nowMs,
+      'isPaid': true,
+      'paymentMethod': paymentMethod,
+      'amountPaid': amountPaid,
+      'changeAmount': changeAmount,
+      'servedAt': nowMs,
+      'status': OrderStatus.served.index,
+    });
+
+    // 2. Créer le document dans settlement_invoices
+    await _db.collection('settlement_invoices').doc(settlementInvoiceNumber).set({
+      'id': settlementInvoiceNumber,
+      'cashoutInvoiceNumber': cashoutInvoiceNumber,
+      'orderId': orderId,
+      'orderNumber': orderNumber,
+      'tableNumber': tableNumber,
+      'serverName': serverName,
+      'cashierId': cashierId,
+      'cashierName': cashierName,
+      'paymentMethod': paymentMethod,
+      'amountDue': amountDue,
+      'amountPaid': amountPaid,
+      'changeAmount': changeAmount,
+      'items': items,
+      'status': 'definitif',
+      'createdAt': FieldValue.serverTimestamp(),
+      'settledAtMs': nowMs,
+    });
+
+    // 3. Créer une entrée dans cash_reports (point de caisse)
+    final reportId = 'CR-$settlementInvoiceNumber';
+    await _db.collection('cash_reports').doc(reportId).set({
+      'id': reportId,
+      'settlementInvoiceNumber': settlementInvoiceNumber,
+      'orderId': orderId,
+      'orderNumber': orderNumber,
+      'tableNumber': tableNumber,
+      'cashierId': cashierId,
+      'cashierName': cashierName,
+      'paymentMethod': paymentMethod,
+      'amount': amountDue,
+      'amountPaid': amountPaid,
+      'changeAmount': changeAmount,
+      'type': 'encaissement_client',
+      'createdAt': FieldValue.serverTimestamp(),
+      'settledAtMs': nowMs,
+    });
+
+    debugPrint('[FirebaseService] Règlement ordre $orderId => $settlementInvoiceNumber');
+  }
 }
