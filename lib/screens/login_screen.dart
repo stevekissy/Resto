@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../utils/app_theme.dart';
+import 'main_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   /// Message d'erreur Firebase passé depuis main() si initializeApp() a échoué.
@@ -93,19 +94,37 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     setState(() => _isLoading = true);
 
     try {
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('════════════════════════════════════════════════════════');
+      debugPrint('[DIAG][login_screen.dart:97] _login() — appel loginWithFirebase');
+      debugPrint('[DIAG][login_screen.dart:97]   email = $email');
+      debugPrint('════════════════════════════════════════════════════════');
+      // ────────────────────────────────────────────────────────────────
       final provider = context.read<AppProvider>();
       final success  = await provider.loginWithFirebase(email, password);
       if (!mounted) return;
       setState(() => _isLoading = false);
 
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('════════════════════════════════════════════════════════');
+      debugPrint('[DIAG][login_screen.dart:103] loginWithFirebase retourné');
+      debugPrint('[DIAG][login_screen.dart:103]   success = $success');
+      debugPrint('[DIAG][login_screen.dart:103]   currentUser = ${provider.currentUser?.name ?? "NULL"}');
+      debugPrint('[DIAG][login_screen.dart:103]   role = ${provider.currentUser?.role}');
+      debugPrint('[DIAG][login_screen.dart:103]   isActive = ${provider.currentUser?.isActive}');
+      debugPrint('[DIAG][login_screen.dart:103]   canLogin = ${provider.currentUser?.canLogin}');
+      debugPrint('════════════════════════════════════════════════════════');
+      // ────────────────────────────────────────────────────────────────
+
       if (success) {
-        // ✅ NE PAS naviguer manuellement ici.
-        // _AuthGate écoute authStateChanges() et switche vers MainScreen
-        // automatiquement dès que Firebase Auth confirme la connexion.
-        // Une navigation manuelle en PLUS crée une double-navigation
-        // (race condition) qui force un retour au Login.
-        // → Laisser _AuthGate gérer entièrement la transition.
-        debugPrint('[LoginScreen] Login réussi — _AuthGate prend le relais');
+        // ─── LOG DIAGNOSTIC ───────────────────────────────────────────
+        debugPrint('[DIAG][login_screen.dart:110] ▶ Navigator.pushAndRemoveUntil vers MainScreen');
+        // ──────────────────────────────────────────────────────────────
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const MainScreen()),
+          (route) => false,
+        );
       } else {
         _showError(provider.errorMessage ?? 'Email ou mot de passe incorrect.');
       }

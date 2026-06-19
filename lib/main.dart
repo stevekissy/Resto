@@ -203,15 +203,6 @@ class _AuthGateState extends State<_AuthGate> {
   late bool? _authenticated;
   StreamSubscription<User?>? _authSub;
 
-  // ── Guard de démarrage ──────────────────────────────────────────────
-  // main() a déjà résolu l'état auth via resolveAuthState() (authStateChanges().first).
-  // Quand _AuthGate s'abonne au stream, Firebase émet immédiatement l'état courant
-  // comme premier événement. Ce premier événement est REDONDANT avec ce que main()
-  // a déjà fait et peut créer une race condition si Firebase émet null→user→null
-  // rapidement sur Web. On ignore donc le premier événement du stream pour ne
-  // réagir QU'AUX changements ULTÉRIEURS (logout, expiration token).
-  bool _initialEventConsumed = false;
-
   @override
   void initState() {
     super.initState();
@@ -220,30 +211,47 @@ class _AuthGateState extends State<_AuthGate> {
 
     // Écouter les changements d'état auth ULTÉRIEURS (ex: token expiré,
     // logout explicite par l'utilisateur) SANS toucher à l'état initial.
+    // ─── LOG DIAGNOSTIC ────────────────────────────────────────────────
+    debugPrint('════════════════════════════════════════════════════════');
+    debugPrint('[DIAG][main.dart:214] _AuthGate.initState()');
+    debugPrint('[DIAG][main.dart:214]   hasSession initial = ${widget.hasSession}');
+    debugPrint('[DIAG][main.dart:214]   _authenticated initial = $_authenticated');
+    debugPrint('════════════════════════════════════════════════════════');
+    // ───────────────────────────────────────────────────────────────────
+
     _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       if (!mounted) return;
-
-      // Ignorer le PREMIER événement : c'est l'état initial déjà résolu
-      // par main() via resolveAuthState(). L'écouter en double peut créer
-      // une race condition (ex: Firebase émet null avant user sur Web).
-      if (!_initialEventConsumed) {
-        _initialEventConsumed = true;
-        debugPrint('[AuthGate] Premier événement stream ignoré (déjà résolu par main): ${user?.email ?? "null"}');
-        return;
-      }
 
       final provider = context.read<AppProvider>();
       final wasAuthenticated = _authenticated;
 
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('════════════════════════════════════════════════════════');
+      debugPrint('[DIAG][main.dart:223] authStateChanges EVENT');
+      debugPrint('[DIAG][main.dart:223]   user = ${user?.email ?? "NULL"}');
+      debugPrint('[DIAG][main.dart:223]   uid  = ${user?.uid  ?? "NULL"}');
+      debugPrint('[DIAG][main.dart:223]   wasAuthenticated = $wasAuthenticated');
+      debugPrint('[DIAG][main.dart:223]   currentUser Provider = ${provider.currentUser?.name ?? "NULL"}');
+      debugPrint('════════════════════════════════════════════════════════');
+      // ────────────────────────────────────────────────────────────────
+
       if (user != null && wasAuthenticated == false) {
-        // Connexion détectée (ex: depuis LoginScreen via loginWithFirebase)
+        // Connexion détectée (ex: depuis LoginScreen)
         debugPrint('[AuthGate] Connexion détectée: ${user.email}');
+        debugPrint('[DIAG][main.dart:232] ▶ setState(_authenticated = true) — AFFICHE MainScreen');
         setState(() => _authenticated = true);
       } else if (user == null && wasAuthenticated == true) {
         // Déconnexion RÉELLE détectée (logout explicite ou token expiré)
-        debugPrint('[AuthGate] Déconnexion détectée → retour Login');
+        debugPrint('[AuthGate] Déconnexion détectée');
+        debugPrint('[DIAG][main.dart:237] ▶▶▶ REDIRECTION LOGIN DÉCLENCHÉE PAR : main.dart — _AuthGateState.initState (listener authStateChanges) — ligne 237');
+        debugPrint('[DIAG][main.dart:237]   CAUSE : user == null reçu alors que wasAuthenticated == true');
         provider.clearSessionLocally();
         setState(() => _authenticated = false);
+      } else {
+        // ─── LOG DIAGNOSTIC ───────────────────────────────────────────
+        debugPrint('[DIAG][main.dart:242] authStateChanges ignoré (pas de changement d\'état)');
+        debugPrint('[DIAG][main.dart:242]   user=${user?.email ?? "null"} wasAuth=$wasAuthenticated → aucune action');
+        // ──────────────────────────────────────────────────────────────
       }
       // Si wasAuthenticated == true et user != null → rien (session stable)
       // Si wasAuthenticated == false et user == null → rien (pas connecté)

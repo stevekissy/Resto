@@ -223,28 +223,57 @@ class AppProvider extends ChangeNotifier {
   /// Retourne true si une session active a été restaurée, false sinon.
   Future<bool> checkExistingSession() async {
     if (!firebaseReady) return false;
+    // ─── LOG DIAGNOSTIC ───────────────────────────────────────────────
+    debugPrint('════════════════════════════════════════════════════════');
+    debugPrint('[DIAG][app_provider.dart:224] checkExistingSession() — resolveAuthState...');
+    debugPrint('════════════════════════════════════════════════════════');
+    // ──────────────────────────────────────────────────────────────────
     try {
       // Attendre que Firebase Auth ait chargé la session depuis localStorage
       final fbUser = await _firebase.resolveAuthState();
       if (fbUser == null) {
+        // ─── LOG DIAGNOSTIC ─────────────────────────────────────────
+        debugPrint('[DIAG][app_provider.dart:229] resolveAuthState = NULL → hasSession=false');
+        // ────────────────────────────────────────────────────────────
         debugPrint('[AppProvider] checkExistingSession → aucune session active');
         return false;
       }
       debugPrint('[AppProvider] ✅ Session Auth restaurée : ${fbUser.email}');
+      // ─── LOG DIAGNOSTIC ───────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:233] resolveAuthState OK → uid=${fbUser.uid} email=${fbUser.email}');
+      debugPrint('[DIAG][app_provider.dart:233] getUserByUid Firestore...');
+      // ──────────────────────────────────────────────────────────────
 
       // Lire le profil Firestore pour vérifier active + canLogin
       final firestoreUser = await _firebase.getUserByUid(fbUser.uid);
 
+      // ─── LOG DIAGNOSTIC ───────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:236] getUserByUid → ${firestoreUser?.name ?? "NULL"}');
+      if (firestoreUser != null) {
+        debugPrint('[DIAG][app_provider.dart:236]   isActive=${firestoreUser.isActive} canLogin=${firestoreUser.canLogin} role=${firestoreUser.role}');
+      }
+      // ──────────────────────────────────────────────────────────────
+
       if (firestoreUser != null) {
         // Vérification sécurité : active + canLogin obligatoires
         if (!firestoreUser.isActive || !firestoreUser.canLogin) {
+          // ─── LOG DIAGNOSTIC ─────────────────────────────────────
+          debugPrint('[DIAG][app_provider.dart:241] ▶▶▶ signOut() — isActive=${firestoreUser.isActive} canLogin=${firestoreUser.canLogin}');
+          debugPrint('[DIAG][app_provider.dart:241]   REDIRECTION LOGIN DÉCLENCHÉE PAR : app_provider.dart — checkExistingSession — ligne 241');
+          // ────────────────────────────────────────────────────────
           await _firebase.signOut();
           debugPrint('[AppProvider] Session refusée : active=${firestoreUser.isActive} canLogin=${firestoreUser.canLogin}');
           return false;
         }
+        // ─── LOG DIAGNOSTIC ─────────────────────────────────────────
+        debugPrint('[DIAG][app_provider.dart:245] ✅ Session restaurée — profil valide');
+        // ────────────────────────────────────────────────────────────
         _currentUser = firestoreUser;
       } else {
         // Doc absent — créer avec rôle déduit de l'email
+        // ─── LOG DIAGNOSTIC ─────────────────────────────────────────
+        debugPrint('[DIAG][app_provider.dart:247] Doc absent → ensureUserDoc()');
+        // ────────────────────────────────────────────────────────────
         final role = _roleFromEmail(fbUser.email ?? '');
         final displayName = _displayNameFromEmail(fbUser.email ?? '');
         final newUser = await _firebase.ensureUserDoc(
@@ -256,8 +285,14 @@ class AppProvider extends ChangeNotifier {
       // Démarrer les streams Firestore temps réel
       _startFirebaseStreams();
       notifyListeners();
+      // ─── LOG DIAGNOSTIC ───────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:259] checkExistingSession → return true');
+      // ──────────────────────────────────────────────────────────────
       return true;
     } catch (e) {
+      // ─── LOG DIAGNOSTIC ───────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:261] checkExistingSession CATCH: $e');
+      // ──────────────────────────────────────────────────────────────
       debugPrint('[AppProvider] checkExistingSession erreur: $e');
       return false;
     }
@@ -290,18 +325,47 @@ class AppProvider extends ChangeNotifier {
 
     try {
       // ÉTAPE 1 — Authentification Firebase Auth
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('════════════════════════════════════════════════════════');
+      debugPrint('[DIAG][app_provider.dart:293] loginWithFirebase — ÉTAPE 1 signIn');
+      debugPrint('[DIAG][app_provider.dart:293]   email = $email');
+      debugPrint('════════════════════════════════════════════════════════');
+      // ────────────────────────────────────────────────────────────────
       final credential = await _firebase.signIn(email, password);
       if (credential?.user == null) throw Exception('Aucun utilisateur retourné par Firebase');
 
       final uid  = credential!.user!.uid;
       final mail = credential.user!.email ?? email;
 
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:299] ÉTAPE 1 OK — Auth Firebase');
+      debugPrint('[DIAG][app_provider.dart:299]   UID   = $uid');
+      debugPrint('[DIAG][app_provider.dart:299]   EMAIL = $mail');
+      // ────────────────────────────────────────────────────────────────
+
       // ÉTAPE 2 — Lire le profil Firestore (nécessaire pour vérifier active + canLogin)
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:300] ÉTAPE 2 — getUserByUid Firestore...');
+      // ────────────────────────────────────────────────────────────────
       final firestoreUser = await _firebase.getUserByUid(uid);
+
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:302] getUserByUid retourné');
+      debugPrint('[DIAG][app_provider.dart:302]   firestoreUser = ${firestoreUser?.name ?? "NULL (doc absent)"}');
+      if (firestoreUser != null) {
+        debugPrint('[DIAG][app_provider.dart:302]   role     = ${firestoreUser.role}');
+        debugPrint('[DIAG][app_provider.dart:302]   isActive = ${firestoreUser.isActive}');
+        debugPrint('[DIAG][app_provider.dart:302]   canLogin = ${firestoreUser.canLogin}');
+      }
+      // ────────────────────────────────────────────────────────────────
 
       if (firestoreUser != null) {
         // VÉRIFICATION SÉCURITÉ 1 : active = true obligatoire
         if (!firestoreUser.isActive) {
+          // ─── LOG DIAGNOSTIC ─────────────────────────────────────────
+          debugPrint('[DIAG][app_provider.dart:305] ▶▶▶ signOut() — isActive=false → RETOUR LOGIN');
+          debugPrint('[DIAG][app_provider.dart:305]   REDIRECTION LOGIN DÉCLENCHÉE PAR : app_provider.dart — loginWithFirebase — ligne 305');
+          // ────────────────────────────────────────────────────────────
           await _firebase.signOut(); // Déconnecter immédiatement
           _errorMessage = 'Accès non autorisé. Contactez l\'administrateur.';
           _isLoading = false;
@@ -310,6 +374,10 @@ class AppProvider extends ChangeNotifier {
         }
         // VÉRIFICATION SÉCURITÉ 2 : canLogin = true obligatoire
         if (!firestoreUser.canLogin) {
+          // ─── LOG DIAGNOSTIC ─────────────────────────────────────────
+          debugPrint('[DIAG][app_provider.dart:313] ▶▶▶ signOut() — canLogin=false → RETOUR LOGIN');
+          debugPrint('[DIAG][app_provider.dart:313]   REDIRECTION LOGIN DÉCLENCHÉE PAR : app_provider.dart — loginWithFirebase — ligne 313');
+          // ────────────────────────────────────────────────────────────
           await _firebase.signOut(); // Déconnecter immédiatement
           _errorMessage = 'Accès non autorisé. Contactez l\'administrateur.';
           _isLoading = false;
@@ -317,29 +385,62 @@ class AppProvider extends ChangeNotifier {
           return false;
         }
         // ✅ Tout est valide — utiliser le profil Firestore complet
+        // ─── LOG DIAGNOSTIC ─────────────────────────────────────────
+        debugPrint('[DIAG][app_provider.dart:320] ✅ Profil Firestore valide');
+        debugPrint('[DIAG][app_provider.dart:320]   AUTH CONNECTÉ');
+        debugPrint('[DIAG][app_provider.dart:320]   UID         : $uid');
+        debugPrint('[DIAG][app_provider.dart:320]   EMAIL       : $mail');
+        debugPrint('[DIAG][app_provider.dart:320]   ROLE        : ${firestoreUser.role}');
+        debugPrint('[DIAG][app_provider.dart:320]   ACTIVE      : ${firestoreUser.isActive}');
+        debugPrint('[DIAG][app_provider.dart:320]   CANLOGIN    : ${firestoreUser.canLogin}');
+        // ────────────────────────────────────────────────────────────
         _currentUser = firestoreUser;
       } else {
         // Document Firestore absent (utilisateur créé directement dans Auth console)
         // Créer le doc automatiquement avec les permissions par défaut
+        // ─── LOG DIAGNOSTIC ─────────────────────────────────────────
+        debugPrint('[DIAG][app_provider.dart:322] Doc Firestore absent — ensureUserDoc()');
+        // ────────────────────────────────────────────────────────────
         final role = _roleFromEmail(mail);
         final displayName = _displayNameFromEmail(mail);
         final newUser = await _firebase.ensureUserDoc(uid, mail, role, displayName);
+        // ─── LOG DIAGNOSTIC ─────────────────────────────────────────
+        debugPrint('[DIAG][app_provider.dart:327] ensureUserDoc() OK → role=$role displayName=$displayName');
+        // ────────────────────────────────────────────────────────────
         _currentUser = newUser;
       }
 
       notifyListeners(); // UI réactive
 
       // ÉTAPE 3 — Initialiser les documents permissions si absents (fire-and-forget)
-      _firebase.initRolePermissions().catchError((e) => debugPrint('[AppProvider] initRolePermissions: $e'));
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:333] ÉTAPE 3 — initRolePermissions() (fire-and-forget)');
+      // ────────────────────────────────────────────────────────────────
+      _firebase.initRolePermissions().catchError((e) {
+        debugPrint('[DIAG][app_provider.dart:333] initRolePermissions ERREUR: $e');
+        debugPrint('[AppProvider] initRolePermissions: $e');
+      });
 
       // ÉTAPE 4 — Démarrer les streams temps réel
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:336] ÉTAPE 4 — _startFirebaseStreams()');
+      // ────────────────────────────────────────────────────────────────
       _startFirebaseStreams();
 
       _isLoading = false;
       notifyListeners();
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:340] loginWithFirebase → return true');
+      debugPrint('[DIAG][app_provider.dart:340]   currentUser = ${_currentUser?.name}');
+      debugPrint('[DIAG][app_provider.dart:340]   PERMISSIONS = ${_rolePermissions.keys.join(", ")}');
+      // ────────────────────────────────────────────────────────────────
       return true;
 
     } catch (e, st) {
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:343] loginWithFirebase CATCH — exception inattendue');
+      debugPrint('[DIAG][app_provider.dart:343]   ERREUR = $e');
+      // ────────────────────────────────────────────────────────────────
       debugPrint('[AppProvider] loginWithFirebase ERROR: $e');
       debugPrint('[AppProvider] STACKTRACE: $st');
       _errorMessage = _mapAuthError(e.toString());
@@ -390,6 +491,9 @@ class AppProvider extends ChangeNotifier {
 
   // =================== STREAMS FIRESTORE ===================
   void _startFirebaseStreams() {
+    // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+    debugPrint('[DIAG][app_provider.dart:493] _startFirebaseStreams() appelé');
+    // ────────────────────────────────────────────────────────────────
     // GARDE : ne jamais ouvrir de stream Firestore si Firebase non prêt ou user non connecté
     if (!firebaseReady) {
       debugPrint('[AppProvider] _startFirebaseStreams ignoré — Firebase non prêt');
@@ -397,6 +501,9 @@ class AppProvider extends ChangeNotifier {
     }
     final fbUser = _firebase.currentFirebaseUser;
     if (fbUser == null) {
+      // ─── LOG DIAGNOSTIC ─────────────────────────────────────────
+      debugPrint('[DIAG][app_provider.dart:500] ▶▶ _startFirebaseStreams IGNORÉ — currentFirebaseUser==null AU MOMENT DE L\'APPEL');
+      // ────────────────────────────────────────────────────────────
       debugPrint('[AppProvider] _startFirebaseStreams ignoré — currentUser == null');
       return;
     }
@@ -491,6 +598,13 @@ class AppProvider extends ChangeNotifier {
   /// Appelé uniquement par un bouton "Déconnexion" explicite de l'utilisateur.
   /// NE PAS appeler automatiquement dans initState, dispose ou guard route.
   Future<void> logout() async {
+    // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+    debugPrint('════════════════════════════════════════════════════════');
+    debugPrint('[DIAG][app_provider.dart:logout] ▶▶▶ logout() APPELÉ (déconnexion volontaire)');
+    debugPrint('[DIAG][app_provider.dart:logout]   currentUser = ${_currentUser?.name ?? "NULL"}');
+    debugPrint(StackTrace.current.toString().split('\n').take(6).join('\n'));
+    debugPrint('════════════════════════════════════════════════════════');
+    // ────────────────────────────────────────────────────────────────
     _stopFirebaseStreams();
     if (_currentUser != null) {
       await _firebase.setUserOnline(_currentUser!.id, false).catchError((_) {});
@@ -507,6 +621,13 @@ class AppProvider extends ChangeNotifier {
   /// Utilisé par _AuthGate quand authStateChanges détecte une déconnexion
   /// déclenchée par Firebase (ex: token expiré) plutôt que par l'utilisateur.
   void clearSessionLocally() {
+    // ─── LOG DIAGNOSTIC ─────────────────────────────────────────────
+    debugPrint('════════════════════════════════════════════════════════');
+    debugPrint('[DIAG][app_provider.dart:clearSessionLocally] ▶▶▶ APPELÉ');
+    debugPrint('[DIAG][app_provider.dart:clearSessionLocally]   currentUser avant = ${_currentUser?.name ?? "NULL"}');
+    debugPrint(StackTrace.current.toString().split('\n').take(6).join('\n'));
+    debugPrint('════════════════════════════════════════════════════════');
+    // ────────────────────────────────────────────────────────────────
     _stopFirebaseStreams();
     _currentUser = null;
     _users = []; _orders = []; _products = []; _stockItems = [];
