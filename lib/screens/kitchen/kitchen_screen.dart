@@ -17,7 +17,7 @@ class KitchenScreen extends StatefulWidget {
 class _KitchenScreenState extends State<KitchenScreen> {
   late Timer _timer;
   final TtsService _tts = TtsService();
-  Set<String> _announcedOrders = {};
+  final Set<String> _announcedOrders = {};
 
   @override
   void initState() {
@@ -28,17 +28,23 @@ class _KitchenScreenState extends State<KitchenScreen> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = context.read<AppProvider>();
+
+      // Annonce immédiate de chaque nouvelle commande
       provider.onNewOrder = (order) {
         if (!_announcedOrders.contains(order.id)) {
           _announcedOrders.add(order.id);
           _tts.announceNewOrder(order);
         }
       };
+
       provider.onOrderDelayed = (order) {
         _tts.announceDelay(order);
       };
-      // Démarrer les rappels périodiques automatiques (toutes les 5 minutes)
-      _tts.startPeriodicReminders(provider, intervalMinutes: 5);
+
+      // Démarrer les rappels avec les settings courants (reprise après refresh)
+      if (_tts.settings.enabled) {
+        _tts.startPeriodicReminders(provider);
+      }
     });
   }
 
@@ -67,10 +73,18 @@ class _KitchenScreenState extends State<KitchenScreen> {
     return Scaffold(
       body: Column(
         children: [
-          _KitchenHeader(provider: provider, tts: _tts),
+          _KitchenHeader(
+            provider: provider,
+            tts: _tts,
+            onSettingsChanged: () => setState(() {}),
+          ),
           Expanded(
             child: activeOrders.isEmpty && readyOrders.isEmpty
-              ? const EmptyState(icon: Icons.restaurant, title: 'Aucune commande active', subtitle: 'En attente de nouvelles commandes...')
+              ? const EmptyState(
+                  icon: Icons.restaurant,
+                  title: 'Aucune commande active',
+                  subtitle: 'En attente de nouvelles commandes...',
+                )
               : SingleChildScrollView(
                   padding: const EdgeInsets.all(12),
                   child: Column(
@@ -81,8 +95,14 @@ class _KitchenScreenState extends State<KitchenScreen> {
                           children: [
                             const Icon(Icons.fire_truck, color: AppTheme.preparing, size: 18),
                             const SizedBox(width: 8),
-                            Text('Commandes Actives (${activeOrders.length})',
-                              style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.w700, fontSize: 16)),
+                            Text(
+                              'Commandes Actives (${activeOrders.length})',
+                              style: const TextStyle(
+                                color: AppTheme.textPrimary,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 16,
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 12),
@@ -90,7 +110,10 @@ class _KitchenScreenState extends State<KitchenScreen> {
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
                           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.7,
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: 0.7,
                           ),
                           itemCount: activeOrders.length,
                           itemBuilder: (context, i) => _KitchenOrderCard(
@@ -106,8 +129,14 @@ class _KitchenScreenState extends State<KitchenScreen> {
                           children: [
                             const Icon(Icons.check_circle, color: AppTheme.ready, size: 18),
                             const SizedBox(width: 8),
-                            Text('Prêtes à servir (${readyOrders.length})',
-                              style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.w700, fontSize: 16)),
+                            Text(
+                              'Prêtes à servir (${readyOrders.length})',
+                              style: const TextStyle(
+                                color: AppTheme.textPrimary,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 16,
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 12),
@@ -123,28 +152,55 @@ class _KitchenScreenState extends State<KitchenScreen> {
   }
 }
 
+// ======================================================================
+// HEADER CUISINE
+// ======================================================================
+
 class _KitchenHeader extends StatefulWidget {
   final AppProvider provider;
   final TtsService tts;
+  final VoidCallback onSettingsChanged;
 
-  const _KitchenHeader({required this.provider, required this.tts});
+  const _KitchenHeader({
+    required this.provider,
+    required this.tts,
+    required this.onSettingsChanged,
+  });
 
   @override
   State<_KitchenHeader> createState() => _KitchenHeaderState();
 }
 
 class _KitchenHeaderState extends State<_KitchenHeader> {
+
+  void _openVoiceSettings() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _KitchenVoiceSettingsDialog(
+        tts: widget.tts,
+        provider: widget.provider,
+        onChanged: () {
+          setState(() {});
+          widget.onSettingsChanged();
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final remindersOn = widget.tts.isRemindersActive;
+    final settings = widget.tts.settings;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: AppTheme.surface,
-        border: Border(bottom: BorderSide(color: const Color(0xFF2A2A5A))),
+        border: Border(bottom: BorderSide(color: Color(0xFF2A2A5A))),
       ),
       child: Column(
         children: [
+          // Ligne 1 : Titre + stats + boutons
           Row(
             children: [
               const Icon(Icons.restaurant, color: AppTheme.primary, size: 22),
@@ -152,26 +208,71 @@ class _KitchenHeaderState extends State<_KitchenHeader> {
               const Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('ÉCRAN CUISINE', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: 2)),
-                  Text('SANKADIOKRO', style: TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w700)),
+                  Text(
+                    'ÉCRAN CUISINE',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  Text(
+                    'SANKADIOKRO',
+                    style: TextStyle(
+                      color: AppTheme.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
               const Spacer(),
               Row(
                 children: [
-                  _StatBubble(value: widget.provider.pendingOrders.length.toString(), label: 'Attente', color: AppTheme.pending),
+                  _StatBubble(
+                    value: widget.provider.pendingOrders.length.toString(),
+                    label: 'Attente',
+                    color: AppTheme.pending,
+                  ),
                   const SizedBox(width: 8),
-                  _StatBubble(value: widget.provider.preparingOrders.length.toString(), label: 'Prépa', color: AppTheme.preparing),
+                  _StatBubble(
+                    value: widget.provider.preparingOrders.length.toString(),
+                    label: 'Prépa',
+                    color: AppTheme.preparing,
+                  ),
                   const SizedBox(width: 8),
-                  _StatBubble(value: widget.provider.readyOrders.length.toString(), label: 'Prêt', color: AppTheme.ready),
+                  _StatBubble(
+                    value: widget.provider.readyOrders.length.toString(),
+                    label: 'Prêt',
+                    color: AppTheme.ready,
+                  ),
                   const SizedBox(width: 8),
                   // Bouton rappel immédiat
                   GestureDetector(
                     onTap: () => widget.tts.triggerImmediateReminder(widget.provider),
                     child: Container(
                       padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.primary.withValues(alpha: 0.5))),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.5)),
+                      ),
                       child: const Icon(Icons.volume_up, color: AppTheme.primary, size: 20),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  // Bouton settings vocal
+                  GestureDetector(
+                    onTap: _openVoiceSettings,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.textSecondary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppTheme.textSecondary.withValues(alpha: 0.3)),
+                      ),
+                      child: const Icon(Icons.settings_voice, color: AppTheme.textSecondary, size: 20),
                     ),
                   ),
                 ],
@@ -179,35 +280,57 @@ class _KitchenHeaderState extends State<_KitchenHeader> {
             ],
           ),
           const SizedBox(height: 8),
-          // Barre rappels périodiques
+          // Ligne 2 : Statut rappels + toggle + mode coach badge
           Row(
             children: [
-              Icon(Icons.timer, color: remindersOn ? AppTheme.success : AppTheme.textSecondary, size: 14),
+              Icon(
+                Icons.timer,
+                color: remindersOn ? AppTheme.success : AppTheme.textSecondary,
+                size: 14,
+              ),
               const SizedBox(width: 6),
               Text(
-                remindersOn ? 'Rappels vocaux actifs (toutes les 5 min)' : 'Rappels vocaux inactifs',
-                style: TextStyle(color: remindersOn ? AppTheme.success : AppTheme.textSecondary, fontSize: 11),
+                remindersOn
+                  ? 'Rappels actifs (${settings.intervalMinutes} min • ${_coachLabel(settings.coachMode)})'
+                  : 'Rappels vocaux inactifs',
+                style: TextStyle(
+                  color: remindersOn ? AppTheme.success : AppTheme.textSecondary,
+                  fontSize: 11,
+                ),
               ),
               const Spacer(),
               GestureDetector(
                 onTap: () {
                   if (remindersOn) {
+                    widget.tts.settings.enabled = false;
                     widget.tts.stopPeriodicReminders();
                   } else {
-                    widget.tts.startPeriodicReminders(widget.provider, intervalMinutes: 5);
+                    widget.tts.settings.enabled = true;
+                    widget.tts.startPeriodicReminders(widget.provider);
                   }
                   setState(() {});
+                  widget.onSettingsChanged();
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: remindersOn ? AppTheme.error.withValues(alpha: 0.15) : AppTheme.success.withValues(alpha: 0.15),
+                    color: remindersOn
+                        ? AppTheme.error.withValues(alpha: 0.15)
+                        : AppTheme.success.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: remindersOn ? AppTheme.error.withValues(alpha: 0.4) : AppTheme.success.withValues(alpha: 0.4)),
+                    border: Border.all(
+                      color: remindersOn
+                          ? AppTheme.error.withValues(alpha: 0.4)
+                          : AppTheme.success.withValues(alpha: 0.4),
+                    ),
                   ),
                   child: Text(
                     remindersOn ? 'Désactiver' : 'Activer',
-                    style: TextStyle(color: remindersOn ? AppTheme.error : AppTheme.success, fontSize: 11, fontWeight: FontWeight.w700),
+                    style: TextStyle(
+                      color: remindersOn ? AppTheme.error : AppTheme.success,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
@@ -217,7 +340,437 @@ class _KitchenHeaderState extends State<_KitchenHeader> {
       ),
     );
   }
+
+  String _coachLabel(CoachMode mode) {
+    switch (mode) {
+      case CoachMode.doux: return 'doux';
+      case CoachMode.normal: return 'normal';
+      case CoachMode.pression: return 'pression';
+    }
+  }
 }
+
+// ======================================================================
+// DIALOG SETTINGS VOCAL CUISINE
+// ======================================================================
+
+class _KitchenVoiceSettingsDialog extends StatefulWidget {
+  final TtsService tts;
+  final AppProvider provider;
+  final VoidCallback onChanged;
+
+  const _KitchenVoiceSettingsDialog({
+    required this.tts,
+    required this.provider,
+    required this.onChanged,
+  });
+
+  @override
+  State<_KitchenVoiceSettingsDialog> createState() =>
+      _KitchenVoiceSettingsDialogState();
+}
+
+class _KitchenVoiceSettingsDialogState
+    extends State<_KitchenVoiceSettingsDialog> {
+  late bool _enabled;
+  late double _volume;
+  late int _intervalMinutes;
+  late CoachMode _coachMode;
+
+  @override
+  void initState() {
+    super.initState();
+    final s = widget.tts.settings;
+    _enabled = s.enabled;
+    _volume = s.volume;
+    _intervalMinutes = s.intervalMinutes;
+    _coachMode = s.coachMode;
+  }
+
+  void _apply() {
+    widget.tts.settings.enabled = _enabled;
+    widget.tts.settings.volume = _volume;
+    widget.tts.settings.intervalMinutes = _intervalMinutes;
+    widget.tts.settings.coachMode = _coachMode;
+    // Redémarrer les rappels avec les nouveaux paramètres
+    widget.tts.restartReminders(widget.provider);
+    widget.onChanged();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Titre
+              Row(
+                children: [
+                  const Icon(Icons.settings_voice, color: AppTheme.primary, size: 22),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'Assistant Vocal Cuisine',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: const Icon(Icons.close, color: AppTheme.textSecondary, size: 20),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // ── Activé / Désactivé ──
+              _SettingsRow(
+                icon: Icons.power_settings_new,
+                label: 'Assistant vocal',
+                child: Switch(
+                  value: _enabled,
+                  onChanged: (v) => setState(() { _enabled = v; _apply(); }),
+                  activeThumbColor: AppTheme.success,
+                  activeTrackColor: AppTheme.success.withValues(alpha: 0.5),
+                ),
+              ),
+              const _SettingsDivider(),
+
+              // ── Volume ──
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.volume_up, color: AppTheme.primary, size: 18),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'Volume',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${(_volume * 100).round()}%',
+                        style: const TextStyle(
+                          color: AppTheme.primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      activeTrackColor: AppTheme.primary,
+                      inactiveTrackColor: AppTheme.primary.withValues(alpha: 0.2),
+                      thumbColor: AppTheme.primary,
+                      overlayColor: AppTheme.primary.withValues(alpha: 0.1),
+                    ),
+                    child: Slider(
+                      value: _volume,
+                      min: 0.1,
+                      max: 1.0,
+                      divisions: 9,
+                      onChanged: (v) => setState(() { _volume = v; _apply(); }),
+                    ),
+                  ),
+                ],
+              ),
+              const _SettingsDivider(),
+
+              // ── Intervalle de relance ──
+              const _SettingsLabel(icon: Icons.timer, label: 'Intervalle de relance'),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [1, 2, 3, 5].map((min) {
+                  final selected = _intervalMinutes == min;
+                  return GestureDetector(
+                    onTap: () => setState(() { _intervalMinutes = min; _apply(); }),
+                    child: Container(
+                      width: 60,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? AppTheme.primary.withValues(alpha: 0.25)
+                            : AppTheme.surfaceLight,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: selected
+                              ? AppTheme.primary
+                              : const Color(0xFF2A2A5A),
+                          width: selected ? 2 : 1,
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            '$min',
+                            style: TextStyle(
+                              color: selected ? AppTheme.primary : Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 18,
+                            ),
+                          ),
+                          Text(
+                            'min',
+                            style: TextStyle(
+                              color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const _SettingsDivider(),
+
+              // ── Mode coach ──
+              const _SettingsLabel(icon: Icons.sports, label: 'Mode coach'),
+              const SizedBox(height: 10),
+              Column(
+                children: [
+                  _CoachModeOption(
+                    mode: CoachMode.doux,
+                    selected: _coachMode == CoachMode.doux,
+                    label: 'Doux',
+                    subtitle: 'Encouragements calmes et bienveillants',
+                    icon: Icons.favorite_border,
+                    color: AppTheme.success,
+                    onTap: () => setState(() { _coachMode = CoachMode.doux; _apply(); }),
+                  ),
+                  const SizedBox(height: 8),
+                  _CoachModeOption(
+                    mode: CoachMode.normal,
+                    selected: _coachMode == CoachMode.normal,
+                    label: 'Normal',
+                    subtitle: 'Ton professionnel et motivant',
+                    icon: Icons.equalizer,
+                    color: AppTheme.primary,
+                    onTap: () => setState(() { _coachMode = CoachMode.normal; _apply(); }),
+                  ),
+                  const SizedBox(height: 8),
+                  _CoachModeOption(
+                    mode: CoachMode.pression,
+                    selected: _coachMode == CoachMode.pression,
+                    label: 'Pression',
+                    subtitle: 'Alertes fortes pour les coups de feu',
+                    icon: Icons.local_fire_department,
+                    color: AppTheme.error,
+                    onTap: () => setState(() { _coachMode = CoachMode.pression; _apply(); }),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // ── Bouton test voix ──
+              GestureDetector(
+                onTap: () {
+                  widget.tts.testVoice();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Row(
+                        children: [
+                          Icon(Icons.mic, color: Colors.white, size: 16),
+                          SizedBox(width: 8),
+                          Text('Test vocal lancé…'),
+                        ],
+                      ),
+                      duration: Duration(seconds: 2),
+                      backgroundColor: AppTheme.primary,
+                    ),
+                  );
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.5)),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.record_voice_over, color: AppTheme.primary, size: 20),
+                      SizedBox(width: 10),
+                      Text(
+                        'Tester la voix',
+                        style: TextStyle(
+                          color: AppTheme.primary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // ── Bouton fermer ──
+              GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF2A2A5A)),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      'Fermer',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Widgets helpers pour le dialog settings
+
+class _SettingsRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Widget child;
+
+  const _SettingsRow({required this.icon, required this.label, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: AppTheme.primary, size: 18),
+        const SizedBox(width: 10),
+        Text(label, style: const TextStyle(color: Colors.white, fontSize: 14)),
+        const Spacer(),
+        child,
+      ],
+    );
+  }
+}
+
+class _SettingsLabel extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _SettingsLabel({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: AppTheme.primary, size: 18),
+        const SizedBox(width: 10),
+        Text(label, style: const TextStyle(color: Colors.white, fontSize: 14)),
+      ],
+    );
+  }
+}
+
+class _SettingsDivider extends StatelessWidget {
+  const _SettingsDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 14),
+      height: 1,
+      color: const Color(0xFF2A2A5A),
+    );
+  }
+}
+
+class _CoachModeOption extends StatelessWidget {
+  final CoachMode mode;
+  final bool selected;
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _CoachModeOption({
+    required this.mode,
+    required this.selected,
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? color.withValues(alpha: 0.12) : AppTheme.surfaceLight,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? color : const Color(0xFF2A2A5A),
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: selected ? color : AppTheme.textSecondary, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: selected ? color : Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            if (selected)
+              Icon(Icons.check_circle, color: color, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ======================================================================
+// STAT BUBBLE
+// ======================================================================
 
 class _StatBubble extends StatelessWidget {
   final String value;
@@ -230,10 +783,17 @@ class _StatBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10), border: Border.all(color: color.withValues(alpha: 0.4))),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
       child: Column(
         children: [
-          Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 16)),
+          Text(
+            value,
+            style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 16),
+          ),
           Text(label, style: TextStyle(color: color, fontSize: 9)),
         ],
       ),
@@ -241,12 +801,20 @@ class _StatBubble extends StatelessWidget {
   }
 }
 
+// ======================================================================
+// KITCHEN ORDER CARD
+// ======================================================================
+
 class _KitchenOrderCard extends StatefulWidget {
   final Order order;
   final AppProvider provider;
   final TtsService tts;
 
-  const _KitchenOrderCard({required this.order, required this.provider, required this.tts});
+  const _KitchenOrderCard({
+    required this.order,
+    required this.provider,
+    required this.tts,
+  });
 
   @override
   State<_KitchenOrderCard> createState() => _KitchenOrderCardState();
@@ -294,11 +862,16 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
     final mins = elapsedSecs ~/ 60;
     final secs = elapsedSecs % 60;
 
-    // Estimate max cook time from items
-    final maxCookTime = order.items.isEmpty ? 20 : order.items.fold<double>(0, (m, i) {
-      final product = widget.provider.products.firstWhere((p) => p.id == i.productId, orElse: () => Product(id: '', name: '', category: '', price: 0, prepTime: 20));
-      return product.prepTime > m ? product.prepTime : m;
-    });
+    final maxCookTime = order.items.isEmpty
+        ? 20
+        : order.items.fold<double>(0, (m, i) {
+            final product = widget.provider.products.firstWhere(
+              (p) => p.id == i.productId,
+              orElse: () => Product(
+                id: '', name: '', category: '', price: 0, prepTime: 20),
+            );
+            return product.prepTime > m ? product.prepTime : m;
+          });
     final remainingMins = (maxCookTime - mins).clamp(0, maxCookTime.toInt());
     final progressValue = (mins / maxCookTime).clamp(0.0, 1.0);
 
@@ -307,10 +880,16 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
         color: AppTheme.cardBg,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isLate ? AppTheme.error : (order.isUrgent ? AppTheme.warning : order.statusColor.withValues(alpha: 0.5)),
+          color: isLate
+              ? AppTheme.error
+              : (order.isUrgent
+                  ? AppTheme.warning
+                  : order.statusColor.withValues(alpha: 0.5)),
           width: isLate || order.isUrgent ? 2 : 1,
         ),
-        boxShadow: isLate ? [BoxShadow(color: AppTheme.error.withValues(alpha: 0.3), blurRadius: 15)] : null,
+        boxShadow: isLate
+            ? [BoxShadow(color: AppTheme.error.withValues(alpha: 0.3), blurRadius: 15)]
+            : null,
       ),
       child: Column(
         children: [
@@ -327,8 +906,22 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('#${order.orderNumber}', style: TextStyle(color: order.statusColor, fontWeight: FontWeight.w900, fontSize: 18)),
-                    Text('Table ${order.tableNumber}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                    Text(
+                      '#${order.orderNumber}',
+                      style: TextStyle(
+                        color: order.statusColor,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                      ),
+                    ),
+                    Text(
+                      'Table ${order.tableNumber}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
                   ],
                 ),
                 Column(
@@ -337,12 +930,29 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                     if (order.isUrgent)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                        decoration: BoxDecoration(color: AppTheme.error, borderRadius: BorderRadius.circular(8)),
-                        child: const Text('🚨 URGENT', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900)),
+                        decoration: BoxDecoration(
+                          color: AppTheme.error,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          '🚨 URGENT',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
                       ),
                     const SizedBox(height: 4),
-                    Text('Passé à $_exactTime', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
-                    StatusBadge(label: order.statusLabel, color: order.statusColor, fontSize: 10),
+                    Text(
+                      'Passé à $_exactTime',
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+                    ),
+                    StatusBadge(
+                      label: order.statusLabel,
+                      color: order.statusColor,
+                      fontSize: 10,
+                    ),
                   ],
                 ),
               ],
@@ -364,12 +974,32 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                         const SizedBox(width: 4),
                         Text(
                           '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}',
-                          style: TextStyle(color: _timerColor, fontWeight: FontWeight.w900, fontSize: 18, fontFamily: 'monospace'),
+                          style: TextStyle(
+                            color: _timerColor,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 18,
+                            fontFamily: 'monospace',
+                          ),
                         ),
-                        if (isLate) Text('  ⚠ RETARD', style: TextStyle(color: _timerColor, fontSize: 10, fontWeight: FontWeight.w700)),
+                        if (isLate)
+                          Text(
+                            '  ⚠ RETARD',
+                            style: TextStyle(
+                              color: _timerColor,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                       ],
                     ),
-                    Text('Reste: ~${remainingMins}min', style: TextStyle(color: _timerColor, fontSize: 11, fontWeight: FontWeight.w600)),
+                    Text(
+                      'Reste: ~${remainingMins}min',
+                      style: TextStyle(
+                        color: _timerColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -386,7 +1016,7 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
             ),
           ),
 
-          // Items (récapitulatif avec modification de quantité)
+          // Items
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -396,7 +1026,8 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                 return _KitchenItemRow(
                   item: item,
                   onChangeQty: (newQty) {
-                    widget.provider.updateOrderItemQuantity(order.id, item.productId, newQty);
+                    widget.provider.updateOrderItemQuantity(
+                        order.id, item.productId, newQty);
                   },
                 );
               },
@@ -408,66 +1039,85 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               color: AppTheme.warning.withValues(alpha: 0.08),
-              child: Text('📝 ${order.specialInstructions}',
-                style: const TextStyle(color: AppTheme.warning, fontSize: 11, fontStyle: FontStyle.italic)),
+              child: Text(
+                '📝 ${order.specialInstructions}',
+                style: const TextStyle(
+                  color: AppTheme.warning,
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
             ),
           ],
 
           // Actions
           Container(
             padding: const EdgeInsets.all(10),
-            child: Column(
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => widget.tts.announceOrder(order),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primary.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
-                          ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.record_voice_over, color: AppTheme.primary, size: 16),
-                              SizedBox(width: 6),
-                              Text('Écouter', style: TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w600)),
-                            ],
-                          ),
-                        ),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => widget.tts.announceOrder(order),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          if (order.status == OrderStatus.pending) {
-                            widget.provider.updateOrderStatus(order.id, OrderStatus.preparing);
-                          } else {
-                            widget.provider.updateOrderStatus(order.id, OrderStatus.ready);
-                            widget.tts.announceOrderReady(order);
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          decoration: BoxDecoration(
-                            color: order.status == OrderStatus.pending ? AppTheme.preparing : AppTheme.ready,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Center(
-                            child: Text(
-                              order.status == OrderStatus.pending ? 'Commencer' : '✓ Prêt!',
-                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.record_voice_over, color: AppTheme.primary, size: 16),
+                          SizedBox(width: 6),
+                          Text(
+                            'Écouter',
+                            style: TextStyle(
+                              color: AppTheme.primary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      if (order.status == OrderStatus.pending) {
+                        widget.provider.updateOrderStatus(
+                            order.id, OrderStatus.preparing);
+                      } else {
+                        widget.provider.updateOrderStatus(
+                            order.id, OrderStatus.ready);
+                        widget.tts.announceOrderReady(order);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: order.status == OrderStatus.pending
+                            ? AppTheme.preparing
+                            : AppTheme.ready,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Center(
+                        child: Text(
+                          order.status == OrderStatus.pending
+                              ? 'Commencer'
+                              : '✓ Prêt!',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ],
             ),
@@ -477,6 +1127,10 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
     );
   }
 }
+
+// ======================================================================
+// KITCHEN ITEM ROW
+// ======================================================================
 
 class _KitchenItemRow extends StatelessWidget {
   final OrderItem item;
@@ -500,29 +1154,50 @@ class _KitchenItemRow extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text('${item.productName}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                child: Text(
+                  item.productName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-              // Quantity control for kitchen
               Row(
                 children: [
                   GestureDetector(
                     onTap: () => onChangeQty(item.quantity - 1),
                     child: Container(
-                      width: 22, height: 22,
-                      decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(6)),
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        color: AppTheme.error.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
                       child: const Icon(Icons.remove, size: 12, color: AppTheme.error),
                     ),
                   ),
                   Container(
                     width: 30,
                     alignment: Alignment.center,
-                    child: Text('${item.quantity}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14)),
+                    child: Text(
+                      '${item.quantity}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 14,
+                      ),
+                    ),
                   ),
                   GestureDetector(
                     onTap: () => onChangeQty(item.quantity + 1),
                     child: Container(
-                      width: 22, height: 22,
-                      decoration: BoxDecoration(color: AppTheme.success.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(6)),
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        color: AppTheme.success.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
                       child: const Icon(Icons.add, size: 12, color: AppTheme.success),
                     ),
                   ),
@@ -532,13 +1207,24 @@ class _KitchenItemRow extends StatelessWidget {
           ),
           if (item.specialComment != null) ...[
             const SizedBox(height: 2),
-            Text('💬 ${item.specialComment}', style: const TextStyle(color: AppTheme.warning, fontSize: 10, fontStyle: FontStyle.italic)),
+            Text(
+              '💬 ${item.specialComment}',
+              style: const TextStyle(
+                color: AppTheme.warning,
+                fontSize: 10,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
           ],
         ],
       ),
     );
   }
 }
+
+// ======================================================================
+// READY ORDER CARD
+// ======================================================================
 
 class _ReadyOrderCard extends StatelessWidget {
   final Order order;
@@ -555,7 +1241,10 @@ class _ReadyOrderCard extends StatelessWidget {
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: AppTheme.ready.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
+            decoration: BoxDecoration(
+              color: AppTheme.ready.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
             child: const Icon(Icons.check_circle, color: AppTheme.ready, size: 28),
           ),
           const SizedBox(width: 12),
@@ -563,20 +1252,39 @@ class _ReadyOrderCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Commande #${order.orderNumber} - Table ${order.tableNumber}',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
-                Text('${order.items.fold(0, (s, i) => s + i.quantity)} articles',
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                Text(
+                  'Commande #${order.orderNumber} - Table ${order.tableNumber}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                Text(
+                  '${order.items.fold(0, (s, i) => s + i.quantity)} articles',
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                ),
               ],
             ),
           ),
           Column(
             children: [
-              const Text('PRÊTE!', style: TextStyle(color: AppTheme.ready, fontWeight: FontWeight.w900, fontSize: 14)),
+              const Text(
+                'PRÊTE!',
+                style: TextStyle(
+                  color: AppTheme.ready,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 14,
+                ),
+              ),
               const SizedBox(height: 4),
               ElevatedButton(
-                onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.served),
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.ready, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                onPressed: () =>
+                    provider.updateOrderStatus(order.id, OrderStatus.served),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.ready,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
                 child: const Text('Servie', style: TextStyle(fontSize: 12)),
               ),
             ],
