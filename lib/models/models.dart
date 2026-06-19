@@ -98,6 +98,102 @@ class AppUser {
   );
 }
 
+// =================== STOCK LINK MODEL ===================
+/// Liaison entre un plat/menu et un produit du stock.
+/// stockLinks stocke cette liste dans le document Firestore du Product.
+class StockLink {
+  final String stockItemId;    // id du StockItem dans la collection 'stock'
+  final String stockItemName;  // nom dénormalisé pour l'affichage
+  final double quantityUsed;   // quantité déduite par portion vendue
+  final String unit;           // unité (pièce, portion, kg…)
+  final bool mandatory;        // si true : bloque la commande si stock insuffisant
+
+  const StockLink({
+    required this.stockItemId,
+    required this.stockItemName,
+    required this.quantityUsed,
+    required this.unit,
+    this.mandatory = true,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'stockItemId': stockItemId,
+    'stockItemName': stockItemName,
+    'quantityUsed': quantityUsed,
+    'unit': unit,
+    'mandatory': mandatory,
+  };
+
+  factory StockLink.fromMap(Map<String, dynamic> map) => StockLink(
+    stockItemId: map['stockItemId'] as String? ?? '',
+    stockItemName: map['stockItemName'] as String? ?? '',
+    quantityUsed: (map['quantityUsed'] as num?)?.toDouble() ?? 1,
+    unit: map['unit'] as String? ?? 'pièce',
+    mandatory: map['mandatory'] as bool? ?? true,
+  );
+}
+
+// =================== STOCK MOVEMENT MODEL ===================
+/// Historique des mouvements de stock générés par les commandes.
+enum StockMovementType {
+  sortieAutomatiqueCommande,   // déduction à la création de commande
+  retourAnnulationCommande,   // remise en stock lors d'annulation
+  ajustementModificationCommande, // différence lors d'une modification
+}
+
+class StockMovement {
+  final String id;
+  final String stockItemId;
+  final String stockItemName;
+  final StockMovementType type;
+  final double quantity;   // toujours positif ; le signe dépend du type
+  final String unit;
+  final String orderId;
+  final String menuId;
+  final String menuName;
+  final DateTime createdAt;
+  final String createdBy;
+
+  const StockMovement({
+    required this.id,
+    required this.stockItemId,
+    required this.stockItemName,
+    required this.type,
+    required this.quantity,
+    required this.unit,
+    required this.orderId,
+    required this.menuId,
+    required this.menuName,
+    required this.createdAt,
+    required this.createdBy,
+  });
+
+  String get typeLabel {
+    switch (type) {
+      case StockMovementType.sortieAutomatiqueCommande:
+        return 'sortie_automatique_commande';
+      case StockMovementType.retourAnnulationCommande:
+        return 'retour_annulation_commande';
+      case StockMovementType.ajustementModificationCommande:
+        return 'ajustement_modification_commande';
+    }
+  }
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'productId': stockItemId,
+    'productName': stockItemName,
+    'type': typeLabel,
+    'quantity': quantity,
+    'unit': unit,
+    'orderId': orderId,
+    'menuId': menuId,
+    'menuName': menuName,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'createdBy': createdBy,
+  };
+}
+
 // =================== PRODUCT MODEL ===================
 class Product {
   final String id;
@@ -111,6 +207,7 @@ class Product {
   int stockQuantity;
   int minStockAlert;
   Map<String, double> ingredients; // ingredient name -> quantity needed
+  List<StockLink> stockLinks;       // liaisons produits stock
 
   Product({
     required this.id,
@@ -124,24 +221,36 @@ class Product {
     this.stockQuantity = 100,
     this.minStockAlert = 10,
     Map<String, double>? ingredients,
-  }) : ingredients = ingredients ?? {};
+    List<StockLink>? stockLinks,
+  })  : ingredients = ingredients ?? {},
+        stockLinks = stockLinks ?? [];
+
+  /// true si au moins un lien stock est défini
+  bool get hasStockLinks => stockLinks.isNotEmpty;
 
   Map<String, dynamic> toMap() => {
     'id': id, 'name': name, 'category': category, 'price': price,
     'prepTime': prepTime, 'description': description, 'imageUrl': imageUrl,
     'isAvailable': isAvailable, 'stockQuantity': stockQuantity,
     'minStockAlert': minStockAlert, 'ingredients': ingredients,
+    'stockLinks': stockLinks.map((l) => l.toMap()).toList(),
   };
 
   factory Product.fromMap(Map<String, dynamic> map) => Product(
-    id: map['id'], name: map['name'], category: map['category'],
-    price: (map['price'] as num).toDouble(),
-    prepTime: (map['prepTime'] as num).toDouble(),
-    description: map['description'], imageUrl: map['imageUrl'],
-    isAvailable: map['isAvailable'] ?? true,
-    stockQuantity: map['stockQuantity'] ?? 100,
-    minStockAlert: map['minStockAlert'] ?? 10,
+    id: map['id'] as String? ?? '',
+    name: map['name'] as String? ?? '',
+    category: map['category'] as String? ?? 'Plats',
+    price: (map['price'] as num?)?.toDouble() ?? 0,
+    prepTime: (map['prepTime'] as num?)?.toDouble() ?? 0,
+    description: map['description'] as String?,
+    imageUrl: map['imageUrl'] as String?,
+    isAvailable: map['isAvailable'] as bool? ?? true,
+    stockQuantity: (map['stockQuantity'] as num?)?.toInt() ?? 0,
+    minStockAlert: (map['minStockAlert'] as num?)?.toInt() ?? 10,
     ingredients: Map<String, double>.from(map['ingredients'] ?? {}),
+    stockLinks: (map['stockLinks'] as List<dynamic>? ?? [])
+        .map((e) => StockLink.fromMap(e as Map<String, dynamic>))
+        .toList(),
   );
 }
 

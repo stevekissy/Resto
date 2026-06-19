@@ -246,20 +246,7 @@ class FirebaseService {
     return _db.collection('products').snapshots().map((snap) {
       final list = snap.docs.map((d) {
         try {
-          final data = d.data();
-          return Product(
-            id: d.id,
-            name: data['name'] as String? ?? '',
-            category: data['category'] as String? ?? 'Plats',
-            price: (data['price'] as num?)?.toDouble() ?? 0,
-            prepTime: (data['prepTime'] as num?)?.toDouble() ?? 0,
-            description: data['description'] as String?,
-            imageUrl: data['imageUrl'] as String?,
-            isAvailable: data['isAvailable'] as bool? ?? true,
-            stockQuantity: (data['stockQuantity'] as num?)?.toInt() ?? 0,
-            minStockAlert: (data['minStockAlert'] as num?)?.toInt() ?? 10,
-            ingredients: Map<String, double>.from(data['ingredients'] ?? {}),
-          );
+          return Product.fromMap({'id': d.id, ...d.data()});
         } catch (e) {
           debugPrint('[stream.products] doc ${d.id}: $e');
           return null;
@@ -494,6 +481,266 @@ class FirebaseService {
 
   Future<void> deleteStockItem(String itemId) async {
     await _db.collection('stock').doc(itemId).delete();
+  }
+
+  // =================== STOCK MOVEMENTS ===================
+
+  /// Enregistre un mouvement dans la collection stock_movements.
+  Future<void> addStockMovement(StockMovement movement) async {
+    await _db
+        .collection('stock_movements')
+        .doc(movement.id)
+        .set(movement.toMap());
+  }
+
+  // =================== STOCK DEDUCTION (Transaction Firestore) ===================
+
+  /// Vérifie si le stock est suffisant pour une liste d'articles.
+  /// Retourne la liste des noms de produits stock en rupture.
+  Future<List<String>> checkStockAvailability({
+    required List<OrderItem> items,
+    required List<Product> products,
+  }) async {
+    final Map<String, double> needed = {};
+
+    for (final item in items) {
+      final product = products.firstWhere(
+        (p) => p.id == item.productId,
+        orElse: () => Product(
+          id: '', name: '', category: '', price: 0, prepTime: 0,
+        ),
+      );
+      for (final link in product.stockLinks) {
+        needed[link.stockItemId] =
+            (needed[link.stockItemId] ?? 0) +
+            link.quantityUsed * item.quantity;
+      }
+    }
+
+    if (needed.isEmpty) return [];
+
+    final List<String> insufficient = [];
+    for (final entry in needed.entries) {
+      final doc = await _db.collection('stock').doc(entry.key).get();
+      if (!doc.exists) {
+        insufficient.add(entry.key);
+        continue;
+      }
+      final current =
+          (doc.data()?['currentQuantity'] as num?)?.toDouble() ?? 0;
+      if (current < entry.value) {
+        insufficient.add(
+            doc.data()?['name'] as String? ?? entry.key);
+      }
+    }
+    return insufficient;
+  }
+
+  /// Déduit le stock pour une liste d'articles de commande.
+  /// Utilise une transaction Firestore pour chaque produit stock touché.
+  /// Enregistre aussi les mouvements dans stock_movements.
+  Future<void> deductStockForOrder({
+    required Order order,
+    required List<Product> products,
+    required String createdBy,
+  }) async {
+    // Consolider les besoins par stockItemId
+    final Map<String, _StockNeed> needs = {};
+
+    for (final item in order.items) {
+      final product = products.firstWhere(
+        (p) => p.id == item.productId,
+        orElse: () => Product(
+          id: '', name: '', category: '', price: 0, prepTime: 0,
+        ),
+      );
+      for (final link in product.stockLinks) {
+        final qty = link.quantityUsed * item.quantity;
+        if (needs.containsKey(link.stockItemId)) {
+          needs[link.stockItemId]!.quantity += qty;
+        } else {
+          needs[link.stockItemId] = _StockNeed(
+            stockItemId: link.stockItemId,
+            stockItemName: link.stockItemName,
+            quantity: qty,
+            unit: link.unit,
+            menuId: item.productId,
+            menuName: item.productName,
+          );
+        }
+      }
+    }
+
+    if (needs.isEmpty) return;
+
+    // Transaction Firestore pour chaque produit stock
+    for (final need in needs.values) {
+      final ref = _db.collection('stock').doc(need.stockItemId);
+      await _db.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        if (!snap.exists) return;
+        final current =
+            (snap.data()?['currentQuantity'] as num?)?.toDouble() ?? 0;
+        final newQty = (current - need.quantity).clamp(0.0, double.infinity);
+        tx.update(ref, {
+          'currentQuantity': newQty,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      });
+
+      // Enregistrer le mouvement
+      final movId = _db.collection('stock_movements').doc().id;
+      await addStockMovement(StockMovement(
+        id: movId,
+        stockItemId: need.stockItemId,
+        stockItemName: need.stockItemName,
+        type: StockMovementType.sortieAutomatiqueCommande,
+        quantity: need.quantity,
+        unit: need.unit,
+        orderId: order.id,
+        menuId: need.menuId,
+        menuName: need.menuName,
+        createdAt: DateTime.now(),
+        createdBy: createdBy,
+      ));
+    }
+  }
+
+  /// Remet en stock les produits d’une commande annulée.
+  Future<void> restoreStockForOrder({
+    required Order order,
+    required List<Product> products,
+    required String createdBy,
+  }) async {
+    final Map<String, _StockNeed> needs = {};
+
+    for (final item in order.items) {
+      final product = products.firstWhere(
+        (p) => p.id == item.productId,
+        orElse: () => Product(
+          id: '', name: '', category: '', price: 0, prepTime: 0,
+        ),
+      );
+      for (final link in product.stockLinks) {
+        final qty = link.quantityUsed * item.quantity;
+        if (needs.containsKey(link.stockItemId)) {
+          needs[link.stockItemId]!.quantity += qty;
+        } else {
+          needs[link.stockItemId] = _StockNeed(
+            stockItemId: link.stockItemId,
+            stockItemName: link.stockItemName,
+            quantity: qty,
+            unit: link.unit,
+            menuId: item.productId,
+            menuName: item.productName,
+          );
+        }
+      }
+    }
+
+    if (needs.isEmpty) return;
+
+    for (final need in needs.values) {
+      final ref = _db.collection('stock').doc(need.stockItemId);
+      await _db.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        if (!snap.exists) return;
+        final current =
+            (snap.data()?['currentQuantity'] as num?)?.toDouble() ?? 0;
+        tx.update(ref, {
+          'currentQuantity': current + need.quantity,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      });
+
+      final movId = _db.collection('stock_movements').doc().id;
+      await addStockMovement(StockMovement(
+        id: movId,
+        stockItemId: need.stockItemId,
+        stockItemName: need.stockItemName,
+        type: StockMovementType.retourAnnulationCommande,
+        quantity: need.quantity,
+        unit: need.unit,
+        orderId: order.id,
+        menuId: need.menuId,
+        menuName: need.menuName,
+        createdAt: DateTime.now(),
+        createdBy: createdBy,
+      ));
+    }
+  }
+
+  /// Ajuste le stock lors d’une modification de commande.
+  /// Compare l’ancienne et la nouvelle liste d’articles et calcule le delta.
+  Future<void> adjustStockForOrderUpdate({
+    required Order oldOrder,
+    required List<OrderItem> newItems,
+    required List<Product> products,
+    required String createdBy,
+  }) async {
+    // Calculer delta par stockItemId (positif = remettre, négatif = déduire)
+    final Map<String, _StockDelta> deltas = {};
+
+    void accumulate(List<OrderItem> items, double sign) {
+      for (final item in items) {
+        final product = products.firstWhere(
+          (p) => p.id == item.productId,
+          orElse: () => Product(
+            id: '', name: '', category: '', price: 0, prepTime: 0,
+          ),
+        );
+        for (final link in product.stockLinks) {
+          final qty = link.quantityUsed * item.quantity * sign;
+          if (deltas.containsKey(link.stockItemId)) {
+            deltas[link.stockItemId]!.delta += qty;
+          } else {
+            deltas[link.stockItemId] = _StockDelta(
+              stockItemId: link.stockItemId,
+              stockItemName: link.stockItemName,
+              delta: qty,
+              unit: link.unit,
+              menuId: item.productId,
+              menuName: item.productName,
+            );
+          }
+        }
+      }
+    }
+
+    accumulate(oldOrder.items, 1);   // remettre les anciens
+    accumulate(newItems, -1);         // déduire les nouveaux
+
+    for (final d in deltas.values) {
+      if (d.delta.abs() < 0.001) continue; // pas de changement
+
+      final ref = _db.collection('stock').doc(d.stockItemId);
+      await _db.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        if (!snap.exists) return;
+        final current =
+            (snap.data()?['currentQuantity'] as num?)?.toDouble() ?? 0;
+        final newQty = (current + d.delta).clamp(0.0, double.infinity);
+        tx.update(ref, {
+          'currentQuantity': newQty,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      });
+
+      final movId = _db.collection('stock_movements').doc().id;
+      await addStockMovement(StockMovement(
+        id: movId,
+        stockItemId: d.stockItemId,
+        stockItemName: d.stockItemName,
+        type: StockMovementType.ajustementModificationCommande,
+        quantity: d.delta.abs(),
+        unit: d.unit,
+        orderId: oldOrder.id,
+        menuId: d.menuId,
+        menuName: d.menuName,
+        createdAt: DateTime.now(),
+        createdBy: createdBy,
+      ));
+    }
   }
 
   // =================== MESSAGES ===================
@@ -1064,4 +1311,41 @@ class FirebaseService {
       }
     }
   }
+}
+
+// ── Helpers privés pour les transactions stock ─────────────────────────────
+class _StockNeed {
+  final String stockItemId;
+  final String stockItemName;
+  double quantity;
+  final String unit;
+  final String menuId;
+  final String menuName;
+
+  _StockNeed({
+    required this.stockItemId,
+    required this.stockItemName,
+    required this.quantity,
+    required this.unit,
+    required this.menuId,
+    required this.menuName,
+  });
+}
+
+class _StockDelta {
+  final String stockItemId;
+  final String stockItemName;
+  double delta;
+  final String unit;
+  final String menuId;
+  final String menuName;
+
+  _StockDelta({
+    required this.stockItemId,
+    required this.stockItemName,
+    required this.delta,
+    required this.unit,
+    required this.menuId,
+    required this.menuName,
+  });
 }

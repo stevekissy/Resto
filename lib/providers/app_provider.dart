@@ -516,6 +516,25 @@ class AppProvider extends ChangeNotifier {
   }
 
   // =================== ORDER MANAGEMENT (Firestore) ===================
+  // ── Vérification stock avant création de commande ─────────────────────
+  /// Retourne la liste des noms produits stock insuffisants.
+  /// Seuls les liens obligatoires (mandatory=true) bloquent la commande.
+  Future<List<String>> checkStockForItems(List<OrderItem> items) async {
+    // Filtrer uniquement les produits avec des liens obligatoires
+    final filtered = items.where((item) {
+      final product = _products.firstWhere(
+        (p) => p.id == item.productId,
+        orElse: () => Product(id: '', name: '', category: '', price: 0, prepTime: 0),
+      );
+      return product.stockLinks.any((l) => l.mandatory);
+    }).toList();
+    if (filtered.isEmpty) return [];
+    return _firebase.checkStockAvailability(
+      items: filtered,
+      products: _products,
+    );
+  }
+
   Future<Order> createOrder({
     required String tableNumber,
     required List<OrderItem> items,
@@ -539,6 +558,16 @@ class AppProvider extends ChangeNotifier {
       isUrgent: isUrgent,
     );
     await _firebase.saveOrder(order);
+
+    // Déduction automatique du stock (fire-and-forget — non bloquant)
+    _firebase.deductStockForOrder(
+      order: order,
+      products: _products,
+      createdBy: _currentUser?.name ?? 'Inconnu',
+    ).catchError((e) {
+      debugPrint('[stock.deduct] Erreur déduction stock: $e');
+    });
+
     onNewOrder?.call(order);
     return order;
   }
@@ -555,6 +584,12 @@ class AppProvider extends ChangeNotifier {
     bool? isUrgent,
     double discount = 0,
   }) async {
+    // Récupérer l'ancienne commande pour le delta stock
+    final oldOrder = _orders.firstWhere(
+      (o) => o.id == orderId,
+      orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
+    );
+
     await _firebase.updateOrderItems(
       orderId: orderId,
       items: items,
@@ -566,6 +601,18 @@ class AppProvider extends ChangeNotifier {
       isUrgent: isUrgent,
       discount: discount,
     );
+
+    // Ajustement stock si la commande avait des items précédents
+    if (oldOrder.id.isNotEmpty) {
+      _firebase.adjustStockForOrderUpdate(
+        oldOrder: oldOrder,
+        newItems: items,
+        products: _products,
+        createdBy: _currentUser?.name ?? 'Inconnu',
+      ).catchError((e) {
+        debugPrint('[stock.adjust] Erreur ajustement stock: $e');
+      });
+    }
   }
 
   /// Annule une commande (orderStatus = cancelled)
@@ -574,6 +621,22 @@ class AppProvider extends ChangeNotifier {
     required String cancelReason,
   }) async {
     final cancelledBy = _currentUser?.name ?? 'Inconnu';
+
+    // Restaurer le stock avant l'annulation (on a encore les items en mémoire)
+    final order = _orders.firstWhere(
+      (o) => o.id == orderId,
+      orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
+    );
+    if (order.id.isNotEmpty) {
+      _firebase.restoreStockForOrder(
+        order: order,
+        products: _products,
+        createdBy: cancelledBy,
+      ).catchError((e) {
+        debugPrint('[stock.restore] Erreur restauration stock: $e');
+      });
+    }
+
     await _firebase.cancelOrder(
       orderId: orderId,
       cancelledBy: cancelledBy,
@@ -732,6 +795,19 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> updateProduct(Product product) async {
     await _firebase.updateProduct(product);
+  }
+
+  /// Met à jour uniquement les stockLinks d'un produit.
+  Future<void> updateProductStockLinks(
+      String productId, List<StockLink> links) async {
+    final p = _products.firstWhere(
+      (p) => p.id == productId,
+      orElse: () => Product(
+          id: '', name: '', category: '', price: 0, prepTime: 0),
+    );
+    if (p.id.isEmpty) return;
+    p.stockLinks = links;
+    await _firebase.updateProduct(p);
   }
 
   Future<void> deleteProduct(String id) async {

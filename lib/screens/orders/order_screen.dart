@@ -146,6 +146,18 @@ class _NewOrderTabState extends State<NewOrderTab> {
     }
 
     final provider = context.read<AppProvider>();
+
+    // ── Vérification stock avant validation ─────────────────────────────
+    final insufficient = await provider.checkStockForItems(_cartItems);
+    if (!mounted) return;
+
+    if (insufficient.isNotEmpty) {
+      // Afficher dialogue stock insuffisant
+      final confirmed = await _showStockWarningDialog(insufficient);
+      if (!mounted) return;
+      if (!confirmed) return; // admin n'a pas confirmé → annuler
+    }
+
     final order = await provider.createOrder(
       tableNumber: _tableController.text,
       items: List.from(_cartItems),
@@ -172,6 +184,109 @@ class _NewOrderTabState extends State<NewOrderTab> {
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
+
+  /// Dialogue stock insuffisant.
+  /// Retourne true si un admin/manager confirme quand même, false sinon.
+  Future<bool> _showStockWarningDialog(List<String> items) async {
+    final provider = context.read<AppProvider>();
+    final role = provider.currentUser?.role;
+    final canOverride =
+        role == UserRole.admin || role == UserRole.manager;
+
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.warning_amber_rounded,
+                    color: AppTheme.warning, size: 22),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Stock insuffisant',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Les produits suivants ont un stock insuffisant :',
+                  style: TextStyle(
+                      color: AppTheme.textSecondary, fontSize: 13),
+                ),
+                const SizedBox(height: 10),
+                ...items.map(
+                  (name) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.remove_circle_outline,
+                            color: AppTheme.error, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            name,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (canOverride) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.warning.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: AppTheme.warning.withValues(alpha: 0.4)),
+                    ),
+                    child: const Text(
+                      'En tant qu\'admin/manager, vous pouvez forcer la commande.',
+                      style: TextStyle(
+                          color: AppTheme.warning, fontSize: 12),
+                    ),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Contactez un admin ou un manager pour valider.',
+                    style: TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 12),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Annuler'),
+              ),
+              if (canOverride)
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.pop(context, true),
+                  icon: const Icon(Icons.warning_amber_rounded,
+                      size: 16),
+                  label: const Text('Forcer la commande'),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.warning,
+                      foregroundColor: Colors.black),
+                ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   @override

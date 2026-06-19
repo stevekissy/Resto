@@ -532,83 +532,429 @@ class _CategoryCard extends StatelessWidget {
   }
 }
 
+
 // =================== CARTE PRODUIT ===================
-class _ProductAdminCard extends StatelessWidget {
+class _ProductAdminCard extends StatefulWidget {
   final Product product;
   final AppProvider provider;
   final VoidCallback onEdit;
 
-  const _ProductAdminCard({required this.product, required this.provider, required this.onEdit});
+  const _ProductAdminCard(
+      {required this.product,
+      required this.provider,
+      required this.onEdit});
 
   @override
+  State<_ProductAdminCard> createState() => _ProductAdminCardState();
+}
+
+class _ProductAdminCardState extends State<_ProductAdminCard> {
+  @override
   Widget build(BuildContext context) {
+    final product = widget.product;
+    final provider = widget.provider;
     final isAvail = product.isAvailable && product.stockQuantity > 0;
+    final hasLinks = product.stockLinks.isNotEmpty;
+
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 10),
-      border: Border.all(color: isAvail ? AppTheme.success.withValues(alpha: 0.3) : AppTheme.error.withValues(alpha: 0.3)),
-      child: Row(
+      border: Border.all(
+          color: isAvail
+              ? AppTheme.success.withValues(alpha: 0.3)
+              : AppTheme.error.withValues(alpha: 0.3)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: isAvail ? AppTheme.success.withValues(alpha: 0.15) : AppTheme.error.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              isAvail ? Icons.check_circle : Icons.cancel,
-              color: isAvail ? AppTheme.success : AppTheme.error,
-              size: 22,
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isAvail
+                      ? AppTheme.success.withValues(alpha: 0.15)
+                      : AppTheme.error.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  isAvail ? Icons.check_circle : Icons.cancel,
+                  color: isAvail ? AppTheme.success : AppTheme.error,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(product.name,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14)),
+                    Text(product.category,
+                        style: const TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 11)),
+                    Row(
+                      children: [
+                        Text(
+                          '${product.price.toStringAsFixed(0)} F CFA',
+                          style: const TextStyle(
+                              color: AppTheme.primary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Stock: ${product.stockQuantity}',
+                          style: TextStyle(
+                            color: product.stockQuantity == 0
+                                ? AppTheme.error
+                                : product.stockQuantity < 5
+                                    ? AppTheme.warning
+                                    : AppTheme.success,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text('${product.prepTime.toInt()} min',
+                            style: const TextStyle(
+                                color: AppTheme.textSecondary,
+                                fontSize: 11)),
+                      ],
+                    ),
+                    if (hasLinks)
+                      Row(
+                        children: [
+                          const Icon(Icons.link,
+                              size: 11, color: AppTheme.primary),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${product.stockLinks.length} liaison(s) stock',
+                            style: const TextStyle(
+                                color: AppTheme.primary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+              Column(
+                children: [
+                  IconButton(
+                    onPressed: widget.onEdit,
+                    icon: const Icon(Icons.edit,
+                        color: AppTheme.primary, size: 18),
+                    padding: const EdgeInsets.all(6),
+                    constraints: const BoxConstraints(),
+                  ),
+                  IconButton(
+                    onPressed: () =>
+                        _showStockLinksDialog(context, product, provider),
+                    icon: Icon(
+                      Icons.link,
+                      color: hasLinks
+                          ? AppTheme.primary
+                          : AppTheme.textSecondary,
+                      size: 18,
+                    ),
+                    tooltip: 'Liaisons stock',
+                    padding: const EdgeInsets.all(6),
+                    constraints: const BoxConstraints(),
+                  ),
+                  IconButton(
+                    onPressed: () =>
+                        provider.toggleProductAvailability(product.id),
+                    icon: Icon(
+                      product.isAvailable
+                          ? Icons.visibility_off
+                          : Icons.visibility,
+                      color: product.isAvailable
+                          ? AppTheme.warning
+                          : AppTheme.success,
+                      size: 18,
+                    ),
+                    padding: const EdgeInsets.all(6),
+                    constraints: const BoxConstraints(),
+                  ),
+                  IconButton(
+                    onPressed: () => _confirmDelete(context, provider),
+                    icon: const Icon(Icons.delete_outline,
+                        color: AppTheme.error, size: 18),
+                    padding: const EdgeInsets.all(6),
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Dialogue gestion liaisons stock ─────────────────────────────────
+  void _showStockLinksDialog(
+      BuildContext context, Product product, AppProvider provider) {
+    List<StockLink> links = List.from(product.stockLinks);
+
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.link, color: AppTheme.primary, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Liaisons stock — ${product.name}',
+                  style: const TextStyle(fontSize: 14),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: AppTheme.primary.withValues(alpha: 0.2)),
+                    ),
+                    child: const Text(
+                      'Quand ce plat est vendu, ces produits seront déduits automatiquement du stock.',
+                      style: TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 11),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (links.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Text(
+                        'Aucune liaison définie',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 13),
+                      ),
+                    )
+                  else
+                    ...links.asMap().entries.map((entry) {
+                      final i = entry.key;
+                      final link = entry.value;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.surfaceLight,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color:
+                                  AppTheme.primary.withValues(alpha: 0.2)),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    link.stockItemName,
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13),
+                                  ),
+                                  Text(
+                                    '− ${link.quantityUsed} ${link.unit} par portion'
+                                    '${link.mandatory ? ' • obligatoire' : ' • optionnel'}',
+                                    style: const TextStyle(
+                                        color: AppTheme.textSecondary,
+                                        fontSize: 11),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () =>
+                                  setS(() => links.removeAt(i)),
+                              icon: const Icon(Icons.delete_outline,
+                                  color: AppTheme.error, size: 18),
+                              padding: const EdgeInsets.all(4),
+                              constraints: const BoxConstraints(),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final newLink = await _showAddStockLinkDialog(
+                            ctx, provider);
+                        if (newLink != null) {
+                          setS(() => links.add(newLink));
+                        }
+                      },
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('Ajouter un produit stock',
+                          style: TextStyle(fontSize: 13)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.primary,
+                        side: const BorderSide(color: AppTheme.primary),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Annuler')),
+            ElevatedButton(
+              onPressed: () async {
+                await provider.updateProductStockLinks(product.id, links);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Enregistrer'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Dialogue d'ajout d'une liaison vers un produit stock.
+  Future<StockLink?> _showAddStockLinkDialog(
+      BuildContext context, AppProvider provider) async {
+    if (provider.stockItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Aucun produit dans le stock'),
+            backgroundColor: AppTheme.warning),
+      );
+      return null;
+    }
+
+    StockItem selectedItem = provider.stockItems.first;
+    final qtyCtrl = TextEditingController(text: '1');
+    String unit = selectedItem.unit;
+    bool mandatory = true;
+
+    return showDialog<StockLink>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: const Text('Ajouter une liaison stock',
+              style: TextStyle(fontSize: 15)),
+          content: SingleChildScrollView(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Text(product.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                Text(product.category, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                DropdownButtonFormField<String>(
+                  value: selectedItem.id,
+                  style: const TextStyle(color: Colors.white),
+                  dropdownColor: AppTheme.cardBg,
+                  isExpanded: true,
+                  decoration:
+                      const InputDecoration(labelText: 'Produit stock'),
+                  items: provider.stockItems
+                      .map((s) => DropdownMenuItem(
+                            value: s.id,
+                            child: Text(s.name,
+                                overflow: TextOverflow.ellipsis),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setS(() {
+                    selectedItem = provider.stockItems
+                        .firstWhere((s) => s.id == v!);
+                    unit = selectedItem.unit;
+                  }),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: qtyCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Quantité utilisée par portion',
+                    suffixText: unit,
+                    suffixStyle:
+                        const TextStyle(color: AppTheme.primary),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: TextEditingController(text: unit),
+                  style: const TextStyle(color: Colors.white),
+                  decoration:
+                      const InputDecoration(labelText: 'Unité'),
+                  onChanged: (v) => setS(() => unit = v),
+                ),
+                const SizedBox(height: 10),
                 Row(
                   children: [
-                    Text('${product.price.toStringAsFixed(0)} F CFA', style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w600, fontSize: 12)),
-                    const SizedBox(width: 12),
-                    Text('Stock: ${product.stockQuantity}', style: TextStyle(
-                      color: product.stockQuantity == 0 ? AppTheme.error : product.stockQuantity < 5 ? AppTheme.warning : AppTheme.success,
-                      fontSize: 12, fontWeight: FontWeight.w600,
-                    )),
-                    const SizedBox(width: 12),
-                    Text('${product.prepTime.toInt()} min', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                    Switch(
+                      value: mandatory,
+                      onChanged: (v) => setS(() => mandatory = v),
+                      activeColor: AppTheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        mandatory
+                            ? 'Obligatoire (bloque si stock 0)'
+                            : 'Optionnel (commande autorisée)',
+                        style: TextStyle(
+                            color: mandatory
+                                ? AppTheme.primary
+                                : AppTheme.textSecondary,
+                            fontSize: 12),
+                      ),
+                    ),
                   ],
                 ),
               ],
             ),
           ),
-          Column(
-            children: [
-              IconButton(
-                onPressed: onEdit,
-                icon: const Icon(Icons.edit, color: AppTheme.primary, size: 18),
-                padding: const EdgeInsets.all(6),
-                constraints: const BoxConstraints(),
-              ),
-              IconButton(
-                onPressed: () => provider.toggleProductAvailability(product.id), // async fire-and-forget
-                icon: Icon(
-                  product.isAvailable ? Icons.visibility_off : Icons.visibility,
-                  color: product.isAvailable ? AppTheme.warning : AppTheme.success,
-                  size: 18,
-                ),
-                padding: const EdgeInsets.all(6),
-                constraints: const BoxConstraints(),
-              ),
-              IconButton(
-                onPressed: () => _confirmDelete(context, provider),
-                icon: const Icon(Icons.delete_outline, color: AppTheme.error, size: 18),
-                padding: const EdgeInsets.all(6),
-                constraints: const BoxConstraints(),
-              ),
-            ],
-          ),
-        ],
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Annuler')),
+            ElevatedButton(
+              onPressed: () {
+                final qty = double.tryParse(qtyCtrl.text) ?? 1;
+                if (qty <= 0) return;
+                Navigator.pop(
+                  ctx,
+                  StockLink(
+                    stockItemId: selectedItem.id,
+                    stockItemName: selectedItem.name,
+                    quantityUsed: qty,
+                    unit: unit.trim().isEmpty ? selectedItem.unit : unit.trim(),
+                    mandatory: mandatory,
+                  ),
+                );
+              },
+              child: const Text('Ajouter'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -618,15 +964,19 @@ class _ProductAdminCard extends StatelessWidget {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Supprimer le produit'),
-        content: Text('Êtes-vous sûr de supprimer "${product.name}" ?'),
+        content: Text(
+            'Êtes-vous sûr de supprimer "${widget.product.name}" ?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Annuler')),
           ElevatedButton(
             onPressed: () async {
-              await provider.deleteProduct(product.id);
+              await provider.deleteProduct(widget.product.id);
               if (context.mounted) Navigator.pop(context);
             },
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            style:
+                ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
             child: const Text('Supprimer'),
           ),
         ],
