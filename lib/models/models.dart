@@ -21,9 +21,10 @@ class AppUser {
   String phone;
   UserRole role;
   String? avatarUrl;
-  bool isActive;
+  bool isActive;   // alias Firestore : "active"   — l'employé est actif dans l'établissement
   bool isOnline;
-  bool hasAppAccess; // true = compte Firebase Auth créé, peut se connecter
+  bool canLogin;   // alias Firestore : "canLogin" — autorisé à se connecter à l'app
+  String createdBy;
   DateTime createdAt;
 
   AppUser({
@@ -35,9 +36,13 @@ class AppUser {
     this.avatarUrl,
     this.isActive = true,
     this.isOnline = false,
-    this.hasAppAccess = false,
+    this.canLogin = false,
+    this.createdBy = '',
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
+
+  /// Rétrocompatibilité — anciens documents Firestore utilisaient hasAppAccess
+  bool get hasAppAccess => canLogin;
 
   String get roleLabel {
     switch (role) {
@@ -62,18 +67,31 @@ class AppUser {
   Map<String, dynamic> toMap() => {
     'id': id, 'name': name, 'email': email, 'phone': phone,
     'role': role.index, 'avatarUrl': avatarUrl,
-    'isActive': isActive, 'isOnline': isOnline,
-    'hasAppAccess': hasAppAccess,
+    'active': isActive,      // Firestore field : "active"
+    'isActive': isActive,    // rétrocompatibilité anciens docs
+    'isOnline': isOnline,
+    'canLogin': canLogin,    // Firestore field : "canLogin"
+    'hasAppAccess': canLogin, // rétrocompatibilité anciens docs
+    'createdBy': createdBy,
     'createdAt': createdAt.millisecondsSinceEpoch,
   };
 
   factory AppUser.fromMap(Map<String, dynamic> map) => AppUser(
-    id: map['id'], name: map['name'], email: map['email'],
-    phone: map['phone'] ?? '', role: UserRole.values[map['role'] ?? 0],
-    avatarUrl: map['avatarUrl'], isActive: map['isActive'] ?? true,
-    isOnline: map['isOnline'] ?? false,
-    hasAppAccess: map['hasAppAccess'] ?? false,
-    createdAt: DateTime.fromMillisecondsSinceEpoch(map['createdAt'] ?? DateTime.now().millisecondsSinceEpoch),
+    id: map['id'] as String? ?? '',
+    name: map['name'] as String? ?? 'Utilisateur',
+    email: map['email'] as String? ?? '',
+    phone: map['phone'] as String? ?? '',
+    role: UserRole.values[(map['role'] as int?) ?? 0],
+    avatarUrl: map['avatarUrl'] as String?,
+    // "active" prioritaire sur "isActive" pour les nouveaux docs
+    isActive: (map['active'] as bool?) ?? (map['isActive'] as bool?) ?? true,
+    isOnline: map['isOnline'] as bool? ?? false,
+    // "canLogin" prioritaire sur "hasAppAccess" pour les nouveaux docs
+    canLogin: (map['canLogin'] as bool?) ?? (map['hasAppAccess'] as bool?) ?? false,
+    createdBy: map['createdBy'] as String? ?? '',
+    createdAt: map['createdAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(map['createdAt'] as int)
+        : DateTime.now(),
   );
 }
 

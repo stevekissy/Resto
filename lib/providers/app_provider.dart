@@ -201,28 +201,28 @@ class AppProvider extends ChangeNotifier {
         debugPrint('[AppProvider] checkExistingSession → aucune session active');
         return false;
       }
+      debugPrint('[AppProvider] ✅ Session Auth restaurée : ${fbUser.email}');
 
-      debugPrint('[AppProvider] ✅ Session restaurée : ${fbUser.email}');
+      // Lire le profil Firestore pour vérifier active + canLogin
+      final firestoreUser = await _firebase.getUserByUid(fbUser.uid);
 
-      // Profil immédiat depuis l'email (pas d'attente Firestore)
-      final role = _roleFromEmail(fbUser.email ?? '');
-      final displayName = _displayNameFromEmail(fbUser.email ?? '');
-      _currentUser = AppUser(
-        id: fbUser.uid,
-        name: displayName,
-        email: fbUser.email ?? '',
-        phone: '',
-        role: role,
-      );
-
-      // Enrichir depuis Firestore en arrière-plan (non bloquant)
-      _firebase.ensureUserDoc(fbUser.uid, fbUser.email ?? '', role, displayName)
-        .then((firestoreUser) {
-          _currentUser = firestoreUser;
-          notifyListeners();
-          debugPrint('[AppProvider] Profil Firestore chargé : ${firestoreUser.name}');
-        })
-        .catchError((e) => debugPrint('[AppProvider] ensureUserDoc (bg): $e'));
+      if (firestoreUser != null) {
+        // Vérification sécurité : active + canLogin obligatoires
+        if (!firestoreUser.isActive || !firestoreUser.canLogin) {
+          await _firebase.signOut();
+          debugPrint('[AppProvider] Session refusée : active=${firestoreUser.isActive} canLogin=${firestoreUser.canLogin}');
+          return false;
+        }
+        _currentUser = firestoreUser;
+      } else {
+        // Doc absent — créer avec rôle déduit de l'email
+        final role = _roleFromEmail(fbUser.email ?? '');
+        final displayName = _displayNameFromEmail(fbUser.email ?? '');
+        final newUser = await _firebase.ensureUserDoc(
+          fbUser.uid, fbUser.email ?? '', role, displayName,
+        );
+        _currentUser = newUser;
+      }
 
       // Démarrer les streams Firestore temps réel
       _startFirebaseStreams();
@@ -260,25 +260,47 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1. Authentification Firebase
+      // ÉTAPE 1 — Authentification Firebase Auth
       final credential = await _firebase.signIn(email, password);
       if (credential?.user == null) throw Exception('Aucun utilisateur retourné par Firebase');
 
       final uid  = credential!.user!.uid;
       final mail = credential.user!.email ?? email;
 
-      // 2. Rôle déduit de l'email (profil immédiat sans attendre Firestore)
-      final role = _roleFromEmail(mail);
-      final displayName = _displayNameFromEmail(mail);
-      _currentUser = AppUser(id: uid, name: displayName, email: mail, phone: '', role: role);
-      notifyListeners(); // UI réactive immédiatement
+      // ÉTAPE 2 — Lire le profil Firestore (nécessaire pour vérifier active + canLogin)
+      final firestoreUser = await _firebase.getUserByUid(uid);
 
-      // 3. S'assurer que le doc Firestore existe (crée si absent)
-      final firestoreUser = await _firebase.ensureUserDoc(uid, mail, role, displayName);
-      _currentUser = firestoreUser;
-      notifyListeners();
+      if (firestoreUser != null) {
+        // VÉRIFICATION SÉCURITÉ 1 : active = true obligatoire
+        if (!firestoreUser.isActive) {
+          await _firebase.signOut(); // Déconnecter immédiatement
+          _errorMessage = 'Accès non autorisé. Contactez l\'administrateur.';
+          _isLoading = false;
+          notifyListeners();
+          return false;
+        }
+        // VÉRIFICATION SÉCURITÉ 2 : canLogin = true obligatoire
+        if (!firestoreUser.canLogin) {
+          await _firebase.signOut(); // Déconnecter immédiatement
+          _errorMessage = 'Accès non autorisé. Contactez l\'administrateur.';
+          _isLoading = false;
+          notifyListeners();
+          return false;
+        }
+        // ✅ Tout est valide — utiliser le profil Firestore complet
+        _currentUser = firestoreUser;
+      } else {
+        // Document Firestore absent (utilisateur créé directement dans Auth console)
+        // Créer le doc automatiquement avec les permissions par défaut
+        final role = _roleFromEmail(mail);
+        final displayName = _displayNameFromEmail(mail);
+        final newUser = await _firebase.ensureUserDoc(uid, mail, role, displayName);
+        _currentUser = newUser;
+      }
 
-      // 4. Démarrer les streams temps réel
+      notifyListeners(); // UI réactive
+
+      // ÉTAPE 3 — Démarrer les streams temps réel
       _startFirebaseStreams();
 
       _isLoading = false;
@@ -291,7 +313,7 @@ class AppProvider extends ChangeNotifier {
       _errorMessage = _mapAuthError(e.toString());
       _isLoading = false;
       notifyListeners();
-      return false; // Ne propage JAMAIS l'exception
+      return false;
     }
   }
 
@@ -860,12 +882,13 @@ class AppProvider extends ChangeNotifier {
   // =================== GESTION UTILISATEURS ADMIN ===================
 
   /// CAS 1 — Personnel simple : Firestore uniquement, pas de compte Auth.
-  /// L'employé n'a PAS accès à l'application (hasAppAccess = false).
+  /// canLogin = false — l'employé ne peut pas se connecter.
   Future<AppUser> addStaff({
     required String name,
     required String email,
     required String phone,
     required UserRole role,
+    bool isActive = true,
   }) async {
     final createdBy = _currentUser?.name ?? 'Admin';
     final newUser = await _firebase.addStaffOnly(
@@ -873,14 +896,14 @@ class AppProvider extends ChangeNotifier {
       email: email,
       phone: phone,
       role: role,
+      isActive: isActive,
       createdBy: createdBy,
     );
-    // Le stream Firestore met _users à jour automatiquement
     return newUser;
   }
 
   /// CAS 2 — Utilisateur avec accès application.
-  /// Crée le compte Firebase Auth PUIS le document Firestore.
+  /// Auth-first : createUserWithEmailAndPassword PUIS Firestore.
   /// Si Auth échoue → exception propagée (pas de doc Firestore créé).
   Future<AppUser> addUser({
     required String name,
@@ -888,6 +911,7 @@ class AppProvider extends ChangeNotifier {
     required String password,
     required String phone,
     required UserRole role,
+    bool isActive = true,
   }) async {
     final createdBy = _currentUser?.name ?? 'Admin';
     final newUser = await _firebase.createUserWithAuth(
@@ -896,9 +920,9 @@ class AppProvider extends ChangeNotifier {
       password: password,
       phone: phone,
       role: role,
+      isActive: isActive,
       createdBy: createdBy,
     );
-    // Le stream Firestore met _users à jour automatiquement
     return newUser;
   }
 

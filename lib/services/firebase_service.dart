@@ -72,86 +72,81 @@ class FirebaseService {
 
   Future<void> signOut() async => await _auth.signOut();
 
-  /// CAS 1 — Personnel simple : Firestore uniquement, pas de compte Auth.
-  /// L'employé n'a pas accès à l'application (hasAppAccess = false).
+  // ─────────────────────────────────────────────────────────────────
+  // CAS 1 — Personnel sans accès : Firestore uniquement, pas de Auth.
+  // ─────────────────────────────────────────────────────────────────
   Future<AppUser> addStaffOnly({
     required String name,
     required String email,
     required String phone,
     required UserRole role,
+    required bool isActive,
     required String createdBy,
   }) async {
-    final uid = _db.collection('users').doc().id; // ID aléatoire Firestore
-    final newUser = AppUser(
-      id: uid,
-      name: name,
-      email: email.trim(),
-      phone: phone.trim(),
-      role: role,
-      isActive: true,
-      hasAppAccess: false,
-    );
+    final uid = _db.collection('users').doc().id;
     await _db.collection('users').doc(uid).set({
       'id': uid,
-      'name': name,
+      'name': name.trim(),
       'email': email.trim(),
       'phone': phone.trim(),
       'role': role.index,
-      'isActive': true,
+      'active': isActive,
+      'isActive': isActive,     // rétrocompatibilité
+      'canLogin': false,
+      'hasAppAccess': false,    // rétrocompatibilité
       'isOnline': false,
-      'hasAppAccess': false,
-      'createdAt': FieldValue.serverTimestamp(),
       'createdBy': createdBy,
+      'createdAt': FieldValue.serverTimestamp(),
     });
-    debugPrint('[FirebaseService] ✅ Personnel créé Firestore uniquement : $email ($uid)');
-    return newUser;
+    debugPrint('[FirebaseService] ✅ Personnel Firestore-only : $email ($uid)');
+    return AppUser(
+      id: uid, name: name.trim(), email: email.trim(),
+      phone: phone.trim(), role: role,
+      isActive: isActive, canLogin: false, createdBy: createdBy,
+    );
   }
 
-  /// CAS 2 — Utilisateur avec accès application : Auth PUIS Firestore.
-  /// - Si Auth échoue  → exception propagée, aucun doc Firestore créé.
-  /// - Si Firestore échoue après Auth → rollback impossible côté Auth (limitation Firebase)
-  ///   mais l'exception est propagée pour affichage clair dans l'UI.
-  /// Retourne l'AppUser créé avec hasAppAccess = true.
+  // ─────────────────────────────────────────────────────────────────
+  // CAS 2 — Utilisateur avec accès : Auth-first PUIS Firestore.
+  // Auth échoue → exception propagée, aucun doc Firestore créé.
+  // ─────────────────────────────────────────────────────────────────
   Future<AppUser> createUserWithAuth({
     required String name,
     required String email,
     required String password,
     required String phone,
     required UserRole role,
+    required bool isActive,
     required String createdBy,
   }) async {
-    // ÉTAPE 1 — Créer le compte Firebase Auth
+    // ÉTAPE 1 — Firebase Authentication
     final credential = await _auth.createUserWithEmailAndPassword(
       email: email.trim(),
       password: password,
     );
     final uid = credential.user!.uid;
 
-    // ÉTAPE 2 — Créer le document Firestore (uniquement si Auth a réussi)
-    final newUser = AppUser(
-      id: uid,
-      name: name,
-      email: email.trim(),
-      phone: phone.trim(),
-      role: role,
-      isActive: true,
-      hasAppAccess: true,
-    );
+    // ÉTAPE 2 — Document Firestore (uid Firebase comme ID)
     await _db.collection('users').doc(uid).set({
       'id': uid,
-      'name': name,
+      'name': name.trim(),
       'email': email.trim(),
       'phone': phone.trim(),
       'role': role.index,
-      'isActive': true,
+      'active': isActive,
+      'isActive': isActive,     // rétrocompatibilité
+      'canLogin': true,
+      'hasAppAccess': true,     // rétrocompatibilité
       'isOnline': false,
-      'hasAppAccess': true,
-      'createdAt': FieldValue.serverTimestamp(),
       'createdBy': createdBy,
+      'createdAt': FieldValue.serverTimestamp(),
     });
-
-    debugPrint('[FirebaseService] ✅ Utilisateur créé Auth+Firestore : $email ($uid)');
-    return newUser;
+    debugPrint('[FirebaseService] ✅ Utilisateur Auth+Firestore : $email ($uid)');
+    return AppUser(
+      id: uid, name: name.trim(), email: email.trim(),
+      phone: phone.trim(), role: role,
+      isActive: isActive, canLogin: true, createdBy: createdBy,
+    );
   }
 
   /// Lecture synchrone — peut retourner null brièvement au démarrage Web.
@@ -204,8 +199,12 @@ class FirebaseService {
     phone: d['phone'] as String? ?? '',
     role: UserRole.values[(d['role'] as int?) ?? 0],
     avatarUrl: d['avatarUrl'] as String?,
-    isActive: d['isActive'] as bool? ?? true,
+    // "active" prioritaire sur "isActive" (nouveaux docs)
+    isActive: (d['active'] as bool?) ?? (d['isActive'] as bool?) ?? true,
     isOnline: d['isOnline'] as bool? ?? false,
+    // "canLogin" prioritaire sur "hasAppAccess" (nouveaux docs)
+    canLogin: (d['canLogin'] as bool?) ?? (d['hasAppAccess'] as bool?) ?? false,
+    createdBy: d['createdBy'] as String? ?? '',
     createdAt: _toDateTime(d['createdAt']),
   );
 

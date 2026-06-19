@@ -93,6 +93,7 @@ class _PersonnelTab extends StatelessWidget {
     final passwordCtrl = TextEditingController();
     UserRole role = UserRole.server;
     bool hasAppAccess    = false; // toggle : accès application
+    bool isActive        = true;  // toggle : employé actif
     bool obscurePassword = true;
     String? errorMsg;
 
@@ -230,6 +231,48 @@ class _PersonnelTab extends StatelessWidget {
                     ),
                   ),
                 ],
+                // Toggle Actif
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isActive
+                        ? AppTheme.success.withValues(alpha: 0.1)
+                        : AppTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isActive
+                          ? AppTheme.success.withValues(alpha: 0.4)
+                          : Colors.white12,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isActive ? Icons.check_circle_outline : Icons.cancel_outlined,
+                        color: isActive ? AppTheme.success : AppTheme.textSecondary,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          isActive ? 'Actif' : 'Inactif',
+                          style: TextStyle(
+                            color: isActive ? AppTheme.success : AppTheme.textSecondary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      Switch(
+                        value: isActive,
+                        activeColor: AppTheme.success,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        onChanged: (v) => setS(() => isActive = v),
+                      ),
+                    ],
+                  ),
+                ),
                 if (errorMsg != null) ...[
                   const SizedBox(height: 8),
                   Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 12)),
@@ -269,7 +312,8 @@ class _PersonnelTab extends StatelessWidget {
                   try {
                     await provider.addUser(
                       name: name, email: email,
-                      password: password, phone: phone, role: role,
+                      password: password, phone: phone,
+                      role: role, isActive: isActive,
                     );
                     if (ctx.mounted) {
                       Navigator.pop(ctx);
@@ -286,12 +330,13 @@ class _PersonnelTab extends StatelessWidget {
                   setS(() => errorMsg = null);
                   try {
                     await provider.addStaff(
-                      name: name, email: email, phone: phone, role: role,
+                      name: name, email: email, phone: phone,
+                      role: role, isActive: isActive,
                     );
                     if (ctx.mounted) {
                       Navigator.pop(ctx);
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Personnel ajouté (sans accès application)'),
+                        content: Text('Personnel enregistré sans accès de connexion'),
                         backgroundColor: AppTheme.primary,
                       ));
                     }

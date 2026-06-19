@@ -531,7 +531,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   final _phoneCtrl    = TextEditingController();
   final _passwordCtrl = TextEditingController();
   UserRole _selectedRole = UserRole.server;
-  bool _hasAppAccess = false;
+  bool _canLogin  = false; // autorise la connexion (Firebase Auth)
+  bool _isActive  = true;  // employé actif dans l'établissement
   bool _obscure = true;
   String? _errorMsg;
 
@@ -545,7 +546,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       _emailCtrl.text = widget.user!.email;
       _phoneCtrl.text = widget.user!.phone;
       _selectedRole   = widget.user!.role;
-      _hasAppAccess   = widget.user!.hasAppAccess;
+      _canLogin       = widget.user!.canLogin;
+      _isActive       = widget.user!.isActive;
     }
   }
 
@@ -648,16 +650,16 @@ class _UserFormDialogState extends State<_UserFormDialog> {
 
             // ---- CAS CRÉATION uniquement ----
             if (!isEditing) ...[
-              // Toggle accès application
+              // Toggle Autoriser connexion
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: _hasAppAccess
+                  color: _canLogin
                       ? AppTheme.primary.withValues(alpha: 0.12)
                       : AppTheme.cardBg,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color: _hasAppAccess
+                    color: _canLogin
                         ? AppTheme.primary.withValues(alpha: 0.4)
                         : Colors.white12,
                   ),
@@ -665,8 +667,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                 child: Row(
                   children: [
                     Icon(
-                      _hasAppAccess ? Icons.lock_open : Icons.lock_outline,
-                      color: _hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                      _canLogin ? Icons.lock_open : Icons.lock_outline,
+                      color: _canLogin ? AppTheme.primary : AppTheme.textSecondary,
                       size: 18,
                     ),
                     const SizedBox(width: 10),
@@ -675,19 +677,19 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Accès application',
+                            'Autoriser connexion',
                             style: TextStyle(
-                              color: _hasAppAccess ? AppTheme.textPrimary : AppTheme.textSecondary,
+                              color: _canLogin ? AppTheme.textPrimary : AppTheme.textSecondary,
                               fontWeight: FontWeight.w600,
                               fontSize: 13,
                             ),
                           ),
                           Text(
-                            _hasAppAccess
+                            _canLogin
                                 ? 'Compte Firebase Auth créé'
                                 : "Cet employé n'a pas d'accès de connexion",
                             style: TextStyle(
-                              color: _hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                              color: _canLogin ? AppTheme.primary : AppTheme.textSecondary,
                               fontSize: 11,
                             ),
                           ),
@@ -695,19 +697,61 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                       ),
                     ),
                     Switch(
-                      value: _hasAppAccess,
+                      value: _canLogin,
                       activeColor: AppTheme.primary,
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       onChanged: (v) => setState(() {
-                        _hasAppAccess = v;
+                        _canLogin = v;
                         if (!v) _passwordCtrl.clear();
                       }),
                     ),
                   ],
                 ),
               ),
-              // Mot de passe — visible uniquement si accès activé
-              if (_hasAppAccess) ...[
+              // Toggle Actif
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _isActive
+                      ? AppTheme.success.withValues(alpha: 0.1)
+                      : AppTheme.cardBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: _isActive
+                        ? AppTheme.success.withValues(alpha: 0.4)
+                        : Colors.white12,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _isActive ? Icons.check_circle_outline : Icons.cancel_outlined,
+                      color: _isActive ? AppTheme.success : AppTheme.textSecondary,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _isActive ? 'Actif' : 'Inactif',
+                        style: TextStyle(
+                          color: _isActive ? AppTheme.success : AppTheme.textSecondary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    Switch(
+                      value: _isActive,
+                      activeColor: AppTheme.success,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onChanged: (v) => setState(() => _isActive = v),
+                    ),
+                  ],
+                ),
+              ),
+              // Mot de passe — visible uniquement si connexion autorisée
+              if (_canLogin) ...[
                 const SizedBox(height: 12),
                 TextField(
                   controller: _passwordCtrl,
@@ -737,15 +781,17 @@ class _UserFormDialogState extends State<_UserFormDialog> {
 
             // ---- Bandeau info en mode ÉDITION ----
             if (isEditing) ...[
+              const SizedBox(height: 4),
+              // Bandeau connexion
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: widget.user!.hasAppAccess
+                  color: widget.user!.canLogin
                       ? AppTheme.primary.withValues(alpha: 0.1)
                       : AppTheme.cardBg,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color: widget.user!.hasAppAccess
+                    color: widget.user!.canLogin
                         ? AppTheme.primary.withValues(alpha: 0.3)
                         : Colors.white12,
                   ),
@@ -753,17 +799,50 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                 child: Row(
                   children: [
                     Icon(
-                      widget.user!.hasAppAccess ? Icons.lock_open : Icons.lock_outline,
-                      color: widget.user!.hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                      widget.user!.canLogin ? Icons.lock_open : Icons.lock_outline,
+                      color: widget.user!.canLogin ? AppTheme.primary : AppTheme.textSecondary,
                       size: 16,
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      widget.user!.hasAppAccess
-                          ? "A accès à l'application"
+                      widget.user!.canLogin
+                          ? "Connexion autorisée"
                           : "Cet employé n'a pas d'accès de connexion",
                       style: TextStyle(
-                        color: widget.user!.hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                        color: widget.user!.canLogin ? AppTheme.primary : AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Bandeau actif/inactif
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: widget.user!.isActive
+                      ? AppTheme.success.withValues(alpha: 0.1)
+                      : AppTheme.cardBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: widget.user!.isActive
+                        ? AppTheme.success.withValues(alpha: 0.3)
+                        : Colors.white12,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      widget.user!.isActive ? Icons.check_circle_outline : Icons.cancel_outlined,
+                      color: widget.user!.isActive ? AppTheme.success : AppTheme.textSecondary,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      widget.user!.isActive ? 'Employé actif' : 'Employé inactif',
+                      style: TextStyle(
+                        color: widget.user!.isActive ? AppTheme.success : AppTheme.textSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -811,11 +890,11 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                   backgroundColor: AppTheme.success,
                 ),
               );
-            } else if (_hasAppAccess) {
-              // CAS 2 — Accès application : mot de passe obligatoire
+            } else if (_canLogin) {
+              // CAS 2 — Connexion autorisée : mot de passe obligatoire
               final password = _passwordCtrl.text;
               if (password.isEmpty) {
-                setState(() => _errorMsg = "Le mot de passe est obligatoire pour l'accès application.");
+                setState(() => _errorMsg = "Le mot de passe est obligatoire pour autoriser la connexion.");
                 return;
               }
               if (password.length < 6) {
@@ -825,8 +904,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
               setState(() => _errorMsg = null);
               try {
                 await provider.addUser(
-                  name: name, email: email,
-                  password: password, phone: phone, role: _selectedRole,
+                  name: name, email: email, password: password,
+                  phone: phone, role: _selectedRole, isActive: _isActive,
                 );
                 if (!context.mounted) return;
                 Navigator.pop(context);
@@ -844,13 +923,14 @@ class _UserFormDialogState extends State<_UserFormDialog> {
               setState(() => _errorMsg = null);
               try {
                 await provider.addStaff(
-                  name: name, email: email, phone: phone, role: _selectedRole,
+                  name: name, email: email, phone: phone,
+                  role: _selectedRole, isActive: _isActive,
                 );
                 if (!context.mounted) return;
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Personnel ajouté (sans accès application)'),
+                    content: Text('Personnel enregistré sans accès de connexion'),
                     backgroundColor: AppTheme.primary,
                   ),
                 );
