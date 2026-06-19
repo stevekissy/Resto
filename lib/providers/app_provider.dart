@@ -27,6 +27,7 @@ class AppProvider extends ChangeNotifier {
   StreamSubscription? _subMessages;
   StreamSubscription? _subSuppliers;
   StreamSubscription? _subSupplierOrders;
+  StreamSubscription? _subSupplierPayments;
   StreamSubscription? _subAttendances;
   StreamSubscription? _subDailyCharges;
   StreamSubscription? _subPermissions;
@@ -93,10 +94,37 @@ class AppProvider extends ChangeNotifier {
 
   // =================== SUPPLIERS ===================
   List<Supplier> _suppliers = [];
-  List<Supplier> get suppliers => _suppliers;
+  /// Uniquement les fournisseurs actifs (non soft-deleted)
+  List<Supplier> get suppliers => _suppliers.where((s) => s.active).toList();
+  /// Tous les fournisseurs (y compris désactivés) pour les références
+  List<Supplier> get allSuppliers => _suppliers;
 
   List<SupplierOrder> _supplierOrders = [];
   List<SupplierOrder> get supplierOrders => _supplierOrders;
+
+  // Filtres commandes
+  List<SupplierOrder> get paidOrders =>
+      _supplierOrders.where((o) => o.paymentStatus == SupplierPaymentStatus.paid).toList();
+  List<SupplierOrder> get partialOrders =>
+      _supplierOrders.where((o) => o.paymentStatus == SupplierPaymentStatus.partial).toList();
+  List<SupplierOrder> get unpaidOrders =>
+      _supplierOrders.where((o) => o.paymentStatus == SupplierPaymentStatus.unpaid).toList();
+  List<SupplierOrder> get overdueOrders =>
+      _supplierOrders.where((o) => o.isOverdue).toList();
+
+  // Totaux commandes
+  double get totalOrdersAmount =>
+      _supplierOrders.fold(0, (s, o) => s + o.totalAmount);
+  double get totalPaidAmount =>
+      _supplierOrders.fold(0, (s, o) => s + o.paidAmount);
+  double get totalRemainingAmount =>
+      _supplierOrders.fold(0, (s, o) => s + o.remainingAmount);
+
+  // Paiements
+  List<SupplierPayment> _supplierPayments = [];
+  List<SupplierPayment> get supplierPayments => _supplierPayments;
+  List<SupplierPayment> paymentsForOrder(String orderId) =>
+      _supplierPayments.where((p) => p.supplierOrderId == orderId).toList();
 
   // =================== CATEGORIES PERSONNALISÉES ===================
   List<String> _customCategories = ['Plats', 'Accompagnements', 'Boissons', 'Desserts', 'Entrées', 'Snacks'];
@@ -413,6 +441,11 @@ class AppProvider extends ChangeNotifier {
       onError: (e) { debugPrint('[stream.supplierOrders] ERREUR: $e'); },
       cancelOnError: false,
     );
+    _subSupplierPayments = _firebase.streamSupplierPayments().listen(
+      (list) { _supplierPayments = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.supplier_payments] ERREUR: $e'); },
+      cancelOnError: false,
+    );
     _subAttendances = _firebase.streamAttendances().listen(
       (list) {
         // Attendances peuvent être vides — on accepte []
@@ -448,6 +481,7 @@ class AppProvider extends ChangeNotifier {
     _subMessages?.cancel();
     _subSuppliers?.cancel();
     _subSupplierOrders?.cancel();
+    _subSupplierPayments?.cancel();
     _subAttendances?.cancel();
     _subDailyCharges?.cancel();
     _subPermissions?.cancel();
@@ -464,7 +498,7 @@ class AppProvider extends ChangeNotifier {
     await _firebase.signOut().catchError((e) => debugPrint('[logout] $e'));
     _currentUser = null;
     _users = []; _orders = []; _products = []; _stockItems = [];
-    _suppliers = []; _supplierOrders = []; _messages = []; _attendances = [];
+    _suppliers = []; _supplierOrders = []; _supplierPayments = []; _messages = []; _attendances = [];
     _charges = [];
     notifyListeners();
   }
@@ -476,7 +510,7 @@ class AppProvider extends ChangeNotifier {
     _stopFirebaseStreams();
     _currentUser = null;
     _users = []; _orders = []; _products = []; _stockItems = [];
-    _suppliers = []; _supplierOrders = []; _messages = []; _attendances = [];
+    _suppliers = []; _supplierOrders = []; _supplierPayments = []; _messages = []; _attendances = [];
     _charges = [];
     notifyListeners();
   }
@@ -815,25 +849,68 @@ class AppProvider extends ChangeNotifier {
     await _firebase.updateSupplier(supplier);
   }
 
-  Future<void> deleteSupplier(String id) async {
-    await _firebase.deleteSupplier(id);
+  /// Supprime ou désactive un fournisseur selon son historique de commandes.
+  Future<void> deleteOrDeactivateSupplier(String id) async {
+    final hasOrders = await _firebase.supplierHasOrders(id);
+    if (hasOrders) {
+      // Soft-delete : conserver l'historique
+      final deletedBy = _currentUser?.name ?? 'Inconnu';
+      await _firebase.softDeleteSupplier(id, deletedBy);
+    } else {
+      // Hard-delete : aucun historique
+      await _firebase.hardDeleteSupplier(id);
+    }
   }
 
   Future<void> addSupplierOrder(SupplierOrder order) async {
     await _firebase.saveSupplierOrder(order);
   }
 
-  Future<void> updateSupplierOrderPayment(String id, double amount, String method) async {
-    final order = _supplierOrders.firstWhere((o) => o.id == id, orElse: () => SupplierOrder(id: '', supplierId: '', supplierName: '', items: [], totalAmount: 0, paidAmount: 0, paymentStatus: SupplierPaymentStatus.pending, paymentMethod: '', orderDate: DateTime.now()));
+  /// Ajoute un paiement partiel ou total sur une commande fournisseur.
+  Future<void> addSupplierPayment({
+    required String supplierOrderId,
+    required String supplierId,
+    required double amount,
+    required String paymentMethod,
+    required DateTime paymentDate,
+    String? note,
+  }) async {
+    final order = _supplierOrders.firstWhere(
+      (o) => o.id == supplierOrderId,
+      orElse: () => SupplierOrder(
+        id: '', supplierId: '', supplierName: '',
+        items: [], totalAmount: 0,
+      ),
+    );
     if (order.id.isEmpty) return;
-    order.paidAmount += amount;
-    order.paymentMethod = method;
-    if (order.paidAmount >= order.totalAmount) {
-      order.paymentStatus = SupplierPaymentStatus.paid;
-    } else {
-      order.paymentStatus = SupplierPaymentStatus.partial;
-    }
-    await _firebase.updateSupplierOrder(order);
+
+    final payment = SupplierPayment(
+      id: _uuid.v4(),
+      supplierOrderId: supplierOrderId,
+      supplierId: supplierId,
+      amount: amount,
+      paymentMethod: paymentMethod,
+      paymentDate: paymentDate,
+      note: note,
+      createdAt: DateTime.now(),
+      createdBy: _currentUser?.name ?? 'Inconnu',
+    );
+
+    await _firebase.addSupplierPayment(payment: payment, order: order);
+  }
+
+  // Conserve la méthode historique pour rétrocompat (redirige vers addSupplierPayment)
+  Future<void> updateSupplierOrderPayment(String id, double amount, String method) async {
+    await addSupplierPayment(
+      supplierOrderId: id,
+      supplierId: _supplierOrders.firstWhere(
+        (o) => o.id == id,
+        orElse: () => SupplierOrder(id: '', supplierId: '', supplierName: '', items: [], totalAmount: 0),
+      ).supplierId,
+      amount: amount,
+      paymentMethod: method,
+      paymentDate: DateTime.now(),
+    );
   }
 
   // =================== STATISTICS ===================

@@ -11,7 +11,8 @@ enum UserRole { admin, manager, cashier, kitchen, server, stockManager }
 enum StockAlertType { lowStock, outOfStock, expired }
 enum MessageType { text, image, file, call }
 enum AttendanceType { morning, evening }
-enum SupplierPaymentStatus { pending, partial, paid }
+// unpaid = non payé (ancien 'pending' — rétrocompat index 0)
+enum SupplierPaymentStatus { unpaid, partial, paid }
 
 // =================== USER MODEL ===================
 class AppUser {
@@ -519,6 +520,10 @@ class Supplier {
   String phone;
   String? email;
   String? address;
+  String? productOrService;   // Produit/Service fourni (ex : Poisson, Gaz…)
+  bool active;                 // false = soft-deleted
+  DateTime? deletedAt;
+  String? deletedBy;
 
   Supplier({
     required this.id,
@@ -527,16 +532,34 @@ class Supplier {
     required this.phone,
     this.email,
     this.address,
+    this.productOrService,
+    this.active = true,
+    this.deletedAt,
+    this.deletedBy,
   });
 
   Map<String, dynamic> toMap() => {
     'id': id, 'name': name, 'contact': contact,
     'phone': phone, 'email': email, 'address': address,
+    'productOrService': productOrService,
+    'active': active,
+    'deletedAt': deletedAt?.millisecondsSinceEpoch,
+    'deletedBy': deletedBy,
   };
 
   factory Supplier.fromMap(Map<String, dynamic> map) => Supplier(
-    id: map['id'], name: map['name'], contact: map['contact'],
-    phone: map['phone'], email: map['email'], address: map['address'],
+    id: map['id'] as String? ?? '',
+    name: map['name'] as String? ?? '',
+    contact: map['contact'] as String? ?? '',
+    phone: map['phone'] as String? ?? '',
+    email: map['email'] as String?,
+    address: map['address'] as String?,
+    productOrService: map['productOrService'] as String?,
+    active: map['active'] as bool? ?? true,
+    deletedAt: map['deletedAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['deletedAt'] as int)
+        : null,
+    deletedBy: map['deletedBy'] as String?,
   );
 }
 
@@ -545,6 +568,7 @@ class SupplierOrder {
   final String id;
   final String supplierId;
   final String supplierName;
+  String? productOrService;   // Produit/Service associé à la commande
   List<Map<String, dynamic>> items;
   double totalAmount;
   double paidAmount;
@@ -553,46 +577,156 @@ class SupplierOrder {
   DateTime orderDate;
   DateTime? deliveryDate;
   DateTime? expectedDelivery;
+  DateTime? dueDate;           // Date échéance paiement
+  DateTime? createdAt;
+  String? createdBy;
   String? notes;
 
   SupplierOrder({
     required this.id,
     required this.supplierId,
     required this.supplierName,
+    this.productOrService,
     required this.items,
     required this.totalAmount,
     this.paidAmount = 0,
-    this.paymentStatus = SupplierPaymentStatus.pending,
+    this.paymentStatus = SupplierPaymentStatus.unpaid,
     this.paymentMethod = 'Espèces',
     DateTime? orderDate,
     this.deliveryDate,
     this.expectedDelivery,
+    this.dueDate,
+    this.createdAt,
+    this.createdBy,
     this.notes,
   }) : orderDate = orderDate ?? DateTime.now();
 
-  double get remainingAmount => totalAmount - paidAmount;
+  double get remainingAmount => (totalAmount - paidAmount).clamp(0, double.infinity);
   bool get isFullyPaid => paidAmount >= totalAmount;
+
+  /// Commande en retard : non soldée ET date échéance dépassée
+  bool get isOverdue {
+    if (isFullyPaid) return false;
+    final deadline = dueDate ?? expectedDelivery;
+    if (deadline == null) return false;
+    return DateTime.now().isAfter(deadline);
+  }
 
   Map<String, dynamic> toMap() => {
     'id': id, 'supplierId': supplierId, 'supplierName': supplierName,
+    'productOrService': productOrService,
     'items': items, 'totalAmount': totalAmount, 'paidAmount': paidAmount,
-    'paymentStatus': paymentStatus.index, 'paymentMethod': paymentMethod,
+    'remainingAmount': remainingAmount,
+    'paymentStatus': paymentStatus.name,  // Stocke le nom string (unpaid/partial/paid)
+    'paymentMethod': paymentMethod,
     'orderDate': orderDate.millisecondsSinceEpoch,
     'deliveryDate': deliveryDate?.millisecondsSinceEpoch,
     'expectedDelivery': expectedDelivery?.millisecondsSinceEpoch,
+    'dueDate': dueDate?.millisecondsSinceEpoch,
+    'createdAt': (createdAt ?? DateTime.now()).millisecondsSinceEpoch,
+    'createdBy': createdBy,
     'notes': notes,
   };
 
-  factory SupplierOrder.fromMap(Map<String, dynamic> map) => SupplierOrder(
-    id: map['id'], supplierId: map['supplierId'], supplierName: map['supplierName'],
-    items: List<Map<String, dynamic>>.from(map['items'] ?? []),
-    totalAmount: (map['totalAmount'] as num).toDouble(),
-    paidAmount: (map['paidAmount'] as num?)?.toDouble() ?? 0,
-    paymentStatus: SupplierPaymentStatus.values[map['paymentStatus'] ?? 0],
-    paymentMethod: map['paymentMethod'] ?? 'Espèces',
-    orderDate: DateTime.fromMillisecondsSinceEpoch(map['orderDate']),
-    deliveryDate: map['deliveryDate'] != null ? DateTime.fromMillisecondsSinceEpoch(map['deliveryDate']) : null,
-    expectedDelivery: map['expectedDelivery'] != null ? DateTime.fromMillisecondsSinceEpoch(map['expectedDelivery']) : null,
-    notes: map['notes'],
+  factory SupplierOrder.fromMap(Map<String, dynamic> map) {
+    // Compatibilité : paymentStatus peut être un int (ancien) ou un string (nouveau)
+    SupplierPaymentStatus parseStatus(dynamic raw) {
+      if (raw == null) return SupplierPaymentStatus.unpaid;
+      if (raw is String) {
+        // Ancien 'pending' → unpaid
+        if (raw == 'pending') return SupplierPaymentStatus.unpaid;
+        return SupplierPaymentStatus.values.firstWhere(
+          (e) => e.name == raw,
+          orElse: () => SupplierPaymentStatus.unpaid,
+        );
+      }
+      if (raw is int) {
+        // 0=unpaid(ancien pending), 1=partial, 2=paid
+        if (raw < SupplierPaymentStatus.values.length) return SupplierPaymentStatus.values[raw];
+      }
+      return SupplierPaymentStatus.unpaid;
+    }
+
+    return SupplierOrder(
+      id: map['id'] as String? ?? '',
+      supplierId: map['supplierId'] as String? ?? '',
+      supplierName: map['supplierName'] as String? ?? '',
+      productOrService: map['productOrService'] as String?,
+      items: List<Map<String, dynamic>>.from(map['items'] ?? []),
+      totalAmount: (map['totalAmount'] as num?)?.toDouble() ?? 0,
+      paidAmount: (map['paidAmount'] as num?)?.toDouble() ?? 0,
+      paymentStatus: parseStatus(map['paymentStatus']),
+      paymentMethod: map['paymentMethod'] as String? ?? 'Espèces',
+      orderDate: map['orderDate'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['orderDate'] as int)
+          : DateTime.now(),
+      deliveryDate: map['deliveryDate'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['deliveryDate'] as int)
+          : null,
+      expectedDelivery: map['expectedDelivery'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['expectedDelivery'] as int)
+          : null,
+      dueDate: map['dueDate'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['dueDate'] as int)
+          : null,
+      createdAt: map['createdAt'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['createdAt'] as int)
+          : null,
+      createdBy: map['createdBy'] as String?,
+      notes: map['notes'] as String?,
+    );
+  }
+}
+
+// =================== SUPPLIER PAYMENT MODEL ===================
+class SupplierPayment {
+  final String id;
+  final String supplierOrderId;
+  final String supplierId;
+  final double amount;
+  final String paymentMethod;
+  final DateTime paymentDate;
+  final String? note;
+  final DateTime createdAt;
+  final String createdBy;
+
+  SupplierPayment({
+    required this.id,
+    required this.supplierOrderId,
+    required this.supplierId,
+    required this.amount,
+    required this.paymentMethod,
+    required this.paymentDate,
+    this.note,
+    required this.createdAt,
+    required this.createdBy,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'supplierOrderId': supplierOrderId,
+    'supplierId': supplierId,
+    'amount': amount,
+    'paymentMethod': paymentMethod,
+    'paymentDate': paymentDate.millisecondsSinceEpoch,
+    'note': note,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'createdBy': createdBy,
+  };
+
+  factory SupplierPayment.fromMap(Map<String, dynamic> map) => SupplierPayment(
+    id: map['id'] as String? ?? '',
+    supplierOrderId: map['supplierOrderId'] as String? ?? '',
+    supplierId: map['supplierId'] as String? ?? '',
+    amount: (map['amount'] as num?)?.toDouble() ?? 0,
+    paymentMethod: map['paymentMethod'] as String? ?? 'Espèces',
+    paymentDate: map['paymentDate'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['paymentDate'] as int)
+        : DateTime.now(),
+    note: map['note'] as String?,
+    createdAt: map['createdAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['createdAt'] as int)
+        : DateTime.now(),
+    createdBy: map['createdBy'] as String? ?? '',
   );
 }

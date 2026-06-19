@@ -538,6 +538,8 @@ class FirebaseService {
   // =================== SUPPLIERS ===================
 
   Stream<List<Supplier>> streamSuppliers() {
+    // On ne filtre PAS active==true ici pour éviter un index composite ;
+    // le provider filtre en mémoire.
     return _db.collection('suppliers').snapshots().map((snap) {
       final list = snap.docs.map((d) {
         try {
@@ -549,6 +551,10 @@ class FirebaseService {
             phone: data['phone'] as String? ?? '',
             email: data['email'] as String?,
             address: data['address'] as String?,
+            productOrService: data['productOrService'] as String?,
+            active: data['active'] as bool? ?? true,
+            deletedAt: _toDateTimeNullable(data['deletedAt']),
+            deletedBy: data['deletedBy'] as String?,
           );
         } catch (e) {
           debugPrint('[stream.suppliers] doc ${d.id}: $e');
@@ -568,8 +574,28 @@ class FirebaseService {
     await _db.collection('suppliers').doc(supplier.id).update(supplier.toMap());
   }
 
-  Future<void> deleteSupplier(String supplierId) async {
+  /// Soft-delete : marque active=false si le fournisseur a des commandes liées.
+  Future<void> softDeleteSupplier(String supplierId, String deletedBy) async {
+    await _db.collection('suppliers').doc(supplierId).update({
+      'active': false,
+      'deletedAt': DateTime.now().millisecondsSinceEpoch,
+      'deletedBy': deletedBy,
+    });
+  }
+
+  /// Hard-delete : suppression définitive (uniquement si aucune commande liée).
+  Future<void> hardDeleteSupplier(String supplierId) async {
     await _db.collection('suppliers').doc(supplierId).delete();
+  }
+
+  /// Vérifie si un fournisseur a des commandes liées.
+  Future<bool> supplierHasOrders(String supplierId) async {
+    final snap = await _db
+        .collection('supplierOrders')
+        .where('supplierId', isEqualTo: supplierId)
+        .limit(1)
+        .get();
+    return snap.docs.isNotEmpty;
   }
 
   // =================== SUPPLIER ORDERS ===================
@@ -579,20 +605,7 @@ class FirebaseService {
     return _db.collection('supplierOrders').snapshots().map((snap) {
       final list = snap.docs.map((d) {
         try {
-          final data = d.data();
-          return SupplierOrder(
-            id: d.id,
-            supplierId: data['supplierId'] as String? ?? '',
-            supplierName: data['supplierName'] as String? ?? '',
-            items: List<Map<String, dynamic>>.from(data['items'] ?? []),
-            totalAmount: (data['totalAmount'] as num?)?.toDouble() ?? 0,
-            paidAmount: (data['paidAmount'] as num?)?.toDouble() ?? 0,
-            paymentStatus: SupplierPaymentStatus.values[(data['paymentStatus'] as int?) ?? 0],
-            paymentMethod: data['paymentMethod'] as String? ?? '',
-            orderDate: _toDateTime(data['orderDate']),
-            expectedDelivery: _toDateTimeNullable(data['expectedDelivery']),
-            notes: data['notes'] as String?,
-          );
+          return SupplierOrder.fromMap({'id': d.id, ...d.data()});
         } catch (e) {
           debugPrint('[stream.supplierOrders] doc ${d.id}: $e');
           return null;
@@ -609,6 +622,63 @@ class FirebaseService {
 
   Future<void> updateSupplierOrder(SupplierOrder order) async {
     await _db.collection('supplierOrders').doc(order.id).update(order.toMap());
+  }
+
+  // =================== SUPPLIER PAYMENTS ===================
+
+  /// Stream de tous les paiements (triés par date décroissante en mémoire).
+  Stream<List<SupplierPayment>> streamSupplierPayments() {
+    return _db.collection('supplier_payments').snapshots().map((snap) {
+      final list = snap.docs.map((d) {
+        try {
+          return SupplierPayment.fromMap({'id': d.id, ...d.data()});
+        } catch (e) {
+          debugPrint('[stream.supplier_payments] doc ${d.id}: $e');
+          return null;
+        }
+      }).whereType<SupplierPayment>().toList();
+      list.sort((a, b) => b.paymentDate.compareTo(a.paymentDate));
+      return list;
+    });
+  }
+
+  /// Sauvegarde un paiement ET recalcule paidAmount/remainingAmount/status sur la commande.
+  Future<void> addSupplierPayment({
+    required SupplierPayment payment,
+    required SupplierOrder order,
+  }) async {
+    final batch = _db.batch();
+
+    // 1. Créer le document paiement
+    batch.set(
+      _db.collection('supplier_payments').doc(payment.id),
+      payment.toMap(),
+    );
+
+    // 2. Recalculer la commande
+    final newPaid = (order.paidAmount + payment.amount)
+        .clamp(0, order.totalAmount);
+    final newRemaining = order.totalAmount - newPaid;
+    final SupplierPaymentStatus newStatus;
+    if (newRemaining <= 0) {
+      newStatus = SupplierPaymentStatus.paid;
+    } else if (newPaid > 0) {
+      newStatus = SupplierPaymentStatus.partial;
+    } else {
+      newStatus = SupplierPaymentStatus.unpaid;
+    }
+
+    batch.update(
+      _db.collection('supplierOrders').doc(order.id),
+      {
+        'paidAmount': newPaid,
+        'remainingAmount': newRemaining,
+        'paymentStatus': newStatus.name,
+        'paymentMethod': payment.paymentMethod,
+      },
+    );
+
+    await batch.commit();
   }
 
   // =================== ATTENDANCES ===================
