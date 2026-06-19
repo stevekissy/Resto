@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../utils/app_theme.dart';
-import 'main_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   /// Message d'erreur Firebase passé depuis main() si initializeApp() a échoué.
@@ -100,11 +99,13 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       setState(() => _isLoading = false);
 
       if (success) {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const MainScreen()),
-          (route) => false,
-        );
+        // ✅ NE PAS naviguer manuellement ici.
+        // _AuthGate écoute authStateChanges() et switche vers MainScreen
+        // automatiquement dès que Firebase Auth confirme la connexion.
+        // Une navigation manuelle en PLUS crée une double-navigation
+        // (race condition) qui force un retour au Login.
+        // → Laisser _AuthGate gérer entièrement la transition.
+        debugPrint('[LoginScreen] Login réussi — _AuthGate prend le relais');
       } else {
         _showError(provider.errorMessage ?? 'Email ou mot de passe incorrect.');
       }

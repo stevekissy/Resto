@@ -203,6 +203,15 @@ class _AuthGateState extends State<_AuthGate> {
   late bool? _authenticated;
   StreamSubscription<User?>? _authSub;
 
+  // ── Guard de démarrage ──────────────────────────────────────────────
+  // main() a déjà résolu l'état auth via resolveAuthState() (authStateChanges().first).
+  // Quand _AuthGate s'abonne au stream, Firebase émet immédiatement l'état courant
+  // comme premier événement. Ce premier événement est REDONDANT avec ce que main()
+  // a déjà fait et peut créer une race condition si Firebase émet null→user→null
+  // rapidement sur Web. On ignore donc le premier événement du stream pour ne
+  // réagir QU'AUX changements ULTÉRIEURS (logout, expiration token).
+  bool _initialEventConsumed = false;
+
   @override
   void initState() {
     super.initState();
@@ -214,16 +223,25 @@ class _AuthGateState extends State<_AuthGate> {
     _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       if (!mounted) return;
 
+      // Ignorer le PREMIER événement : c'est l'état initial déjà résolu
+      // par main() via resolveAuthState(). L'écouter en double peut créer
+      // une race condition (ex: Firebase émet null avant user sur Web).
+      if (!_initialEventConsumed) {
+        _initialEventConsumed = true;
+        debugPrint('[AuthGate] Premier événement stream ignoré (déjà résolu par main): ${user?.email ?? "null"}');
+        return;
+      }
+
       final provider = context.read<AppProvider>();
       final wasAuthenticated = _authenticated;
 
       if (user != null && wasAuthenticated == false) {
-        // Connexion détectée (ex: depuis LoginScreen)
+        // Connexion détectée (ex: depuis LoginScreen via loginWithFirebase)
         debugPrint('[AuthGate] Connexion détectée: ${user.email}');
         setState(() => _authenticated = true);
       } else if (user == null && wasAuthenticated == true) {
         // Déconnexion RÉELLE détectée (logout explicite ou token expiré)
-        debugPrint('[AuthGate] Déconnexion détectée');
+        debugPrint('[AuthGate] Déconnexion détectée → retour Login');
         provider.clearSessionLocally();
         setState(() => _authenticated = false);
       }
