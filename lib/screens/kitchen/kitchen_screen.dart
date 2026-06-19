@@ -1085,39 +1085,57 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      if (order.status == OrderStatus.pending) {
-                        widget.provider.updateOrderStatus(
-                            order.id, OrderStatus.preparing);
-                      } else {
-                        widget.provider.updateOrderStatus(
-                            order.id, OrderStatus.ready);
-                        widget.tts.announceOrderReady(order);
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(
-                        color: order.status == OrderStatus.pending
-                            ? AppTheme.preparing
-                            : AppTheme.ready,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Center(
-                        child: Text(
-                          order.status == OrderStatus.pending
-                              ? 'Commencer'
-                              : '✓ Prêt!',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
+                  child: Builder(builder: (context) {
+                    final role = widget.provider.currentUser?.role;
+                    final canChangeStatus = role == UserRole.kitchen ||
+                                           role == UserRole.admin   ||
+                                           role == UserRole.manager;
+                    return GestureDetector(
+                      onTap: canChangeStatus
+                          ? () {
+                              if (order.status == OrderStatus.pending) {
+                                widget.provider.updateOrderStatus(
+                                    order.id, OrderStatus.preparing);
+                              } else {
+                                widget.provider.updateOrderStatus(
+                                    order.id, OrderStatus.ready);
+                                widget.tts.announceOrderReady(order);
+                              }
+                            }
+                          : () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Action réservée à la cuisine'),
+                                  backgroundColor: Colors.orange,
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        decoration: BoxDecoration(
+                          color: canChangeStatus
+                              ? (order.status == OrderStatus.pending
+                                  ? AppTheme.preparing
+                                  : AppTheme.ready)
+                              : Colors.grey.shade700,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Center(
+                          child: Text(
+                            order.status == OrderStatus.pending
+                                ? 'Commencer'
+                                : '✓ Prêt!',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                 ),
               ],
             ),
@@ -1278,15 +1296,30 @@ class _ReadyOrderCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
-              ElevatedButton(
-                onPressed: () =>
-                    provider.updateOrderStatus(order.id, OrderStatus.served),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.ready,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                ),
-                child: const Text('Servie', style: TextStyle(fontSize: 12)),
-              ),
+              Builder(builder: (ctx) {
+                final role = provider.currentUser?.role;
+                final canServe = role == UserRole.kitchen ||
+                                 role == UserRole.admin   ||
+                                 role == UserRole.manager;
+                return ElevatedButton(
+                  onPressed: canServe
+                      ? () => provider.updateOrderStatus(order.id, OrderStatus.served)
+                      : () {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(
+                              content: Text('Action réservée à la cuisine'),
+                              backgroundColor: Colors.orange,
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: canServe ? AppTheme.ready : Colors.grey.shade700,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                  child: const Text('Servie', style: TextStyle(fontSize: 12)),
+                );
+              }),
             ],
           ),
         ],

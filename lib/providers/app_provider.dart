@@ -765,7 +765,24 @@ class AppProvider extends ChangeNotifier {
     );
   }
 
+  /// Rôles autorisés à changer le statut de préparation d'une commande.
+  /// Seuls cuisine, admin et manager peuvent passer pending→preparing→ready→served.
+  static bool _canChangeOrderStatus(UserRole? role) {
+    return role == UserRole.kitchen ||
+           role == UserRole.admin   ||
+           role == UserRole.manager;
+  }
+
   Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
+    // Guard : seuls cuisine / admin / manager peuvent changer le statut de préparation
+    final role = _currentUser?.role;
+    final isStatusChange = status == OrderStatus.preparing ||
+                           status == OrderStatus.ready     ||
+                           status == OrderStatus.served;
+    if (isStatusChange && !_canChangeOrderStatus(role)) {
+      debugPrint('[AppProvider] updateOrderStatus REFUSÉ — rôle $role non autorisé pour statut $status');
+      throw Exception('Action réservée à la cuisine');
+    }
     await _firebase.updateOrderStatus(orderId, status);
   }
 

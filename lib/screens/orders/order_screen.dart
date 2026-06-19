@@ -916,29 +916,36 @@ class _OrderListCard extends StatelessWidget {
   }
 
   List<Widget> _buildActions(BuildContext context, Order order, AppProvider provider) {
-    // Boutons de progression (existants — ne pas modifier)
+    // Seuls cuisine / admin / manager voient les boutons de progression de statut
+    final role = provider.currentUser?.role;
+    final canChangeStatus = role == UserRole.kitchen ||
+                            role == UserRole.admin   ||
+                            role == UserRole.manager;
+
     Widget? progressBtn;
-    if (order.status == OrderStatus.pending) {
-      progressBtn = ElevatedButton.icon(
-        onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.preparing),
-        icon: const Icon(Icons.restaurant, size: 14),
-        label: const Text('Commencer', style: TextStyle(fontSize: 12)),
-        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.preparing, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-      );
-    } else if (order.status == OrderStatus.preparing) {
-      progressBtn = ElevatedButton.icon(
-        onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.ready),
-        icon: const Icon(Icons.check_circle, size: 14),
-        label: const Text('Prêt', style: TextStyle(fontSize: 12)),
-        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.ready, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-      );
-    } else if (order.status == OrderStatus.ready) {
-      progressBtn = ElevatedButton.icon(
-        onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.served),
-        icon: const Icon(Icons.done_all, size: 14),
-        label: const Text('Servi', style: TextStyle(fontSize: 12)),
-        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-      );
+    if (canChangeStatus) {
+      if (order.status == OrderStatus.pending) {
+        progressBtn = ElevatedButton.icon(
+          onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.preparing),
+          icon: const Icon(Icons.restaurant, size: 14),
+          label: const Text('Commencer', style: TextStyle(fontSize: 12)),
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.preparing, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+        );
+      } else if (order.status == OrderStatus.preparing) {
+        progressBtn = ElevatedButton.icon(
+          onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.ready),
+          icon: const Icon(Icons.check_circle, size: 14),
+          label: const Text('Prêt', style: TextStyle(fontSize: 12)),
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.ready, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+        );
+      } else if (order.status == OrderStatus.ready) {
+        progressBtn = ElevatedButton.icon(
+          onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.served),
+          icon: const Icon(Icons.done_all, size: 14),
+          label: const Text('Servi', style: TextStyle(fontSize: 12)),
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+        );
+      }
     }
 
     // Boutons Modifier + Annuler (seulement si non servie / non payée / non annulée)
