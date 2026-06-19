@@ -31,6 +31,9 @@ class AppProvider extends ChangeNotifier {
   StreamSubscription? _subAttendances;
   StreamSubscription? _subDailyCharges;
   StreamSubscription? _subPermissions;
+  StreamSubscription? _subCategories;
+  StreamSubscription? _subInvoiceHistory;
+  StreamSubscription? _subIncomingCall;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
@@ -126,15 +129,30 @@ class AppProvider extends ChangeNotifier {
   List<SupplierPayment> paymentsForOrder(String orderId) =>
       _supplierPayments.where((p) => p.supplierOrderId == orderId).toList();
 
-  // =================== CATEGORIES PERSONNALISÉES ===================
-  List<String> _customCategories = ['Plats', 'Accompagnements', 'Boissons', 'Desserts', 'Entrées', 'Snacks'];
+  // =================== CATEGORIES PERSONNALISÉES (Firestore) ===================
+  static const _defaultCategories = ['Plats', 'Accompagnements', 'Boissons', 'Desserts', 'Entrées', 'Snacks'];
+  List<String> _customCategories = List.from(_defaultCategories);
   List<String> get customCategories => _customCategories;
+
+  // ── Historique factures ──────────────────────────────────────────────
+  List<Map<String, dynamic>> _invoiceHistory = [];
+  List<Map<String, dynamic>> get invoiceHistory => _invoiceHistory;
+
+  // ── Appel entrant ────────────────────────────────────────────────────
+  CallSession? _incomingCall;
+  CallSession? get incomingCall => _incomingCall;
+  String? _activeCallId;
+  String? get activeCallId => _activeCallId;
+
+  // ── Méthodes catégories avec persistance Firestore ───────────────────
 
   void addCategory(String name) {
     final trimmed = name.trim();
     if (trimmed.isNotEmpty && !_customCategories.contains(trimmed)) {
       _customCategories.add(trimmed);
       notifyListeners();
+      _firebase.addCategoryFirestore(trimmed).catchError((e) =>
+          debugPrint('[AppProvider] addCategory Firestore error: $e'));
     }
   }
 
@@ -144,23 +162,25 @@ class AppProvider extends ChangeNotifier {
       final idx = _customCategories.indexOf(oldName);
       if (idx != -1) {
         _customCategories[idx] = trimmed;
-        // Mettre à jour les produits qui utilisent cette catégorie
         for (final p in _products) {
           if (p.category == oldName) p.category = trimmed;
         }
         notifyListeners();
+        _firebase.renameCategoryFirestore(oldName, trimmed).catchError((e) =>
+            debugPrint('[AppProvider] renameCategory Firestore error: $e'));
       }
     }
   }
 
   void deleteCategory(String name) {
     _customCategories.remove(name);
-    // Déplacer les produits orphelins vers "Plats" (ou première catégorie dispo)
     final fallback = _customCategories.isNotEmpty ? _customCategories.first : 'Divers';
     for (final p in _products) {
       if (p.category == name) p.category = fallback;
     }
     notifyListeners();
+    _firebase.deleteCategoryFirestore(name).catchError((e) =>
+        debugPrint('[AppProvider] deleteCategory Firestore error: $e'));
   }
 
   // =================== CHARGES DU JOUR ===================
@@ -578,6 +598,42 @@ class AppProvider extends ChangeNotifier {
       onError: (e) { debugPrint('[stream.permissions] ERREUR: $e'); },
       cancelOnError: false,
     );
+
+    // Stream catégories depuis Firestore
+    _subCategories = _firebase.streamCategories().listen(
+      (list) {
+        if (list.isNotEmpty) {
+          _customCategories = list;
+          notifyListeners();
+        }
+      },
+      onError: (e) { debugPrint('[stream.categories] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
+    // Initialiser catégories par défaut si vide
+    _firebase.initDefaultCategories(_defaultCategories)
+        .catchError((e) => debugPrint('[categories.init] $e'));
+
+    // Stream historique factures (caisse)
+    _subInvoiceHistory = _firebase.streamInvoiceHistory().listen(
+      (list) { _invoiceHistory = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.invoiceHistory] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
+    // Stream appels entrants (pour l'utilisateur connecté)
+    final uid = _currentUser?.id;
+    if (uid != null) {
+      _subIncomingCall = _firebase.streamIncomingCall(uid).listen(
+        (call) {
+          _incomingCall = call;
+          notifyListeners();
+        },
+        onError: (e) { debugPrint('[stream.incomingCall] ERREUR: $e'); },
+        cancelOnError: false,
+      );
+    }
   }
 
   void _stopFirebaseStreams() {
@@ -592,6 +648,9 @@ class AppProvider extends ChangeNotifier {
     _subAttendances?.cancel();
     _subDailyCharges?.cancel();
     _subPermissions?.cancel();
+    _subCategories?.cancel();
+    _subInvoiceHistory?.cancel();
+    _subIncomingCall?.cancel();
   }
 
   /// Déconnexion complète : signOut Firebase + nettoyage local.
@@ -613,7 +672,7 @@ class AppProvider extends ChangeNotifier {
     _currentUser = null;
     _users = []; _orders = []; _products = []; _stockItems = [];
     _suppliers = []; _supplierOrders = []; _supplierPayments = []; _messages = []; _attendances = [];
-    _charges = [];
+    _charges = []; _invoiceHistory = []; _incomingCall = null; _activeCallId = null;
     notifyListeners();
   }
 
@@ -632,7 +691,7 @@ class AppProvider extends ChangeNotifier {
     _currentUser = null;
     _users = []; _orders = []; _products = []; _stockItems = [];
     _suppliers = []; _supplierOrders = []; _supplierPayments = []; _messages = []; _attendances = [];
-    _charges = [];
+    _charges = []; _invoiceHistory = []; _incomingCall = null; _activeCallId = null;
     notifyListeners();
   }
 
@@ -979,7 +1038,90 @@ class AppProvider extends ChangeNotifier {
     await _firebase.deleteStockItem(id);
   }
 
-  // =================== USER MANAGEMENT (Firestore) ===================
+  /// Approvisionne un article de stock (entrée + stock_movements)
+  Future<void> restockItem({
+    required String stockItemId,
+    required double qty,
+    double? purchasePrice,
+    String? supplierId,
+    String? supplierName,
+    String? note,
+  }) async {
+    final createdBy = _currentUser?.name ?? 'Admin';
+    await _firebase.restockItem(
+      stockItemId: stockItemId,
+      qty: qty,
+      purchasePrice: purchasePrice,
+      supplierId: supplierId,
+      supplierName: supplierName,
+      note: note,
+      createdBy: createdBy,
+    );
+    // Le stream Firestore met _stockItems à jour automatiquement
+  }
+
+  // =================== CALL MANAGEMENT (Firestore) ===================
+
+  /// Initie un appel 1-to-1 ou une conférence
+  Future<String> initiateCall({
+    required String calleeId,
+    required String calleeName,
+    bool isConference = false,
+  }) async {
+    final caller = _currentUser;
+    if (caller == null) throw Exception('Utilisateur non connecté');
+    final callId = await _firebase.initiateCall(
+      callerId: caller.id,
+      callerName: caller.name,
+      calleeId: isConference ? null : calleeId,
+      calleeName: isConference ? null : calleeName,
+      isConference: isConference,
+    );
+    _activeCallId = callId;
+    notifyListeners();
+    return callId;
+  }
+
+  /// Accepte un appel entrant
+  Future<void> answerCall(String callId) async {
+    await _firebase.updateCallStatus(callId, CallStatus.accepted);
+    _activeCallId = callId;
+    _incomingCall = null;
+    notifyListeners();
+    // Rejoindre comme participant si pas déjà ajouté
+    final user = _currentUser;
+    if (user != null) {
+      await _firebase.joinConference(callId, user.id, user.name)
+          .catchError((e) => debugPrint('[answerCall] joinConference: $e'));
+    }
+  }
+
+  /// Refuse un appel entrant
+  Future<void> rejectCall(String callId) async {
+    await _firebase.updateCallStatus(callId, CallStatus.rejected);
+    _incomingCall = null;
+    notifyListeners();
+  }
+
+  /// Termine un appel actif
+  Future<void> endCall(String callId) async {
+    await _firebase.updateCallStatus(callId, CallStatus.ended);
+    _activeCallId = null;
+    notifyListeners();
+  }
+
+  /// Rejoindre une conférence
+  Future<void> joinConference(String callId) async {
+    final user = _currentUser;
+    if (user == null) return;
+    await _firebase.joinConference(callId, user.id, user.name);
+    _activeCallId = callId;
+    notifyListeners();
+  }
+
+  /// Stream des participants d'un appel
+  Stream<List<CallParticipant>> streamCallParticipants(String callId) =>
+      _firebase.streamCallParticipants(callId);
 
   Future<void> deleteUserFirestore(String id) async {
     await _firebase.deleteUser(id);

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
+import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 
 // ── Helper : convertit un champ Firestore (Timestamp ou int) en DateTime ──
@@ -1310,6 +1311,242 @@ class FirebaseService {
         debugPrint('[FirebaseService] Permissions initialisées pour $docId');
       }
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  APPROVISIONNER STOCK
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Met à jour la quantité d'un article de stock et enregistre le mouvement.
+  Future<void> restockItem({
+    required String stockItemId,
+    required double qty,
+    double? purchasePrice,
+    String? supplierId,
+    String? supplierName,
+    String? note,
+    required String createdBy,
+  }) async {
+    final ref = _db.collection('stock').doc(stockItemId);
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      if (!snap.exists) throw Exception('Article stock introuvable');
+      final current = (snap.data()!['currentQuantity'] as num?)?.toDouble() ?? 0;
+      tx.update(ref, {'currentQuantity': current + qty});
+    });
+    // Enregistrer le mouvement
+    final movId = const Uuid().v4();
+    final stockSnap = await ref.get();
+    final itemName = stockSnap.data()?['name'] as String? ?? stockItemId;
+    final unit     = stockSnap.data()?['unit'] as String? ?? '';
+    final movement = StockMovement(
+      id: movId,
+      stockItemId: stockItemId,
+      stockItemName: itemName,
+      type: StockMovementType.approvisionnement,
+      quantity: qty,
+      unit: unit,
+      createdAt: DateTime.now(),
+      createdBy: createdBy,
+      supplierId: supplierId,
+      supplierName: supplierName,
+      purchasePrice: purchasePrice,
+      note: note,
+    );
+    await _db.collection('stock_movements').doc(movId).set(movement.toMap());
+    debugPrint('[FirebaseService] restockItem: +$qty $unit pour $itemName');
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  HISTORIQUE FACTURES (CAISSE)
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Stream combiné : cashout_invoices + settlement_invoices
+  /// Chaque doc reçoit un champ 'invoiceKind' = 'cashout' | 'settlement'
+  Stream<List<Map<String, dynamic>>> streamInvoiceHistory() {
+    return _db
+        .collection('cashout_invoices')
+        .orderBy('cashoutAt', descending: true)
+        .limit(200)
+        .snapshots()
+        .asyncMap((cashoutSnap) async {
+      final settSnap = await _db
+          .collection('settlement_invoices')
+          .orderBy('settledAt', descending: true)
+          .limit(200)
+          .get();
+
+      final list = <Map<String, dynamic>>[];
+
+      for (final doc in cashoutSnap.docs) {
+        final d = Map<String, dynamic>.from(doc.data());
+        d['invoiceKind'] = 'cashout';
+        d['docId'] = doc.id;
+        list.add(d);
+      }
+      for (final doc in settSnap.docs) {
+        final d = Map<String, dynamic>.from(doc.data());
+        d['invoiceKind'] = 'settlement';
+        d['docId'] = doc.id;
+        list.add(d);
+      }
+
+      // Trier par date décroissante
+      list.sort((a, b) {
+        final ta = (a['settledAt'] ?? a['cashoutAt'] ?? 0) as int;
+        final tb = (b['settledAt'] ?? b['cashoutAt'] ?? 0) as int;
+        return tb.compareTo(ta);
+      });
+      return list;
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  APPELS TEMPS RÉEL
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Crée un document d'appel dans la collection `calls`.
+  Future<String> initiateCall({
+    required String callerId,
+    required String callerName,
+    String? calleeId,
+    String? calleeName,
+    bool isConference = false,
+  }) async {
+    final callId = const Uuid().v4();
+    final session = CallSession(
+      id: callId,
+      callerId: callerId,
+      callerName: callerName,
+      calleeId: calleeId,
+      calleeName: calleeName,
+      isConference: isConference,
+      status: CallStatus.calling,
+      createdAt: DateTime.now(),
+    );
+    await _db.collection('calls').doc(callId).set(session.toMap());
+    // Ajouter l'appelant comme premier participant
+    final pId = const Uuid().v4();
+    final participant = CallParticipant(
+      id: pId,
+      callId: callId,
+      userId: callerId,
+      userName: callerName,
+      joinedAt: DateTime.now(),
+    );
+    await _db
+        .collection('calls')
+        .doc(callId)
+        .collection('call_participants')
+        .doc(pId)
+        .set(participant.toMap());
+    return callId;
+  }
+
+  /// Stream sur l'appel entrant pour un utilisateur donné.
+  /// Retourne le premier appel actif (status = calling | ringing) destiné à cet utilisateur.
+  Stream<CallSession?> streamIncomingCall(String userId) {
+    return _db
+        .collection('calls')
+        .where('calleeId', isEqualTo: userId)
+        .where('status', whereIn: ['calling', 'ringing'])
+        .snapshots()
+        .map((snap) {
+          if (snap.docs.isEmpty) return null;
+          return CallSession.fromMap(snap.docs.first.data());
+        });
+  }
+
+  /// Met à jour le statut d'un appel.
+  Future<void> updateCallStatus(String callId, CallStatus status) async {
+    final data = <String, dynamic>{'status': status.name};
+    if (status == CallStatus.accepted) data['answeredAt'] = DateTime.now().millisecondsSinceEpoch;
+    if (status == CallStatus.ended || status == CallStatus.rejected || status == CallStatus.missed) {
+      data['endedAt'] = DateTime.now().millisecondsSinceEpoch;
+    }
+    await _db.collection('calls').doc(callId).update(data);
+  }
+
+  /// Ajoute un participant à une conférence et met à jour son statut.
+  Future<void> joinConference(String callId, String userId, String userName) async {
+    final pId = const Uuid().v4();
+    final participant = CallParticipant(
+      id: pId,
+      callId: callId,
+      userId: userId,
+      userName: userName,
+      joinedAt: DateTime.now(),
+    );
+    await _db
+        .collection('calls')
+        .doc(callId)
+        .collection('call_participants')
+        .doc(pId)
+        .set(participant.toMap());
+    // Mettre à jour le statut global si nécessaire
+    await _db.collection('calls').doc(callId).update({'status': CallStatus.accepted.name});
+  }
+
+  /// Stream sur les participants d'un appel (conférence)
+  Stream<List<CallParticipant>> streamCallParticipants(String callId) {
+    return _db
+        .collection('calls')
+        .doc(callId)
+        .collection('call_participants')
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => CallParticipant.fromMap(d.data()))
+            .toList());
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  CATÉGORIES FIRESTORE (persistance)
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Stream des catégories depuis Firestore
+  Stream<List<String>> streamCategories() {
+    return _db
+        .collection('categories')
+        .orderBy('name')
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => d.data()['name'] as String? ?? '')
+            .where((n) => n.isNotEmpty)
+            .toList());
+  }
+
+  /// Ajoute une catégorie dans Firestore
+  Future<void> addCategoryFirestore(String name) async {
+    final id = name.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
+    await _db.collection('categories').doc(id).set({'name': name, 'id': id});
+  }
+
+  /// Supprime une catégorie de Firestore
+  Future<void> deleteCategoryFirestore(String name) async {
+    final id = name.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
+    await _db.collection('categories').doc(id).delete();
+  }
+
+  /// Renomme une catégorie dans Firestore
+  Future<void> renameCategoryFirestore(String oldName, String newName) async {
+    final oldId = oldName.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
+    final newId = newName.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
+    final batch = _db.batch();
+    batch.delete(_db.collection('categories').doc(oldId));
+    batch.set(_db.collection('categories').doc(newId), {'name': newName, 'id': newId});
+    await batch.commit();
+  }
+
+  /// Initialise les catégories par défaut si la collection est vide
+  Future<void> initDefaultCategories(List<String> defaults) async {
+    final snap = await _db.collection('categories').limit(1).get();
+    if (snap.docs.isNotEmpty) return;
+    final batch = _db.batch();
+    for (final name in defaults) {
+      final id = name.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
+      batch.set(_db.collection('categories').doc(id), {'name': name, 'id': id});
+    }
+    await batch.commit();
   }
 }
 

@@ -17,10 +17,53 @@ class MessagingScreen extends StatefulWidget {
 
 class _MessagingScreenState extends State<MessagingScreen> {
   AppUser? _selectedContact; // null = group chat
+  CallSession? _shownCall;   // appel entrant affiché dans le popup
+
+  void _handleIncomingCall(AppProvider provider) {
+    final call = provider.incomingCall;
+    if (call != null && call.id != _shownCall?.id) {
+      _shownCall = call;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => _IncomingCallDialog(
+            call: call,
+            onAnswer: () async {
+              Navigator.pop(context);
+              await provider.answerCall(call.id);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('📞 En communication avec ${call.callerName}'),
+                    backgroundColor: AppTheme.success,
+                    duration: const Duration(seconds: 30),
+                    action: SnackBarAction(
+                      label: 'Raccrocher',
+                      textColor: Colors.white,
+                      onPressed: () => provider.endCall(call.id),
+                    ),
+                  ),
+                );
+              }
+            },
+            onReject: () async {
+              Navigator.pop(context);
+              await provider.rejectCall(call.id);
+              setState(() => _shownCall = null);
+            },
+          ),
+        );
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
+    // Détecter appel entrant
+    _handleIncomingCall(provider);
     final otherUsers = provider.users.where((u) => u.id != provider.currentUser?.id).toList();
 
     return Row(
@@ -195,36 +238,60 @@ class _TeamConferenceScreenState extends State<TeamConferenceScreen> {
   final Set<String> _mutedParticipants = {};
   Timer? _callTimer;
   int _callSeconds = 0;
+  String? _conferenceCallId;
 
   @override
   void dispose() {
     _callTimer?.cancel();
+    if (_isConferenceActive && _conferenceCallId != null) {
+      widget.provider.endCall(_conferenceCallId!).catchError((_) {});
+    }
     super.dispose();
   }
 
-  void _startConference() {
-    setState(() {
-      _isConferenceActive = true;
-      _callSeconds = 0;
-    });
-    _callTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _callSeconds++);
-    });
+  Future<void> _startConference() async {
+    try {
+      final callId = await widget.provider.initiateCall(
+        calleeId: '',
+        calleeName: '',
+        isConference: true,
+      );
+      setState(() {
+        _isConferenceActive = true;
+        _callSeconds = 0;
+        _conferenceCallId = callId;
+      });
+      _callTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _callSeconds++);
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur conférence: $e'), backgroundColor: AppTheme.error),
+        );
+      }
+    }
   }
 
-  void _endConference() {
+  Future<void> _endConference() async {
     _callTimer?.cancel();
+    if (_conferenceCallId != null) {
+      await widget.provider.endCall(_conferenceCallId!).catchError((_) {});
+    }
     setState(() {
       _isConferenceActive = false;
       _callSeconds = 0;
       _isMuted = false;
       _isSpeakerOn = true;
       _mutedParticipants.clear();
+      _conferenceCallId = null;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Conférence terminée'), backgroundColor: AppTheme.error),
-    );
-    Navigator.pop(context);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Conférence terminée'), backgroundColor: AppTheme.error),
+      );
+      Navigator.pop(context);
+    }
   }
 
   String get _callDuration {
@@ -338,11 +405,11 @@ class _TeamConferenceScreenState extends State<TeamConferenceScreen> {
                   isSpeakerOn: _isSpeakerOn,
                   onMuteToggle: () => setState(() => _isMuted = !_isMuted),
                   onSpeakerToggle: () => setState(() => _isSpeakerOn = !_isSpeakerOn),
-                  onEndCall: _endConference,
+                  onEndCall: () => _endConference(),
                 )
               : _StartCallButton(
                   participantCount: participants.length,
-                  onStart: _startConference,
+                  onStart: () => _startConference(),
                 ),
           ),
         ],
@@ -611,9 +678,14 @@ class _ChatAreaState extends State<ChatArea> {
   final _scrollCtrl = ScrollController();
   final _imagePicker = ImagePicker();
   bool _isCallActive = false;
+  String? _activeCallId;
 
   @override
   void dispose() {
+    // Terminer l'appel actif si l'utilisateur quitte l'écran
+    if (_isCallActive && _activeCallId != null) {
+      widget.provider.endCall(_activeCallId!).catchError((_) {});
+    }
     _messageCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -653,16 +725,67 @@ class _ChatAreaState extends State<ChatArea> {
     }
   }
 
-  void _startCall() {
-    setState(() => _isCallActive = !_isCallActive);
-    if (_isCallActive) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Appel en cours avec ${widget.contact?.name ?? "l\'équipe"}...'),
-          backgroundColor: AppTheme.success,
-          action: SnackBarAction(label: 'Raccrocher', textColor: Colors.white, onPressed: () => setState(() => _isCallActive = false)),
-        ),
+  Future<void> _startCall() async {
+    if (_isCallActive && _activeCallId != null) {
+      // Raccrocher
+      try {
+        await widget.provider.endCall(_activeCallId!);
+      } catch (e) {
+        debugPrint('[ChatArea] endCall error: $e');
+      }
+      setState(() { _isCallActive = false; _activeCallId = null; });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Appel terminé'), duration: Duration(seconds: 2)),
+        );
+      }
+      return;
+    }
+
+    // Initier l'appel
+    if (widget.contact == null) {
+      // Conférence de groupe — ouvre le panneau
+      if (mounted) {
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => TeamConferenceScreen(provider: widget.provider),
+        );
+      }
+      return;
+    }
+
+    try {
+      final callId = await widget.provider.initiateCall(
+        calleeId: widget.contact!.id,
+        calleeName: widget.contact!.name,
       );
+      setState(() { _isCallActive = true; _activeCallId = callId; });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📞 Appel en cours avec ${widget.contact!.name}...'),
+            backgroundColor: AppTheme.success,
+            duration: const Duration(seconds: 30),
+            action: SnackBarAction(
+              label: 'Raccrocher',
+              textColor: Colors.white,
+              onPressed: () async {
+                await widget.provider.endCall(callId);
+                setState(() { _isCallActive = false; _activeCallId = null; });
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur appel: $e'), backgroundColor: AppTheme.error),
+        );
+      }
     }
   }
 
@@ -737,7 +860,7 @@ class _ChatAreaState extends State<ChatArea> {
                 )
               else
                 GestureDetector(
-                  onTap: _startCall,
+                  onTap: () => _startCall(),
                   child: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -900,6 +1023,110 @@ class _MessageBubble extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POPUP APPEL ENTRANT
+// ════════════════════════════════════════════════════════════════════════════
+
+class _IncomingCallDialog extends StatelessWidget {
+  final CallSession call;
+  final VoidCallback onAnswer;
+  final VoidCallback onReject;
+
+  const _IncomingCallDialog({
+    required this.call,
+    required this.onAnswer,
+    required this.onReject,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.cardBg,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Icône appel entrant animée
+          Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(
+              color: AppTheme.success.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+              border: Border.all(color: AppTheme.success, width: 2),
+            ),
+            child: const Icon(Icons.call_received, color: AppTheme.success, size: 36),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Appel entrant',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            call.callerName,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 20,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          if (call.isConference)
+            const Text(
+              'Conférence d\'équipe',
+              style: TextStyle(color: AppTheme.primary, fontSize: 12),
+            ),
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              // Refuser
+              GestureDetector(
+                onTap: onReject,
+                child: Column(
+                  children: [
+                    Container(
+                      width: 56, height: 56,
+                      decoration: BoxDecoration(
+                        color: AppTheme.error.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppTheme.error),
+                      ),
+                      child: const Icon(Icons.call_end, color: AppTheme.error, size: 26),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text('Refuser', style: TextStyle(color: AppTheme.error, fontSize: 12)),
+                  ],
+                ),
+              ),
+              // Décrocher
+              GestureDetector(
+                onTap: onAnswer,
+                child: Column(
+                  children: [
+                    Container(
+                      width: 56, height: 56,
+                      decoration: BoxDecoration(
+                        color: AppTheme.success.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppTheme.success),
+                      ),
+                      child: const Icon(Icons.call, color: AppTheme.success, size: 26),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text('Décrocher', style: TextStyle(color: AppTheme.success, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),

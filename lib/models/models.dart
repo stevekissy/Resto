@@ -136,9 +136,11 @@ class StockLink {
 // =================== STOCK MOVEMENT MODEL ===================
 /// Historique des mouvements de stock générés par les commandes.
 enum StockMovementType {
-  sortieAutomatiqueCommande,   // déduction à la création de commande
-  retourAnnulationCommande,   // remise en stock lors d'annulation
-  ajustementModificationCommande, // différence lors d'une modification
+  sortieAutomatiqueCommande,       // déduction à la création de commande
+  retourAnnulationCommande,        // remise en stock lors d'annulation
+  ajustementModificationCommande,  // différence lors d'une modification
+  approvisionnement,               // entrée de stock (réapprovisionnement)
+  ajustementManuel,                // correction manuelle
 }
 
 class StockMovement {
@@ -153,6 +155,11 @@ class StockMovement {
   final String menuName;
   final DateTime createdAt;
   final String createdBy;
+  // Champs supplémentaires pour approvisionnement
+  final String? supplierId;
+  final String? supplierName;
+  final double? purchasePrice;
+  final String? note;
 
   const StockMovement({
     required this.id,
@@ -161,11 +168,15 @@ class StockMovement {
     required this.type,
     required this.quantity,
     required this.unit,
-    required this.orderId,
-    required this.menuId,
-    required this.menuName,
+    this.orderId = '',
+    this.menuId = '',
+    this.menuName = '',
     required this.createdAt,
     required this.createdBy,
+    this.supplierId,
+    this.supplierName,
+    this.purchasePrice,
+    this.note,
   });
 
   String get typeLabel {
@@ -176,8 +187,12 @@ class StockMovement {
         return 'retour_annulation_commande';
       case StockMovementType.ajustementModificationCommande:
         return 'ajustement_modification_commande';
+      case StockMovementType.approvisionnement:
+        return 'approvisionnement';
+      case StockMovementType.ajustementManuel:
+        return 'ajustement_manuel';
     }
-  }
+}
 
   Map<String, dynamic> toMap() => {
     'id': id,
@@ -191,6 +206,10 @@ class StockMovement {
     'menuName': menuName,
     'createdAt': createdAt.millisecondsSinceEpoch,
     'createdBy': createdBy,
+    if (supplierId != null) 'supplierId': supplierId,
+    if (supplierName != null) 'supplierName': supplierName,
+    if (purchasePrice != null) 'purchasePrice': purchasePrice,
+    if (note != null) 'note': note,
   };
 }
 
@@ -837,5 +856,114 @@ class SupplierPayment {
         ? DateTime.fromMillisecondsSinceEpoch(map['createdAt'] as int)
         : DateTime.now(),
     createdBy: map['createdBy'] as String? ?? '',
+  );
+}
+
+// =================== CALL MODELS ===================
+/// Statuts possibles d'un appel
+enum CallStatus { calling, ringing, accepted, rejected, ended, missed }
+
+/// Session d'appel (1-to-1 ou conférence)
+class CallSession {
+  final String id;
+  final String callerId;
+  final String callerName;
+  final String? calleeId;       // null si conférence
+  final String? calleeName;
+  final bool isConference;
+  CallStatus status;
+  final DateTime createdAt;
+  DateTime? answeredAt;
+  DateTime? endedAt;
+
+  CallSession({
+    required this.id,
+    required this.callerId,
+    required this.callerName,
+    this.calleeId,
+    this.calleeName,
+    this.isConference = false,
+    this.status = CallStatus.calling,
+    required this.createdAt,
+    this.answeredAt,
+    this.endedAt,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'callerId': callerId,
+    'callerName': callerName,
+    'calleeId': calleeId,
+    'calleeName': calleeName,
+    'isConference': isConference,
+    'status': status.name,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'answeredAt': answeredAt?.millisecondsSinceEpoch,
+    'endedAt': endedAt?.millisecondsSinceEpoch,
+  };
+
+  factory CallSession.fromMap(Map<String, dynamic> map) => CallSession(
+    id: map['id'] as String? ?? '',
+    callerId: map['callerId'] as String? ?? '',
+    callerName: map['callerName'] as String? ?? '',
+    calleeId: map['calleeId'] as String?,
+    calleeName: map['calleeName'] as String?,
+    isConference: map['isConference'] as bool? ?? false,
+    status: CallStatus.values.firstWhere(
+      (s) => s.name == (map['status'] as String? ?? 'calling'),
+      orElse: () => CallStatus.calling,
+    ),
+    createdAt: map['createdAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['createdAt'] as int)
+        : DateTime.now(),
+    answeredAt: map['answeredAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['answeredAt'] as int)
+        : null,
+    endedAt: map['endedAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['endedAt'] as int)
+        : null,
+  );
+}
+
+/// Participant à un appel (conférence ou 1-to-1)
+class CallParticipant {
+  final String id;
+  final String callId;
+  final String userId;
+  final String userName;
+  bool isMuted;
+  bool isConnected;
+  final DateTime joinedAt;
+
+  CallParticipant({
+    required this.id,
+    required this.callId,
+    required this.userId,
+    required this.userName,
+    this.isMuted = false,
+    this.isConnected = true,
+    required this.joinedAt,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'callId': callId,
+    'userId': userId,
+    'userName': userName,
+    'isMuted': isMuted,
+    'isConnected': isConnected,
+    'joinedAt': joinedAt.millisecondsSinceEpoch,
+  };
+
+  factory CallParticipant.fromMap(Map<String, dynamic> map) => CallParticipant(
+    id: map['id'] as String? ?? '',
+    callId: map['callId'] as String? ?? '',
+    userId: map['userId'] as String? ?? '',
+    userName: map['userName'] as String? ?? '',
+    isMuted: map['isMuted'] as bool? ?? false,
+    isConnected: map['isConnected'] as bool? ?? true,
+    joinedAt: map['joinedAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['joinedAt'] as int)
+        : DateTime.now(),
   );
 }

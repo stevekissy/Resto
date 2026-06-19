@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:intl/intl.dart';
 import '../models/models.dart';
 import '../providers/app_provider.dart';
 
@@ -516,7 +517,86 @@ class TtsService {
 
   void dispose() {
     stopPeriodicReminders();
+    stopCashierReminders();
     _speechQueue.clear();
     if (!kIsWeb) _flutterTts?.stop();
+  }
+
+  // ====================================================================
+  // ASSISTANT VOCAL CAISSE
+  // ====================================================================
+
+  Timer? _cashierReminderTimer;
+  bool   _cashierRemindersActive = false;
+
+  /// Annonce une nouvelle facture en attente de règlement
+  Future<void> announceNewInvoicePending(int tableNumber, double amount) async {
+    final fmt = NumberFormat('#,###', 'fr_FR');
+    final fmtAmt = fmt.format(amount);
+    enqueue('Nouvelle facture en attente — table $tableNumber — '
+        '$fmtAmt francs');
+  }
+
+  /// Annonce une facture en attente depuis plus de 2 minutes
+  Future<void> announceInvoiceOverdue(int tableNumber, int minutes) async {
+    enqueue('Attention — facture table $tableNumber en attente '
+        'depuis $minutes minutes');
+  }
+
+  /// Annonce qu\'une facture vient d\'être réglée
+  Future<void> announceSettled(int tableNumber) async {
+    enqueue('Facture réglée — table $tableNumber');
+  }
+
+  /// Annonce le montant encaissé
+  Future<void> announceAmountCollected(double amount, String paymentMethod) async {
+    final fmt = NumberFormat('#,###', 'fr_FR');
+    final fmtAmt = fmt.format(amount);
+    enqueue('Encaissement de $fmtAmt francs — $paymentMethod');
+  }
+
+  /// Démarre les rappels périodiques caisse (toutes les 2 min)
+  void startCashierReminders(AppProvider provider, {int intervalMinutes = 2}) {
+    if (_cashierRemindersActive) return;
+    _cashierRemindersActive = true;
+    _cashierReminderTimer?.cancel();
+    _cashierReminderTimer = Timer.periodic(
+        Duration(minutes: intervalMinutes), (_) async {
+      await _announceCashierSummary(provider);
+    });
+  }
+
+  /// Arrête les rappels caisse
+  void stopCashierReminders() {
+    _cashierReminderTimer?.cancel();
+    _cashierReminderTimer = null;
+    _cashierRemindersActive = false;
+  }
+
+  bool get cashierRemindersActive => _cashierRemindersActive;
+
+  Future<void> _announceCashierSummary(AppProvider provider) async {
+    final pending = provider.awaitingPaymentOrders;
+    if (pending.isEmpty) return;
+
+    final fmt = NumberFormat('#,###', 'fr_FR');
+
+    if (pending.length == 1) {
+      final o = pending.first;
+      final minutes = o.elapsedMinutes;
+      if (minutes >= 2) {
+        final orderAmt = fmt.format(o.totalAmount);
+        enqueue('Rappel caisse — une facture en attente depuis $minutes minutes — '
+            'table ${o.tableNumber} — $orderAmt francs');
+      }
+    } else {
+      // Calculer le total en attente
+      double total = pending.fold(0.0, (sum, o) => sum + o.totalAmount);
+      final overdue = pending.where((o) => o.elapsedMinutes >= 2).length;
+      final totalFmt = fmt.format(total);
+      enqueue('Rappel caisse — ${pending.length} factures en attente — '
+          '$totalFmt francs au total'
+          '${overdue > 0 ? " — $overdue en retard" : ""}');
+    }
   }
 }

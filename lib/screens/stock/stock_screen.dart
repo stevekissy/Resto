@@ -84,11 +84,25 @@ class _StockTabState extends State<_StockTab> {
     if (_filter == 'expired') items = items.where((s) => s.isExpired).toList();
 
     return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddStockDialog(context, provider),
-        backgroundColor: AppTheme.primary,
-        icon: const Icon(Icons.add),
-        label: const Text('Ajouter'),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'restock_fab',
+            onPressed: () => _showRestockDialog(context, provider),
+            backgroundColor: const Color(0xFF2E7D32),
+            icon: const Icon(Icons.add_shopping_cart),
+            label: const Text('Approvisionner'),
+          ),
+          const SizedBox(height: 10),
+          FloatingActionButton.extended(
+            heroTag: 'add_stock_fab',
+            onPressed: () => _showAddStockDialog(context, provider),
+            backgroundColor: AppTheme.primary,
+            icon: const Icon(Icons.add),
+            label: const Text('Ajouter article'),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -258,6 +272,197 @@ class _StockTabState extends State<_StockTab> {
                 }
               },
               child: const Text('Ajouter'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Dialog Approvisionner ────────────────────────────────────────────────
+  void _showRestockDialog(BuildContext context, AppProvider provider) {
+    if (provider.stockItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Aucun article de stock disponible'),
+          backgroundColor: AppTheme.warning,
+        ),
+      );
+      return;
+    }
+
+    StockItem selectedItem = provider.stockItems.first;
+    final qtyCtrl  = TextEditingController(text: '1');
+    final priceCtrl = TextEditingController();
+    final noteCtrl  = TextEditingController();
+    String? selectedSupplierId;
+    String? selectedSupplierName;
+
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.add_shopping_cart, color: Color(0xFF2E7D32), size: 22),
+              SizedBox(width: 8),
+              Text('Approvisionner le stock'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Article
+                DropdownButtonFormField<String>(
+                  value: selectedItem.id,
+                  style: const TextStyle(color: Colors.white),
+                  dropdownColor: AppTheme.cardBg,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Article *'),
+                  items: provider.stockItems.map((s) => DropdownMenuItem(
+                    value: s.id,
+                    child: Text('${s.name} (${s.currentQuantity} ${s.unit})',
+                        overflow: TextOverflow.ellipsis),
+                  )).toList(),
+                  onChanged: (v) => setS(() {
+                    selectedItem = provider.stockItems.firstWhere((s) => s.id == v);
+                  }),
+                ),
+                const SizedBox(height: 10),
+                // Quantité
+                TextField(
+                  controller: qtyCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Quantité à ajouter *',
+                    suffixText: selectedItem.unit,
+                    suffixStyle: const TextStyle(color: AppTheme.primary),
+                    prefixIcon: const Icon(Icons.add_circle_outline, color: Color(0xFF2E7D32)),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Prix d'achat
+                TextField(
+                  controller: priceCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Prix d\'achat (F CFA, optionnel)',
+                    prefixIcon: Icon(Icons.monetization_on_outlined, color: AppTheme.primary),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Fournisseur
+                if (provider.suppliers.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    value: selectedSupplierId,
+                    style: const TextStyle(color: Colors.white),
+                    dropdownColor: AppTheme.cardBg,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Fournisseur (optionnel)'),
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('— Aucun —')),
+                      ...provider.suppliers.map((s) => DropdownMenuItem(
+                        value: s.id,
+                        child: Text(s.name, overflow: TextOverflow.ellipsis),
+                      )),
+                    ],
+                    onChanged: (v) => setS(() {
+                      selectedSupplierId = v;
+                      selectedSupplierName = v == null
+                          ? null
+                          : provider.suppliers.firstWhere((s) => s.id == v).name;
+                    }),
+                  )
+                else
+                  const Padding(
+                    padding: EdgeInsets.only(top: 4),
+                    child: Text('Aucun fournisseur enregistré',
+                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  ),
+                const SizedBox(height: 10),
+                // Note
+                TextField(
+                  controller: noteCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Note (optionnel)',
+                    prefixIcon: Icon(Icons.notes, color: AppTheme.textSecondary),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // Résumé
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2E7D32).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF2E7D32).withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: Color(0xFF2E7D32), size: 14),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Stock actuel: ${selectedItem.currentQuantity} ${selectedItem.unit}\n'
+                          'Après appro: ${selectedItem.currentQuantity + (double.tryParse(qtyCtrl.text) ?? 0)} ${selectedItem.unit}',
+                          style: const TextStyle(color: Color(0xFF2E7D32), fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.check, size: 16),
+              label: const Text('Approvisionner'),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2E7D32)),
+              onPressed: () async {
+                final qty = double.tryParse(qtyCtrl.text);
+                if (qty == null || qty <= 0) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('Entrez une quantité valide (> 0)'),
+                        backgroundColor: AppTheme.warning),
+                  );
+                  return;
+                }
+                try {
+                  await provider.restockItem(
+                    stockItemId: selectedItem.id,
+                    qty: qty,
+                    purchasePrice: double.tryParse(priceCtrl.text),
+                    supplierId: selectedSupplierId,
+                    supplierName: selectedSupplierName,
+                    note: noteCtrl.text.isEmpty ? null : noteCtrl.text,
+                  );
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '✅ +$qty ${selectedItem.unit} ajouté à ${selectedItem.name}',
+                        ),
+                        backgroundColor: const Color(0xFF2E7D32),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      SnackBar(content: Text('Erreur: $e'), backgroundColor: AppTheme.error),
+                    );
+                  }
+                }
+              },
             ),
           ],
         ),

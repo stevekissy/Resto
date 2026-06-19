@@ -6,6 +6,7 @@ import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../../models/models.dart';
 import '../../services/print_service.dart';
+import '../../services/tts_service.dart';
 
 // ════════════════════════════════════════════════════════════════════════════
 //  CashierScreen — Caisse Sankadio Manager
@@ -25,17 +26,43 @@ class CashierScreen extends StatefulWidget {
 class _CashierScreenState extends State<CashierScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  bool _voiceAssistantEnabled = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    if (_voiceAssistantEnabled) {
+      TtsService().stopCashierReminders();
+    }
     super.dispose();
+  }
+
+  void _toggleVoiceAssistant(AppProvider provider) {
+    setState(() => _voiceAssistantEnabled = !_voiceAssistantEnabled);
+    if (_voiceAssistantEnabled) {
+      TtsService().startCashierReminders(provider);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔊 Assistant vocal activé — rappels toutes les 2 min'),
+          backgroundColor: Color(0xFF1565C0),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } else {
+      TtsService().stopCashierReminders();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔇 Assistant vocal désactivé'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   @override
@@ -50,32 +77,78 @@ class _CashierScreenState extends State<CashierScreen>
           // ── TABS ────────────────────────────────────────────────────
           Container(
             color: AppTheme.surface,
-            child: TabBar(
-              controller: _tabController,
-              indicatorColor: AppTheme.primary,
-              labelColor: AppTheme.primary,
-              unselectedLabelColor: AppTheme.textSecondary,
-              isScrollable: true,
-              tabs: [
-                Tab(
-                  icon: Badge(
-                    label: Text('$tab1Count'),
-                    isLabelVisible: tab1Count > 0,
-                    child: const Icon(Icons.point_of_sale, size: 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TabBar(
+                    controller: _tabController,
+                    indicatorColor: AppTheme.primary,
+                    labelColor: AppTheme.primary,
+                    unselectedLabelColor: AppTheme.textSecondary,
+                    isScrollable: true,
+                    tabs: [
+                      Tab(
+                        icon: Badge(
+                          label: Text('$tab1Count'),
+                          isLabelVisible: tab1Count > 0,
+                          child: const Icon(Icons.point_of_sale, size: 16),
+                        ),
+                        text: 'Caisse',
+                      ),
+                      Tab(
+                        icon: Badge(
+                          label: Text('$tab2Count'),
+                          isLabelVisible: tab2Count > 0,
+                          child: const Icon(Icons.receipt_long, size: 16),
+                        ),
+                        text: 'Factures',
+                      ),
+                      const Tab(
+                        icon: Icon(Icons.bar_chart, size: 16),
+                        text: 'Point de Caisse',
+                      ),
+                      const Tab(
+                        icon: Icon(Icons.history, size: 16),
+                        text: 'Historique',
+                      ),
+                    ],
                   ),
-                  text: 'Caisse',
                 ),
-                Tab(
-                  icon: Badge(
-                    label: Text('$tab2Count'),
-                    isLabelVisible: tab2Count > 0,
-                    child: const Icon(Icons.receipt_long, size: 16),
+                // Bouton assistant vocal
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Tooltip(
+                    message: _voiceAssistantEnabled
+                        ? 'Désactiver l\'assistant vocal'
+                        : 'Activer l\'assistant vocal',
+                    child: InkWell(
+                      onTap: () => _toggleVoiceAssistant(provider),
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: _voiceAssistantEnabled
+                              ? const Color(0xFF1565C0).withValues(alpha: 0.2)
+                              : AppTheme.surfaceLight,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _voiceAssistantEnabled
+                                ? const Color(0xFF1565C0)
+                                : AppTheme.textSecondary.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Icon(
+                          _voiceAssistantEnabled
+                              ? Icons.volume_up
+                              : Icons.volume_off,
+                          color: _voiceAssistantEnabled
+                              ? const Color(0xFF1565C0)
+                              : AppTheme.textSecondary,
+                          size: 18,
+                        ),
+                      ),
+                    ),
                   ),
-                  text: 'Factures',
-                ),
-                const Tab(
-                  icon: Icon(Icons.bar_chart, size: 16),
-                  text: 'Point de Caisse',
                 ),
               ],
             ),
@@ -87,6 +160,7 @@ class _CashierScreenState extends State<CashierScreen>
                 _CaisseTab(),
                 _FacturesEnAttenteTab(),
                 _PointCaisseTab(),
+                _HistoriqueFacturesTab(),
               ],
             ),
           ),
@@ -1709,4 +1783,440 @@ class _ProductStat {
     required this.totalAmount,
     required this.orderCount,
   });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  TAB 4 — Historique des Factures
+// ════════════════════════════════════════════════════════════════════════════
+
+class _HistoriqueFacturesTab extends StatefulWidget {
+  const _HistoriqueFacturesTab();
+
+  @override
+  State<_HistoriqueFacturesTab> createState() => _HistoriqueFacturesTabState();
+}
+
+class _HistoriqueFacturesTabState extends State<_HistoriqueFacturesTab> {
+  final _searchCtrl = TextEditingController();
+  String _search = '';
+  String _filterKind  = 'tous';    // tous | cashout | settlement
+  DateTime? _dateFrom;
+  DateTime? _dateTo;
+
+  final _fmtDate = DateFormat('dd/MM/yyyy');
+  final _fmtFull = DateFormat('dd/MM/yyyy HH:mm');
+  final _fmtAmt  = NumberFormat('#,###', 'fr_FR');
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Map<String, dynamic>> _applyFilters(List<Map<String, dynamic>> all) {
+    final q = _search.toLowerCase();
+    return all.where((inv) {
+      // Filtre type
+      if (_filterKind != 'tous' && inv['invoiceKind'] != _filterKind) return false;
+
+      // Filtre date
+      final ts = (inv['settledAt'] ?? inv['cashoutAt'] ?? 0) as int;
+      final dt = ts > 0 ? DateTime.fromMillisecondsSinceEpoch(ts) : null;
+      if (_dateFrom != null && dt != null && dt.isBefore(_dateFrom!)) return false;
+      if (_dateTo != null && dt != null && dt.isAfter(_dateTo!.add(const Duration(days: 1)))) return false;
+
+      // Filtre recherche
+      if (q.isEmpty) return true;
+      final invoiceNum = ((inv['cashoutInvoiceNumber'] ?? inv['settlementInvoiceNumber'] ?? '') as String).toLowerCase();
+      final table      = ((inv['tableNumber'] ?? '') as Object).toString().toLowerCase();
+      final server     = ((inv['serverName'] ?? '') as String).toLowerCase();
+      final cashier    = ((inv['cashierName'] ?? '') as String).toLowerCase();
+      final method     = ((inv['paymentMethod'] ?? '') as String).toLowerCase();
+      return invoiceNum.contains(q) || table.contains(q) || server.contains(q) ||
+             cashier.contains(q) || method.contains(q);
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<AppProvider>();
+    final all      = provider.invoiceHistory;
+    final filtered = _applyFilters(all);
+
+    return Column(
+      children: [
+        // ── Barre de recherche ───────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: Column(
+            children: [
+              TextField(
+                controller: _searchCtrl,
+                style: const TextStyle(color: Colors.white),
+                onChanged: (v) => setState(() => _search = v),
+                decoration: InputDecoration(
+                  hintText: 'N° facture, table, serveur, caissier, mode...',
+                  prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary),
+                  suffixIcon: _search.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 16, color: AppTheme.textSecondary),
+                          onPressed: () { _searchCtrl.clear(); setState(() => _search = ''); },
+                        )
+                      : null,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+              const SizedBox(height: 8),
+              // ── Filtres ──────────────────────────────────────────────
+              Row(
+                children: [
+                  _FilterChip(label: 'Tous', selected: _filterKind == 'tous',
+                      onTap: () => setState(() => _filterKind = 'tous'),
+                      color: AppTheme.primary),
+                  const SizedBox(width: 6),
+                  _FilterChip(label: 'Provisoires', selected: _filterKind == 'cashout',
+                      onTap: () => setState(() => _filterKind = 'cashout'),
+                      color: AppTheme.warning),
+                  const SizedBox(width: 6),
+                  _FilterChip(label: 'Réglées', selected: _filterKind == 'settlement',
+                      onTap: () => setState(() => _filterKind = 'settlement'),
+                      color: AppTheme.success),
+                  const Spacer(),
+                  // Filtre date
+                  IconButton(
+                    icon: Icon(
+                      Icons.date_range,
+                      color: (_dateFrom != null || _dateTo != null) ? AppTheme.primary : AppTheme.textSecondary,
+                      size: 20,
+                    ),
+                    tooltip: 'Filtrer par date',
+                    onPressed: () => _showDateFilter(context),
+                  ),
+                  if (_dateFrom != null || _dateTo != null)
+                    IconButton(
+                      icon: const Icon(Icons.close, color: AppTheme.error, size: 16),
+                      tooltip: 'Effacer filtre date',
+                      onPressed: () => setState(() { _dateFrom = null; _dateTo = null; }),
+                    ),
+                ],
+              ),
+              if (_dateFrom != null || _dateTo != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Date: ${_dateFrom != null ? _fmtDate.format(_dateFrom!) : "—"} → ${_dateTo != null ? _fmtDate.format(_dateTo!) : "—"}',
+                    style: const TextStyle(color: AppTheme.primary, fontSize: 11),
+                  ),
+                ),
+              const SizedBox(height: 8),
+              // Stats résumé
+              _buildStatsRow(filtered),
+            ],
+          ),
+        ),
+        // ── Liste ────────────────────────────────────────────────────
+        Expanded(
+          child: filtered.isEmpty
+              ? EmptyState(
+                  icon: Icons.history,
+                  title: all.isEmpty ? 'Aucune facture enregistrée' : 'Aucun résultat',
+                  subtitle: all.isEmpty ? null : 'Modifiez vos critères de recherche',
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
+                  itemCount: filtered.length,
+                  itemBuilder: (ctx, i) => _InvoiceHistoryCard(
+                    invoice: filtered[i],
+                    fmtFull: _fmtFull,
+                    fmtAmt: _fmtAmt,
+                    onReprint: () => _reprintInvoice(context, filtered[i]),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatsRow(List<Map<String, dynamic>> filtered) {
+    final cashoutCount     = filtered.where((i) => i['invoiceKind'] == 'cashout').length;
+    final settlementCount  = filtered.where((i) => i['invoiceKind'] == 'settlement').length;
+    double totalSettled    = 0;
+    for (final inv in filtered) {
+      if (inv['invoiceKind'] == 'settlement') {
+        totalSettled += (inv['amountPaid'] as num?)?.toDouble() ?? 0;
+      }
+    }
+    return Row(
+      children: [
+        _StatMini(label: 'Total', value: '${filtered.length}', color: AppTheme.primary),
+        const SizedBox(width: 8),
+        _StatMini(label: 'Provisoires', value: '$cashoutCount', color: AppTheme.warning),
+        const SizedBox(width: 8),
+        _StatMini(label: 'Réglées', value: '$settlementCount', color: AppTheme.success),
+        const SizedBox(width: 8),
+        _StatMini(label: 'Encaissé', value: '${_fmtAmt.format(totalSettled)} F',
+            color: AppTheme.success),
+      ],
+    );
+  }
+
+  Future<void> _showDateFilter(BuildContext context) async {
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2024),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+      initialDateRange: _dateFrom != null && _dateTo != null
+          ? DateTimeRange(start: _dateFrom!, end: _dateTo!)
+          : null,
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(colorScheme: ColorScheme.dark(primary: AppTheme.primary)),
+        child: child!,
+      ),
+    );
+    if (range != null) {
+      setState(() { _dateFrom = range.start; _dateTo = range.end; });
+    }
+  }
+
+  void _reprintInvoice(BuildContext context, Map<String, dynamic> inv) {
+    final printer = PrintService();
+    final kind = inv['invoiceKind'] as String;
+    // Reconstruire un Order minimal depuis les données de la facture
+    final items = (inv['items'] as List<dynamic>? ?? []).map((item) {
+      final m = Map<String, dynamic>.from(item as Map);
+      return OrderItem(
+        productId: m['productId'] as String? ?? '',
+        productName: m['productName'] as String? ?? m['name'] as String? ?? '',
+        quantity: (m['quantity'] as num?)?.toInt() ?? 1,
+        unitPrice: (m['unitPrice'] as num?)?.toDouble() ?? 0,
+        specialComment: m['specialComment'] as String? ?? m['notes'] as String?,
+      );
+    }).toList();
+
+    final order = Order(
+      id: inv['orderId'] as String? ?? '',
+      orderNumber: (inv['orderNumber'] as num?)?.toInt() ?? 0,
+      tableNumber: (inv['tableNumber'] ?? '0').toString(),
+      serverName: inv['serverName'] as String? ?? '',
+      status: OrderStatus.served,
+      items: items,
+      discount: (inv['discount'] as num?)?.toDouble() ?? 0,
+      cashierName: inv['cashierName'] as String?,
+      cashoutInvoiceNumber: inv['cashoutInvoiceNumber'] as String? ?? '',
+      settlementInvoiceNumber: inv['settlementInvoiceNumber'] as String? ?? '',
+    );
+
+    if (kind == 'cashout') {
+      final invoiceNum = inv['cashoutInvoiceNumber'] as String? ?? '';
+      printer.printCashoutInvoice(
+        order: order,
+        cashoutInvoiceNumber: invoiceNum,
+        cashierName: inv['cashierName'] as String?,
+      );
+    } else {
+      final invoiceNum = inv['settlementInvoiceNumber'] as String? ?? '';
+      final payMethod  = inv['paymentMethod'] as String? ?? 'Espèces';
+      final amtPaid    = (inv['amountPaid']   as num?)?.toDouble() ?? 0;
+      final change     = (inv['changeAmount'] as num?)?.toDouble() ?? 0;
+      printer.printSettlementInvoice(
+        order: order,
+        settlementInvoiceNumber: invoiceNum,
+        paymentMethod: payMethod,
+        amountPaid: amtPaid,
+        changeAmount: change,
+        cashierName: inv['cashierName'] as String?,
+      );
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('🖨 Impression envoyée'), duration: Duration(seconds: 2)),
+    );
+  }
+}
+
+// ── Carte facture historique ─────────────────────────────────────────────────
+class _InvoiceHistoryCard extends StatelessWidget {
+  final Map<String, dynamic> invoice;
+  final DateFormat fmtFull;
+  final NumberFormat fmtAmt;
+  final VoidCallback onReprint;
+
+  const _InvoiceHistoryCard({
+    required this.invoice,
+    required this.fmtFull,
+    required this.fmtAmt,
+    required this.onReprint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final kind         = invoice['invoiceKind'] as String;
+    final isSettlement = kind == 'settlement';
+    final color        = isSettlement ? AppTheme.success : AppTheme.warning;
+    final icon         = isSettlement ? Icons.check_circle : Icons.hourglass_top;
+    final label        = isSettlement ? 'RÉGLÉE' : 'PROVISOIRE';
+
+    final ts = (invoice['settledAt'] ?? invoice['cashoutAt'] ?? 0) as int;
+    final date = ts > 0 ? DateTime.fromMillisecondsSinceEpoch(ts) : null;
+
+    final invoiceNum = (invoice['cashoutInvoiceNumber'] ??
+                       invoice['settlementInvoiceNumber'] ?? '') as String;
+    final tableNum   = invoice['tableNumber']  ?? '—';
+    final server     = invoice['serverName']   as String? ?? '—';
+    final cashier    = invoice['cashierName']  as String? ?? '—';
+    final total      = (invoice['totalAmount'] as num?)?.toDouble() ?? 0;
+    final amtPaid    = (invoice['amountPaid']  as num?)?.toDouble();
+    final method     = invoice['paymentMethod'] as String? ?? '—';
+
+    return GlassCard(
+      margin: const EdgeInsets.only(bottom: 8),
+      border: Border.all(color: color.withValues(alpha: 0.3)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, color: color, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      invoiceNum.isNotEmpty ? invoiceNum : 'Sans numéro',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                    ),
+                    Text(
+                      date != null ? fmtFull.format(date) : '—',
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  StatusBadge(label: label, color: color, fontSize: 10),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${fmtAmt.format(total)} F',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Divider(color: Color(0xFF2A2A5A), height: 1),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _InfoRow(icon: Icons.table_restaurant, label: 'Table $tableNum'),
+                    _InfoRow(icon: Icons.person,           label: server),
+                    _InfoRow(icon: Icons.manage_accounts,  label: cashier),
+                    if (isSettlement) ...[
+                      _InfoRow(icon: Icons.payment,
+                          label: '$method • ${fmtAmt.format(amtPaid ?? 0)} F'),
+                    ],
+                  ],
+                ),
+              ),
+              // Bouton réimprimer
+              Column(
+                children: [
+                  IconButton(
+                    onPressed: onReprint,
+                    icon: const Icon(Icons.print_outlined, color: AppTheme.primary, size: 22),
+                    tooltip: 'Réimprimer',
+                  ),
+                  Text(
+                    isSettlement ? 'Définitif' : 'Provisoire',
+                    style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _InfoRow({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 3),
+    child: Row(
+      children: [
+        Icon(icon, size: 11, color: AppTheme.textSecondary),
+        const SizedBox(width: 4),
+        Expanded(child: Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+            overflow: TextOverflow.ellipsis)),
+      ],
+    ),
+  );
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color color;
+  const _FilterChip({required this.label, required this.selected,
+      required this.onTap, required this.color});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: selected ? color.withValues(alpha: 0.15) : AppTheme.surfaceLight,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: selected ? color : const Color(0xFF2A2A5A)),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              color: selected ? color : AppTheme.textSecondary,
+              fontSize: 11, fontWeight: FontWeight.w600)),
+    ),
+  );
+}
+
+class _StatMini extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  const _StatMini({required this.label, required this.value, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: color.withValues(alpha: 0.3)),
+    ),
+    child: Column(
+      children: [
+        Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12)),
+        Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9)),
+      ],
+    ),
+  );
 }
