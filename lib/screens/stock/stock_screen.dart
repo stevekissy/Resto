@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
@@ -84,33 +83,13 @@ class _StockTabState extends State<_StockTab> {
     if (_filter == 'expired') items = items.where((s) => s.isExpired).toList();
 
     return Scaffold(
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.extended(
-            heroTag: 'restock_fab',
-            onPressed: () => _showRestockDialog(context, provider),
-            backgroundColor: const Color(0xFF2E7D32),
-            icon: const Icon(Icons.add_shopping_cart),
-            label: const Text('Approvisionner'),
-          ),
-          const SizedBox(height: 10),
-          FloatingActionButton.extended(
-            heroTag: 'add_stock_fab',
-            onPressed: () => _showAddStockDialog(context, provider),
-            backgroundColor: AppTheme.primary,
-            icon: const Icon(Icons.add),
-            label: const Text('Ajouter article'),
-          ),
-        ],
-      ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
-                // Filter buttons
+                // Ligne filtres + bouton Approvisionner
                 Row(
                   children: [
                     _FilterBtn(label: 'Tous', selected: _filter == 'all', onTap: () => setState(() => _filter = 'all'), color: AppTheme.primary),
@@ -118,9 +97,28 @@ class _StockTabState extends State<_StockTab> {
                     _FilterBtn(label: '⚠ Faible (${provider.lowStockItems.length})', selected: _filter == 'low', onTap: () => setState(() => _filter = 'low'), color: AppTheme.warning),
                     const SizedBox(width: 6),
                     _FilterBtn(label: '🔴 Rupture (${provider.outOfStockItems.length})', selected: _filter == 'out', onTap: () => setState(() => _filter = 'out'), color: AppTheme.error),
+                    const Spacer(),
+                    // Bouton Approvisionner — en haut, ne couvre pas la liste
+                    TextButton.icon(
+                      onPressed: () => _showRestockDialog(context, provider),
+                      icon: const Icon(Icons.add_shopping_cart, size: 16, color: Color(0xFF2E7D32)),
+                      label: const Text(
+                        'Approvisionner',
+                        style: TextStyle(color: Color(0xFF2E7D32), fontSize: 12, fontWeight: FontWeight.w700),
+                      ),
+                      style: TextButton.styleFrom(
+                        backgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.12),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: const BorderSide(color: Color(0xFF2E7D32), width: 1),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
+                // Category chips
                 SizedBox(
                   height: 34,
                   child: ListView.separated(
@@ -155,9 +153,7 @@ class _StockTabState extends State<_StockTab> {
                   title: provider.stockItems.isEmpty
                       ? 'Aucun article de stock enregistré'
                       : 'Aucun article dans cette catégorie',
-                  subtitle: provider.stockItems.isEmpty
-                      ? 'Utilisez le bouton + pour ajouter un article'
-                      : null,
+                  subtitle: null,
                 )
               : ListView.builder(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -174,104 +170,143 @@ class _StockTabState extends State<_StockTab> {
   }
 
   void _showEditDialog(BuildContext context, StockItem item, AppProvider provider) {
-    final ctrl = TextEditingController(text: item.currentQuantity.toString());
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Mettre à jour: ${item.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Quantité actuelle: ${item.currentQuantity} ${item.unit}',
-              style: const TextStyle(color: AppTheme.textSecondary)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctrl,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Nouvelle quantité (${item.unit})',
-                prefixIcon: const Icon(Icons.edit, color: AppTheme.primary),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
-          ElevatedButton(
-            onPressed: () async {
-              final qty = double.tryParse(ctrl.text);
-              if (qty != null && qty >= 0) {
-                await provider.updateStock(item.id, qty);
-                if (context.mounted) Navigator.pop(context);
-              }
-            },
-            child: const Text('Confirmer'),
-          ),
-        ],
-      ),
-    );
-  }
+    final nameCtrl  = TextEditingController(text: item.name);
+    final unitCtrl  = TextEditingController(text: item.unit);
+    final minCtrl   = TextEditingController(text: item.minQuantity.toString());
+    String category = item.category;
 
-  void _showAddStockDialog(BuildContext context, AppProvider provider) {
-    final nameCtrl = TextEditingController();
-    final unitCtrl = TextEditingController(text: 'kg');
-    final qtyCtrl = TextEditingController(text: '0');
-    final minCtrl = TextEditingController(text: '5');
-    final maxCtrl = TextEditingController(text: '100');
-    final costCtrl = TextEditingController(text: '0');
-    String category = 'Légumes';
+    final availableCategories = [
+      'Viandes & Poissons', 'Légumes', 'Féculents',
+      'Épices & Huiles', 'Boissons', 'Autres',
+    ];
+    // Si la catégorie de l'article n'est pas dans la liste prédéfinie, on l'ajoute
+    if (!availableCategories.contains(category)) {
+      availableCategories.insert(0, category);
+    }
 
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
-          title: const Text('Ajouter un article au stock'),
+          title: Row(
+            children: [
+              const Icon(Icons.edit, color: AppTheme.primary, size: 20),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Modifier: ${item.name}', overflow: TextOverflow.ellipsis)),
+            ],
+          ),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Nom')),
-                const SizedBox(height: 8),
-                TextField(controller: unitCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Unité (kg, L, pcs...)')),
-                const SizedBox(height: 8),
-                TextField(controller: qtyCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Quantité actuelle')),
-                const SizedBox(height: 8),
-                TextField(controller: minCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Quantité minimale')),
-                const SizedBox(height: 8),
-                TextField(controller: costCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Coût unitaire (F CFA)')),
-                const SizedBox(height: 8),
+                // Info quantité — lecture seule
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF2A2A5A)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.inventory_2, color: AppTheme.textSecondary, size: 16),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Stock actuel : ${item.currentQuantity} ${item.unit}',
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                      ),
+                      const Spacer(),
+                      const Text('(non modifiable)', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                    ],
+                  ),
+                ),
+                // Nom
+                TextField(
+                  controller: nameCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Nom du produit',
+                    prefixIcon: Icon(Icons.label_outline, color: AppTheme.primary),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Catégorie
                 DropdownButtonFormField<String>(
                   value: category,
                   style: const TextStyle(color: Colors.white),
                   dropdownColor: AppTheme.cardBg,
-                  decoration: const InputDecoration(labelText: 'Catégorie'),
-                  items: ['Viandes & Poissons', 'Légumes', 'Féculents', 'Épices & Huiles', 'Boissons', 'Autres']
-                    .map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Catégorie',
+                    prefixIcon: Icon(Icons.category_outlined, color: AppTheme.primary),
+                  ),
+                  items: availableCategories
+                      .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                      .toList(),
                   onChanged: (v) => setS(() => category = v!),
+                ),
+                const SizedBox(height: 10),
+                // Unité
+                TextField(
+                  controller: unitCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Unité (kg, L, pcs…)',
+                    prefixIcon: Icon(Icons.straighten, color: AppTheme.primary),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Seuil d'alerte
+                TextField(
+                  controller: minCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Seuil d\'alerte (quantité minimale)',
+                    prefixIcon: Icon(Icons.warning_amber_outlined, color: AppTheme.warning),
+                  ),
                 ),
               ],
             ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
-            ElevatedButton(
+            ElevatedButton.icon(
+              icon: const Icon(Icons.save, size: 16),
+              label: const Text('Enregistrer'),
               onPressed: () async {
-                if (nameCtrl.text.isNotEmpty) {
-                  await provider.addStockItem(StockItem(
-                    id: const Uuid().v4(),
-                    name: nameCtrl.text,
-                    unit: unitCtrl.text,
-                    currentQuantity: double.tryParse(qtyCtrl.text) ?? 0,
-                    minQuantity: double.tryParse(minCtrl.text) ?? 5,
-                    maxQuantity: double.tryParse(maxCtrl.text) ?? 100,
-                    unitCost: double.tryParse(costCtrl.text) ?? 0,
-                    category: category,
-                  ));
-                  if (ctx.mounted) Navigator.pop(ctx);
+                if (nameCtrl.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text('Le nom du produit est obligatoire'),
+                      backgroundColor: AppTheme.warning,
+                    ),
+                  );
+                  return;
+                }
+                final updatedItem = StockItem(
+                  id: item.id,
+                  name: nameCtrl.text.trim(),
+                  unit: unitCtrl.text.trim().isEmpty ? item.unit : unitCtrl.text.trim(),
+                  currentQuantity: item.currentQuantity,
+                  minQuantity: double.tryParse(minCtrl.text) ?? item.minQuantity,
+                  maxQuantity: item.maxQuantity,
+                  unitCost: item.unitCost,
+                  category: category,
+                  expiryDate: item.expiryDate,
+                );
+                await provider.updateStockItem(updatedItem);
+                if (ctx.mounted) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(
+                      content: Text('✅ ${updatedItem.name} mis à jour'),
+                      backgroundColor: AppTheme.success,
+                    ),
+                  );
                 }
               },
-              child: const Text('Ajouter'),
             ),
           ],
         ),
