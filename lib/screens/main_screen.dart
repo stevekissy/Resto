@@ -17,6 +17,58 @@ import 'admin/products_admin_screen.dart';
 import 'admin/admin_management_screen.dart';
 import 'login_screen.dart';
 
+/// Widget affiché quand un utilisateur tente d'accéder à un module interdit.
+class _AccessDeniedScreen extends StatelessWidget {
+  final String moduleName;
+  const _AccessDeniedScreen({required this.moduleName});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A0A2E),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.lock, color: Colors.red, size: 48),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Accès refusé',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Permission insuffisante pour accéder au module "$moduleName".',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFF8888AA), fontSize: 14),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Contactez votre administrateur.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Color(0xFF8888AA), fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
@@ -28,28 +80,65 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  List<_NavItem> _getNavItems(UserRole role) {
+  /// Retourne les items de navigation autorisés selon les permissions Firestore
+  List<_NavItem> _getNavItems(AppProvider provider) {
+    final role = provider.currentUser?.role ?? UserRole.server;
+
+    // Chaque item définit sa clé permission Firestore
     final all = [
-      _NavItem(icon: Icons.dashboard, label: 'Tableau de bord', screen: const DashboardScreen(), roles: UserRole.values.toSet()),
-      _NavItem(icon: Icons.receipt_long, label: 'Commandes', screen: const OrderScreen(), roles: {UserRole.admin, UserRole.manager, UserRole.cashier, UserRole.server}),
-      _NavItem(icon: Icons.restaurant, label: 'Cuisine', screen: const KitchenScreen(), roles: {UserRole.admin, UserRole.manager, UserRole.kitchen}),
-      _NavItem(icon: Icons.point_of_sale, label: 'Caisse', screen: const CashierScreen(), roles: {UserRole.admin, UserRole.manager, UserRole.cashier}),
-      _NavItem(icon: Icons.inventory, label: 'Stock', screen: const StockScreen(), roles: {UserRole.admin, UserRole.manager}),
-      _NavItem(icon: Icons.people, label: 'Personnel', screen: const StaffScreen(), roles: {UserRole.admin, UserRole.manager}),
-      _NavItem(icon: Icons.chat, label: 'Messages', screen: const MessagingScreen(), roles: UserRole.values.toSet()),
-      _NavItem(icon: Icons.bar_chart, label: 'Statistiques', screen: const StatsScreen(), roles: {UserRole.admin, UserRole.manager}),
-      _NavItem(icon: Icons.local_shipping, label: 'Fournisseurs', screen: const SupplierScreen(), roles: {UserRole.admin, UserRole.manager}),
-      _NavItem(icon: Icons.restaurant_menu, label: 'Produits', screen: const ProductsAdminScreen(), roles: {UserRole.admin, UserRole.manager}),
-      _NavItem(icon: Icons.admin_panel_settings, label: 'Gestion Admins', screen: const AdminManagementScreen(), roles: {UserRole.admin}),
+      _NavItem(
+        icon: Icons.dashboard, label: 'Tableau de bord',
+        screen: const DashboardScreen(), permissionKey: 'dashboard',
+      ),
+      _NavItem(
+        icon: Icons.receipt_long, label: 'Commandes',
+        screen: const OrderScreen(), permissionKey: 'orders',
+      ),
+      _NavItem(
+        icon: Icons.restaurant, label: 'Cuisine',
+        screen: const KitchenScreen(), permissionKey: 'kitchen',
+      ),
+      _NavItem(
+        icon: Icons.point_of_sale, label: 'Caisse',
+        screen: const CashierScreen(), permissionKey: 'cashier',
+      ),
+      _NavItem(
+        icon: Icons.inventory, label: 'Stock',
+        screen: const StockScreen(), permissionKey: 'stock',
+      ),
+      _NavItem(
+        icon: Icons.people, label: 'Personnel',
+        screen: const StaffScreen(), permissionKey: 'personnel',
+      ),
+      _NavItem(
+        icon: Icons.chat, label: 'Messages',
+        screen: const MessagingScreen(), permissionKey: 'messages',
+      ),
+      _NavItem(
+        icon: Icons.bar_chart, label: 'Statistiques',
+        screen: const StatsScreen(), permissionKey: 'statistics',
+      ),
+      _NavItem(
+        icon: Icons.local_shipping, label: 'Fournisseurs',
+        screen: const SupplierScreen(), permissionKey: 'suppliers',
+      ),
+      _NavItem(
+        icon: Icons.restaurant_menu, label: 'Produits',
+        screen: const ProductsAdminScreen(), permissionKey: 'productManagement',
+      ),
+      _NavItem(
+        icon: Icons.admin_panel_settings, label: 'Gestion Admins',
+        screen: const AdminManagementScreen(), permissionKey: 'adminManagement',
+      ),
     ];
-    return all.where((item) => item.roles.contains(role)).toList();
+
+    return all.where((item) => provider.hasPermission(role, item.permissionKey)).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    final role = provider.currentUser?.role ?? UserRole.server;
-    final navItems = _getNavItems(role);
+    final navItems = _getNavItems(provider);
     final currentIndex = _selectedIndex.clamp(0, navItems.length - 1);
 
     return Scaffold(
@@ -110,7 +199,10 @@ class _MainScreenState extends State<MainScreen> {
         ],
       ),
       drawer: _buildDrawer(context, navItems, provider),
-      body: navItems[currentIndex].screen,
+      // Guard : si la liste est vide (aucune permission), afficher accès refusé
+      body: navItems.isEmpty
+          ? const _AccessDeniedScreen(moduleName: 'Application')
+          : navItems[currentIndex].screen,
       bottomNavigationBar: navItems.length <= 5
         ? BottomNavigationBar(
             currentIndex: currentIndex,
@@ -342,9 +434,14 @@ class _NavItem {
   final IconData icon;
   final String label;
   final Widget screen;
-  final Set<UserRole> roles;
+  final String permissionKey;
 
-  const _NavItem({required this.icon, required this.label, required this.screen, required this.roles});
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.screen,
+    required this.permissionKey,
+  });
 }
 
 class _NotifTile extends StatelessWidget {

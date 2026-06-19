@@ -29,6 +29,7 @@ class AppProvider extends ChangeNotifier {
   StreamSubscription? _subSupplierOrders;
   StreamSubscription? _subAttendances;
   StreamSubscription? _subDailyCharges;
+  StreamSubscription? _subPermissions;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
@@ -300,7 +301,10 @@ class AppProvider extends ChangeNotifier {
 
       notifyListeners(); // UI réactive
 
-      // ÉTAPE 3 — Démarrer les streams temps réel
+      // ÉTAPE 3 — Initialiser les documents permissions si absents (fire-and-forget)
+      _firebase.initRolePermissions().catchError((e) => debugPrint('[AppProvider] initRolePermissions: $e'));
+
+      // ÉTAPE 4 — Démarrer les streams temps réel
       _startFirebaseStreams();
 
       _isLoading = false;
@@ -423,6 +427,17 @@ class AppProvider extends ChangeNotifier {
       onError: (e) { debugPrint('[stream.daily_charges] ERREUR: $e'); },
       cancelOnError: false,
     );
+
+    // Stream permissions Firestore — met à jour en temps réel
+    _subPermissions = _firebase.streamRolePermissions().listen(
+      (permsMap) {
+        _rolePermissions = permsMap;
+        notifyListeners();
+        debugPrint('[stream.permissions] Permissions rechargées depuis Firestore');
+      },
+      onError: (e) { debugPrint('[stream.permissions] ERREUR: $e'); },
+      cancelOnError: false,
+    );
   }
 
   void _stopFirebaseStreams() {
@@ -435,6 +450,7 @@ class AppProvider extends ChangeNotifier {
     _subSupplierOrders?.cancel();
     _subAttendances?.cancel();
     _subDailyCharges?.cancel();
+    _subPermissions?.cancel();
   }
 
   /// Déconnexion complète : signOut Firebase + nettoyage local.
@@ -967,54 +983,40 @@ class AppProvider extends ChangeNotifier {
   }
 
   // =================== PERMISSIONS PAR RÔLE ===================
+  // Chargées depuis Firestore (collection role_permissions)
+  // Initialisées avec les valeurs par défaut de FirebaseService.defaultPermissions()
 
-  // Structure : rolePermissions[role][module] = true/false
-  final Map<UserRole, Map<String, bool>> _rolePermissions = {
-    UserRole.admin: {
-      'dashboard': true, 'orders': true, 'kitchen': true, 'cashier': true,
-      'stock': true, 'staff': true, 'messaging': true, 'stats': true,
-      'suppliers': true, 'products': true, 'admin': true,
-    },
-    UserRole.manager: {
-      'dashboard': true, 'orders': true, 'kitchen': true, 'cashier': true,
-      'stock': true, 'staff': true, 'messaging': true, 'stats': true,
-      'suppliers': true, 'products': true, 'admin': false,
-    },
-    UserRole.cashier: {
-      'dashboard': true, 'orders': true, 'kitchen': false, 'cashier': true,
-      'stock': false, 'staff': false, 'messaging': true, 'stats': false,
-      'suppliers': false, 'products': false, 'admin': false,
-    },
-    UserRole.kitchen: {
-      'dashboard': true, 'orders': false, 'kitchen': true, 'cashier': false,
-      'stock': true, 'staff': false, 'messaging': true, 'stats': false,
-      'suppliers': false, 'products': false, 'admin': false,
-    },
-    UserRole.server: {
-      'dashboard': true, 'orders': true, 'kitchen': false, 'cashier': false,
-      'stock': false, 'staff': false, 'messaging': true, 'stats': false,
-      'suppliers': false, 'products': false, 'admin': false,
-    },
+  Map<UserRole, Map<String, bool>> _rolePermissions = {
+    for (final r in UserRole.values)
+      r: Map<String, bool>.from(FirebaseService.defaultPermissions(r)),
   };
 
   Map<String, bool> getRolePermissions(UserRole role) {
-    return Map<String, bool>.from(_rolePermissions[role] ?? {});
+    return Map<String, bool>.from(_rolePermissions[role] ?? FirebaseService.defaultPermissions(role));
   }
 
   List<String> getUserPermissions(UserRole role) {
-    final perms = _rolePermissions[role] ?? {};
+    final perms = _rolePermissions[role] ?? FirebaseService.defaultPermissions(role);
     return perms.entries.where((e) => e.value).map((e) => e.key).toList();
   }
 
-  void setRolePermission(UserRole role, String module, bool value) {
-    // L'admin garde toujours tous les accès
+  /// Modifie une permission en mémoire ET la persiste en Firestore.
+  /// L'admin ne peut pas être modifié.
+  Future<void> setRolePermission(UserRole role, String module, bool value) async {
     if (role == UserRole.admin) return;
-    _rolePermissions[role]?[module] = value;
+    _rolePermissions[role] ??= Map<String, bool>.from(FirebaseService.defaultPermissions(role));
+    _rolePermissions[role]![module] = value;
     notifyListeners();
+    // Persistance Firestore
+    try {
+      await _firebase.saveRolePermission(role, module, value);
+    } catch (e) {
+      debugPrint('[AppProvider] setRolePermission erreur Firestore: $e');
+    }
   }
 
   bool hasPermission(UserRole role, String module) {
-    return _rolePermissions[role]?[module] ?? false;
+    return _rolePermissions[role]?[module] ?? FirebaseService.defaultPermissions(role)[module] ?? false;
   }
 
   @override

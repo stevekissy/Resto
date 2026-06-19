@@ -146,8 +146,8 @@ class _PersonnelTab extends StatelessWidget {
                   dropdownColor: AppTheme.cardBg,
                   decoration: const InputDecoration(labelText: 'Rôle'),
                   items: UserRole.values.map((r) {
-                    const labels = ['Administrateur', 'Manager', 'Caissier(ère)', 'Cuisine', 'Serveur(se)'];
-                    return DropdownMenuItem(value: r, child: Text(labels[r.index]));
+                    final tmp = AppUser(id: '', name: '', email: '', phone: '', role: r);
+                    return DropdownMenuItem(value: r, child: Text(tmp.roleLabel));
                   }).toList(),
                   onChanged: (v) => setS(() => role = v!),
                 ),
@@ -468,8 +468,8 @@ class _UserCard extends StatelessWidget {
             dropdownColor: AppTheme.cardBg,
             decoration: const InputDecoration(labelText: 'Rôle'),
             items: UserRole.values.map((r) {
-              final labels = ['Administrateur', 'Manager', 'Caissier(ère)', 'Cuisine', 'Serveur(se)'];
-              return DropdownMenuItem(value: r, child: Text(labels[r.index]));
+              final tmp = AppUser(id: '', name: '', email: '', phone: '', role: r);
+              return DropdownMenuItem(value: r, child: Text(tmp.roleLabel));
             }).toList(),
             onChanged: (v) => setS(() => selectedRole = v!),
           ),
@@ -723,13 +723,17 @@ class _AccessTab extends StatelessWidget {
           const SectionHeader(title: 'Niveaux d\'Accès', icon: Icons.lock_open),
           const SizedBox(height: 12),
           ...UserRole.values.map((role) {
-            final roleLabels = ['Administrateur', 'Manager', 'Caissier(ère)', 'Cuisine', 'Serveur(se)'];
-            final permissions = _getRolePermissions(role);
+            // Lire les permissions depuis le provider (issues de Firestore)
+            final permsMap = provider.getRolePermissions(role);
+            final activePerms = permsMap.entries
+                .where((e) => e.value)
+                .map((e) => _moduleLabel(e.key))
+                .toList();
             final count = provider.users.where((u) => u.role == role).length;
-            final user = AppUser(id: '', name: roleLabels[role.index], email: '', phone: '', role: role);
+            final roleUser = AppUser(id: '', name: role.name, email: '', phone: '', role: role);
             return GlassCard(
               margin: const EdgeInsets.only(bottom: 10),
-              border: Border.all(color: user.roleColor.withValues(alpha: 0.3)),
+              border: Border.all(color: roleUser.roleColor.withValues(alpha: 0.3)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -737,16 +741,25 @@ class _AccessTab extends StatelessWidget {
                     children: [
                       Container(
                         padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: user.roleColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
-                        child: Icon(Icons.person, color: user.roleColor, size: 18),
+                        decoration: BoxDecoration(
+                          color: roleUser.roleColor.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(Icons.person, color: roleUser.roleColor, size: 18),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(roleLabels[role.index], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                            Text('$count membre(s)', style: TextStyle(color: user.roleColor, fontSize: 11)),
+                            Text(
+                              roleUser.roleLabel,
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14),
+                            ),
+                            Text(
+                              '$count membre(s)',
+                              style: TextStyle(color: roleUser.roleColor, fontSize: 11),
+                            ),
                           ],
                         ),
                       ),
@@ -755,19 +768,19 @@ class _AccessTab extends StatelessWidget {
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 6, runSpacing: 4,
-                    children: permissions.map((p) => Container(
+                    children: activePerms.map((p) => Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: user.roleColor.withValues(alpha: 0.1),
+                        color: roleUser.roleColor.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: user.roleColor.withValues(alpha: 0.3)),
+                        border: Border.all(color: roleUser.roleColor.withValues(alpha: 0.3)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.check, color: user.roleColor, size: 10),
+                          Icon(Icons.check, color: roleUser.roleColor, size: 10),
                           const SizedBox(width: 4),
-                          Text(p, style: TextStyle(color: user.roleColor, fontSize: 10)),
+                          Text(p, style: TextStyle(color: roleUser.roleColor, fontSize: 10)),
                         ],
                       ),
                     )).toList(),
@@ -775,19 +788,27 @@ class _AccessTab extends StatelessWidget {
                 ],
               ),
             );
-          }),
+          }).toList(),
         ],
       ),
     );
   }
 
-  List<String> _getRolePermissions(UserRole role) {
-    switch (role) {
-      case UserRole.admin: return ['Tableau de bord', 'Commandes', 'Cuisine', 'Caisse', 'Stock', 'Personnel', 'Messagerie', 'Statistiques', 'Fournisseurs', 'Gestion complète'];
-      case UserRole.manager: return ['Tableau de bord', 'Commandes', 'Statistiques', 'Personnel', 'Stock', 'Fournisseurs'];
-      case UserRole.cashier: return ['Commandes', 'Caisse', 'Facturation', 'Messagerie'];
-      case UserRole.kitchen: return ['Écran Cuisine', 'Messagerie'];
-      case UserRole.server: return ['Commandes', 'Consultation Tables', 'Messagerie'];
-    }
+  /// Convertit une clé Firestore en label lisible (doit rester sync avec _moduleLabels de admin_management_screen)
+  String _moduleLabel(String key) {
+    const labels = {
+      'dashboard': 'Tableau de bord',
+      'orders': 'Commandes',
+      'kitchen': 'Cuisine',
+      'cashier': 'Caisse',
+      'stock': 'Stock',
+      'personnel': 'Personnel',
+      'messages': 'Messages',
+      'statistics': 'Statistiques',
+      'suppliers': 'Fournisseurs',
+      'productManagement': 'Gestion Produits',
+      'adminManagement': 'Gestion Admins',
+    };
+    return labels[key] ?? key;
   }
 }

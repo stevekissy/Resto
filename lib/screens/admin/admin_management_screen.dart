@@ -304,18 +304,20 @@ class _UserCard extends StatelessWidget {
         builder: (ctx, setS) => AlertDialog(
           backgroundColor: AppTheme.surface,
           title: Text('Rôle de ${user.name}', style: const TextStyle(color: AppTheme.textPrimary)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: UserRole.values.map((role) {
-              final tempUser = AppUser(id: '', name: '', email: '', phone: '', role: role);
-              return RadioListTile<UserRole>(
-                value: role,
-                groupValue: selectedRole,
-                activeColor: AppTheme.primary,
-                title: Text(tempUser.roleLabel, style: const TextStyle(color: AppTheme.textPrimary)),
-                onChanged: (v) => setS(() => selectedRole = v!),
-              );
-            }).toList(),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: UserRole.values.map((role) {
+                final tempUser = AppUser(id: '', name: '', email: '', phone: '', role: role);
+                return RadioListTile<UserRole>(
+                  value: role,
+                  groupValue: selectedRole,
+                  activeColor: AppTheme.primary,
+                  title: Text(tempUser.roleLabel, style: const TextStyle(color: AppTheme.textPrimary)),
+                  onChanged: (v) => setS(() => selectedRole = v!),
+                );
+              }).toList(),
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
@@ -412,18 +414,19 @@ class _RolePermissionCard extends StatelessWidget {
     required this.provider,
   });
 
+  // Clés exactement alignées avec les champs Firestore (role_permissions)
   static const Map<String, String> _moduleLabels = {
     'dashboard': 'Tableau de bord',
     'orders': 'Commandes',
     'kitchen': 'Cuisine',
     'cashier': 'Caisse',
     'stock': 'Stock',
-    'staff': 'Personnel',
-    'messaging': 'Messages',
-    'stats': 'Statistiques',
+    'personnel': 'Personnel',
+    'messages': 'Messages',
+    'statistics': 'Statistiques',
     'suppliers': 'Fournisseurs',
-    'products': 'Gestion Produits',
-    'admin': 'Gestion Admins',
+    'productManagement': 'Gestion Produits',
+    'adminManagement': 'Gestion Admins',
   };
 
   static const Map<String, IconData> _moduleIcons = {
@@ -432,12 +435,12 @@ class _RolePermissionCard extends StatelessWidget {
     'kitchen': Icons.restaurant,
     'cashier': Icons.point_of_sale,
     'stock': Icons.inventory,
-    'staff': Icons.people,
-    'messaging': Icons.chat,
-    'stats': Icons.bar_chart,
+    'personnel': Icons.people,
+    'messages': Icons.chat,
+    'statistics': Icons.bar_chart,
     'suppliers': Icons.local_shipping,
-    'products': Icons.restaurant_menu,
-    'admin': Icons.admin_panel_settings,
+    'productManagement': Icons.restaurant_menu,
+    'adminManagement': Icons.admin_panel_settings,
   };
 
   @override
@@ -498,10 +501,11 @@ class _RolePermissionCard extends StatelessWidget {
                   else
                     Switch(
                       value: isEnabled,
-                      activeColor: AppTheme.primary,
+                      activeThumbColor: AppTheme.primary,
+                      activeTrackColor: AppTheme.primary.withValues(alpha: 0.5),
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      onChanged: (val) {
-                        provider.setRolePermission(role, key, val);
+                      onChanged: (val) async {
+                        await provider.setRolePermission(role, key, val);
                       },
                     ),
                 ],
@@ -698,7 +702,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                     ),
                     Switch(
                       value: _canLogin,
-                      activeColor: AppTheme.primary,
+                      activeThumbColor: AppTheme.primary,
+                      activeTrackColor: AppTheme.primary.withValues(alpha: 0.5),
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       onChanged: (v) => setState(() {
                         _canLogin = v;
@@ -743,7 +748,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                     ),
                     Switch(
                       value: _isActive,
-                      activeColor: AppTheme.success,
+                      activeThumbColor: AppTheme.success,
+                      activeTrackColor: AppTheme.success.withValues(alpha: 0.5),
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       onChanged: (v) => setState(() => _isActive = v),
                     ),

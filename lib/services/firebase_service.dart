@@ -870,4 +870,128 @@ class FirebaseService {
 
     debugPrint('[FirebaseService] Règlement ordre $orderId => $settlementInvoiceNumber');
   }
+
+  // =====================================================================
+  // PERMISSIONS PAR RÔLE — collection role_permissions
+  // Doc ID = nom du rôle (ex: "admin", "cashier", "gestionnaire_stock")
+  // =====================================================================
+
+  /// Retourne le nom Firestore d'un rôle
+  static String roleDocId(UserRole role) {
+    switch (role) {
+      case UserRole.admin:        return 'admin';
+      case UserRole.manager:      return 'manager';
+      case UserRole.cashier:      return 'caissier';
+      case UserRole.kitchen:      return 'cuisine';
+      case UserRole.server:       return 'serveur';
+      case UserRole.stockManager: return 'gestionnaire_stock';
+    }
+  }
+
+  /// Permissions par défaut (fallback si document absent dans Firestore)
+  static Map<String, bool> defaultPermissions(UserRole role) {
+    switch (role) {
+      case UserRole.admin:
+        return {
+          'dashboard': true, 'orders': true, 'kitchen': true, 'cashier': true,
+          'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
+          'suppliers': true, 'productManagement': true, 'adminManagement': true,
+        };
+      case UserRole.manager:
+        return {
+          'dashboard': true, 'orders': true, 'kitchen': true, 'cashier': true,
+          'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
+          'suppliers': true, 'productManagement': true, 'adminManagement': false,
+        };
+      case UserRole.cashier:
+        return {
+          'dashboard': true, 'orders': true, 'kitchen': false, 'cashier': true,
+          'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
+          'suppliers': false, 'productManagement': false, 'adminManagement': false,
+        };
+      case UserRole.kitchen:
+        return {
+          'dashboard': true, 'orders': false, 'kitchen': true, 'cashier': false,
+          'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
+          'suppliers': false, 'productManagement': false, 'adminManagement': false,
+        };
+      case UserRole.server:
+        return {
+          'dashboard': true, 'orders': true, 'kitchen': false, 'cashier': false,
+          'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
+          'suppliers': false, 'productManagement': false, 'adminManagement': false,
+        };
+      case UserRole.stockManager:
+        return {
+          'dashboard': true, 'orders': false, 'kitchen': false, 'cashier': false,
+          'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
+          'suppliers': true, 'productManagement': true, 'adminManagement': false,
+        };
+    }
+  }
+
+  /// Stream temps réel sur TOUS les documents role_permissions
+  Stream<Map<UserRole, Map<String, bool>>> streamRolePermissions() {
+    return _db.collection('role_permissions').snapshots().map((snapshot) {
+      final result = <UserRole, Map<String, bool>>{};
+      for (final role in UserRole.values) {
+        result[role] = Map<String, bool>.from(defaultPermissions(role));
+      }
+      for (final doc in snapshot.docs) {
+        final roleId = doc.id;
+        final data = doc.data();
+        UserRole? role;
+        for (final r in UserRole.values) {
+          if (roleDocId(r) == roleId) { role = r; break; }
+        }
+        if (role == null) continue;
+        final perms = Map<String, bool>.from(defaultPermissions(role));
+        for (final entry in data.entries) {
+          if (entry.value is bool) perms[entry.key] = entry.value as bool;
+        }
+        result[role] = perms;
+      }
+      return result;
+    });
+  }
+
+  /// Sauvegarde UNE permission pour un rôle dans Firestore
+  Future<void> saveRolePermission(UserRole role, String module, bool value) async {
+    final docId = roleDocId(role);
+    await _db.collection('role_permissions').doc(docId).set(
+      {module: value},
+      SetOptions(merge: true),
+    );
+    debugPrint('[FirebaseService] Permission $docId.$module = $value');
+  }
+
+  /// Charge les permissions d'un rôle (lecture unique)
+  Future<Map<String, bool>> loadRolePermissions(UserRole role) async {
+    try {
+      final doc = await _db.collection('role_permissions').doc(roleDocId(role)).get();
+      final defaults = Map<String, bool>.from(defaultPermissions(role));
+      if (!doc.exists) return defaults;
+      final data = doc.data() ?? {};
+      for (final entry in data.entries) {
+        if (entry.value is bool) defaults[entry.key] = entry.value as bool;
+      }
+      return defaults;
+    } catch (e) {
+      debugPrint('[FirebaseService] loadRolePermissions erreur: $e');
+      return Map<String, bool>.from(defaultPermissions(role));
+    }
+  }
+
+  /// Initialise les documents role_permissions en Firestore (si absents)
+  Future<void> initRolePermissions() async {
+    for (final role in UserRole.values) {
+      final docId = roleDocId(role);
+      final ref = _db.collection('role_permissions').doc(docId);
+      final doc = await ref.get();
+      if (!doc.exists) {
+        await ref.set(defaultPermissions(role));
+        debugPrint('[FirebaseService] Permissions initialisées pour $docId');
+      }
+    }
+  }
 }
