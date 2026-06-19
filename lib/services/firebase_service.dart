@@ -72,15 +72,51 @@ class FirebaseService {
 
   Future<void> signOut() async => await _auth.signOut();
 
-  /// Crée un compte Firebase Auth + document Firestore en une seule opération atomique.
+  /// CAS 1 — Personnel simple : Firestore uniquement, pas de compte Auth.
+  /// L'employé n'a pas accès à l'application (hasAppAccess = false).
+  Future<AppUser> addStaffOnly({
+    required String name,
+    required String email,
+    required String phone,
+    required UserRole role,
+    required String createdBy,
+  }) async {
+    final uid = _db.collection('users').doc().id; // ID aléatoire Firestore
+    final newUser = AppUser(
+      id: uid,
+      name: name,
+      email: email.trim(),
+      phone: phone.trim(),
+      role: role,
+      isActive: true,
+      hasAppAccess: false,
+    );
+    await _db.collection('users').doc(uid).set({
+      'id': uid,
+      'name': name,
+      'email': email.trim(),
+      'phone': phone.trim(),
+      'role': role.index,
+      'isActive': true,
+      'isOnline': false,
+      'hasAppAccess': false,
+      'createdAt': FieldValue.serverTimestamp(),
+      'createdBy': createdBy,
+    });
+    debugPrint('[FirebaseService] ✅ Personnel créé Firestore uniquement : $email ($uid)');
+    return newUser;
+  }
+
+  /// CAS 2 — Utilisateur avec accès application : Auth PUIS Firestore.
   /// - Si Auth échoue  → exception propagée, aucun doc Firestore créé.
   /// - Si Firestore échoue après Auth → rollback impossible côté Auth (limitation Firebase)
   ///   mais l'exception est propagée pour affichage clair dans l'UI.
-  /// Retourne l'AppUser créé.
+  /// Retourne l'AppUser créé avec hasAppAccess = true.
   Future<AppUser> createUserWithAuth({
     required String name,
     required String email,
     required String password,
+    required String phone,
     required UserRole role,
     required String createdBy,
   }) async {
@@ -96,18 +132,20 @@ class FirebaseService {
       id: uid,
       name: name,
       email: email.trim(),
-      phone: '',
+      phone: phone.trim(),
       role: role,
       isActive: true,
+      hasAppAccess: true,
     );
     await _db.collection('users').doc(uid).set({
       'id': uid,
       'name': name,
       'email': email.trim(),
+      'phone': phone.trim(),
       'role': role.index,
       'isActive': true,
       'isOnline': false,
-      'phone': '',
+      'hasAppAccess': true,
       'createdAt': FieldValue.serverTimestamp(),
       'createdBy': createdBy,
     });

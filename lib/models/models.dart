@@ -23,6 +23,7 @@ class AppUser {
   String? avatarUrl;
   bool isActive;
   bool isOnline;
+  bool hasAppAccess; // true = compte Firebase Auth créé, peut se connecter
   DateTime createdAt;
 
   AppUser({
@@ -34,6 +35,7 @@ class AppUser {
     this.avatarUrl,
     this.isActive = true,
     this.isOnline = false,
+    this.hasAppAccess = false,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -61,6 +63,7 @@ class AppUser {
     'id': id, 'name': name, 'email': email, 'phone': phone,
     'role': role.index, 'avatarUrl': avatarUrl,
     'isActive': isActive, 'isOnline': isOnline,
+    'hasAppAccess': hasAppAccess,
     'createdAt': createdAt.millisecondsSinceEpoch,
   };
 
@@ -69,6 +72,7 @@ class AppUser {
     phone: map['phone'] ?? '', role: UserRole.values[map['role'] ?? 0],
     avatarUrl: map['avatarUrl'], isActive: map['isActive'] ?? true,
     isOnline: map['isOnline'] ?? false,
+    hasAppAccess: map['hasAppAccess'] ?? false,
     createdAt: DateTime.fromMillisecondsSinceEpoch(map['createdAt'] ?? DateTime.now().millisecondsSinceEpoch),
   );
 }

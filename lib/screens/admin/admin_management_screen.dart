@@ -227,7 +227,7 @@ class _UserCard extends StatelessWidget {
                 ),
             ],
           ),
-          // Statut actif/inactif
+          // Statut actif/inactif + badge accès application
           const SizedBox(height: 10),
           Row(
             children: [
@@ -246,6 +246,41 @@ class _UserCard extends StatelessWidget {
                   color: user.isActive ? AppTheme.success : AppTheme.error,
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 10),
+              // Badge accès application
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: user.hasAppAccess
+                      ? AppTheme.primary.withValues(alpha: 0.12)
+                      : Colors.white10,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: user.hasAppAccess
+                        ? AppTheme.primary.withValues(alpha: 0.35)
+                        : Colors.white12,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      user.hasAppAccess ? Icons.lock_open : Icons.lock_outline,
+                      size: 9,
+                      color: user.hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      user.hasAppAccess ? 'Accès app' : 'Sans connexion',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                        color: user.hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const Spacer(),
@@ -491,12 +526,14 @@ class _UserFormDialog extends StatefulWidget {
 }
 
 class _UserFormDialogState extends State<_UserFormDialog> {
-  final _nameCtrl = TextEditingController();
-  final _emailCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
+  final _nameCtrl     = TextEditingController();
+  final _emailCtrl    = TextEditingController();
+  final _phoneCtrl    = TextEditingController();
   final _passwordCtrl = TextEditingController();
   UserRole _selectedRole = UserRole.server;
+  bool _hasAppAccess = false;
   bool _obscure = true;
+  String? _errorMsg;
 
   bool get isEditing => widget.user != null;
 
@@ -504,10 +541,11 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   void initState() {
     super.initState();
     if (isEditing) {
-      _nameCtrl.text = widget.user!.name;
+      _nameCtrl.text  = widget.user!.name;
       _emailCtrl.text = widget.user!.email;
       _phoneCtrl.text = widget.user!.phone;
-      _selectedRole = widget.user!.role;
+      _selectedRole   = widget.user!.role;
+      _hasAppAccess   = widget.user!.hasAppAccess;
     }
   }
 
@@ -520,6 +558,18 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     super.dispose();
   }
 
+  InputDecoration _inputDeco(String label, IconData icon) => InputDecoration(
+    labelText: label,
+    labelStyle: const TextStyle(color: AppTheme.textSecondary),
+    prefixIcon: Icon(icon, color: AppTheme.primary, size: 18),
+    filled: true,
+    fillColor: AppTheme.cardBg,
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide.none,
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final provider = context.read<AppProvider>();
@@ -527,7 +577,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     return AlertDialog(
       backgroundColor: AppTheme.surface,
       title: Text(
-        isEditing ? 'Modifier l\'utilisateur' : 'Nouvel utilisateur',
+        isEditing ? "Modifier l'utilisateur" : 'Nouvel utilisateur',
         style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.w800),
       ),
       content: SingleChildScrollView(
@@ -538,29 +588,18 @@ class _UserFormDialogState extends State<_UserFormDialog> {
             TextField(
               controller: _nameCtrl,
               style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: InputDecoration(
-                labelText: 'Nom complet',
-                labelStyle: const TextStyle(color: AppTheme.textSecondary),
-                prefixIcon: const Icon(Icons.person, color: AppTheme.primary),
-                filled: true,
-                fillColor: AppTheme.cardBg,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-              ),
+              decoration: _inputDeco('Nom complet', Icons.person),
             ),
             const SizedBox(height: 12),
-            // Email
+            // Email (non modifiable en édition)
             TextField(
               controller: _emailCtrl,
               keyboardType: TextInputType.emailAddress,
-              style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: InputDecoration(
-                labelText: 'Email',
-                labelStyle: const TextStyle(color: AppTheme.textSecondary),
-                prefixIcon: const Icon(Icons.email, color: AppTheme.primary),
-                filled: true,
-                fillColor: AppTheme.cardBg,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              enabled: !isEditing,
+              style: TextStyle(
+                color: isEditing ? AppTheme.textSecondary : AppTheme.textPrimary,
               ),
+              decoration: _inputDeco('Email', Icons.email),
             ),
             const SizedBox(height: 12),
             // Téléphone
@@ -568,36 +607,9 @@ class _UserFormDialogState extends State<_UserFormDialog> {
               controller: _phoneCtrl,
               keyboardType: TextInputType.phone,
               style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: InputDecoration(
-                labelText: 'Téléphone',
-                labelStyle: const TextStyle(color: AppTheme.textSecondary),
-                prefixIcon: const Icon(Icons.phone, color: AppTheme.primary),
-                filled: true,
-                fillColor: AppTheme.cardBg,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-              ),
+              decoration: _inputDeco('Téléphone', Icons.phone),
             ),
             const SizedBox(height: 12),
-            // Mot de passe (seulement pour création)
-            if (!isEditing)
-              TextField(
-                controller: _passwordCtrl,
-                obscureText: _obscure,
-                style: const TextStyle(color: AppTheme.textPrimary),
-                decoration: InputDecoration(
-                  labelText: 'Mot de passe',
-                  labelStyle: const TextStyle(color: AppTheme.textSecondary),
-                  prefixIcon: const Icon(Icons.lock, color: AppTheme.primary),
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, color: AppTheme.textSecondary),
-                    onPressed: () => setState(() => _obscure = !_obscure),
-                  ),
-                  filled: true,
-                  fillColor: AppTheme.cardBg,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                ),
-              ),
-            if (!isEditing) const SizedBox(height: 12),
             // Rôle
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -632,6 +644,139 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                 ),
               ),
             ),
+            const SizedBox(height: 12),
+
+            // ---- CAS CRÉATION uniquement ----
+            if (!isEditing) ...[
+              // Toggle accès application
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _hasAppAccess
+                      ? AppTheme.primary.withValues(alpha: 0.12)
+                      : AppTheme.cardBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: _hasAppAccess
+                        ? AppTheme.primary.withValues(alpha: 0.4)
+                        : Colors.white12,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _hasAppAccess ? Icons.lock_open : Icons.lock_outline,
+                      color: _hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Accès application',
+                            style: TextStyle(
+                              color: _hasAppAccess ? AppTheme.textPrimary : AppTheme.textSecondary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                          Text(
+                            _hasAppAccess
+                                ? 'Compte Firebase Auth créé'
+                                : "Cet employé n'a pas d'accès de connexion",
+                            style: TextStyle(
+                              color: _hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: _hasAppAccess,
+                      activeColor: AppTheme.primary,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onChanged: (v) => setState(() {
+                        _hasAppAccess = v;
+                        if (!v) _passwordCtrl.clear();
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+              // Mot de passe — visible uniquement si accès activé
+              if (_hasAppAccess) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _passwordCtrl,
+                  obscureText: _obscure,
+                  style: const TextStyle(color: AppTheme.textPrimary),
+                  decoration: InputDecoration(
+                    labelText: 'Mot de passe (obligatoire)',
+                    labelStyle: const TextStyle(color: AppTheme.textSecondary),
+                    prefixIcon: const Icon(Icons.lock, color: AppTheme.primary, size: 18),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscure ? Icons.visibility_off : Icons.visibility,
+                        color: AppTheme.textSecondary,
+                      ),
+                      onPressed: () => setState(() => _obscure = !_obscure),
+                    ),
+                    filled: true,
+                    fillColor: AppTheme.cardBg,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+
+            // ---- Bandeau info en mode ÉDITION ----
+            if (isEditing) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: widget.user!.hasAppAccess
+                      ? AppTheme.primary.withValues(alpha: 0.1)
+                      : AppTheme.cardBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: widget.user!.hasAppAccess
+                        ? AppTheme.primary.withValues(alpha: 0.3)
+                        : Colors.white12,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      widget.user!.hasAppAccess ? Icons.lock_open : Icons.lock_outline,
+                      color: widget.user!.hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      widget.user!.hasAppAccess
+                          ? "A accès à l'application"
+                          : "Cet employé n'a pas d'accès de connexion",
+                      style: TextStyle(
+                        color: widget.user!.hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            // Erreur
+            if (_errorMsg != null) ...[
+              const SizedBox(height: 8),
+              Text(_errorMsg!, style: const TextStyle(color: AppTheme.error, fontSize: 12)),
+            ],
           ],
         ),
       ),
@@ -643,37 +788,76 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
           onPressed: () async {
-            if (_nameCtrl.text.trim().isEmpty || _emailCtrl.text.trim().isEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Nom et email obligatoires'), backgroundColor: AppTheme.error),
-              );
+            final name  = _nameCtrl.text.trim();
+            final email = _emailCtrl.text.trim();
+            final phone = _phoneCtrl.text.trim();
+
+            if (name.isEmpty || email.isEmpty) {
+              setState(() => _errorMsg = 'Nom et email obligatoires.');
               return;
             }
+
             if (isEditing) {
+              // Modification : pas de changement d'accès Auth
               await provider.updateUser(
                 widget.user!.id,
-                name: _nameCtrl.text.trim(),
-                email: _emailCtrl.text.trim(),
-                phone: _phoneCtrl.text.trim(),
-                role: _selectedRole,
+                name: name, email: email, phone: phone, role: _selectedRole,
               );
               if (!context.mounted) return;
+              Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Utilisateur mis à jour'), backgroundColor: AppTheme.success),
+                const SnackBar(
+                  content: Text('Utilisateur mis à jour'),
+                  backgroundColor: AppTheme.success,
+                ),
               );
+            } else if (_hasAppAccess) {
+              // CAS 2 — Accès application : mot de passe obligatoire
+              final password = _passwordCtrl.text;
+              if (password.isEmpty) {
+                setState(() => _errorMsg = "Le mot de passe est obligatoire pour l'accès application.");
+                return;
+              }
+              if (password.length < 6) {
+                setState(() => _errorMsg = 'Le mot de passe doit comporter au moins 6 caractères.');
+                return;
+              }
+              setState(() => _errorMsg = null);
+              try {
+                await provider.addUser(
+                  name: name, email: email,
+                  password: password, phone: phone, role: _selectedRole,
+                );
+                if (!context.mounted) return;
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Utilisateur créé avec accès application (Auth + Firestore)'),
+                    backgroundColor: AppTheme.success,
+                  ),
+                );
+              } catch (e) {
+                setState(() => _errorMsg = e.toString().replaceAll(RegExp(r'\[.*?\]\s*'), ''));
+              }
             } else {
-              await provider.addUser(
-                name: _nameCtrl.text.trim(),
-                email: _emailCtrl.text.trim(),
-                password: _passwordCtrl.text,
-                role: _selectedRole,
-              );
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Utilisateur créé (Auth + Firestore)'), backgroundColor: AppTheme.success),
-              );
+              // CAS 1 — Personnel simple : Firestore uniquement
+              setState(() => _errorMsg = null);
+              try {
+                await provider.addStaff(
+                  name: name, email: email, phone: phone, role: _selectedRole,
+                );
+                if (!context.mounted) return;
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Personnel ajouté (sans accès application)'),
+                    backgroundColor: AppTheme.primary,
+                  ),
+                );
+              } catch (e) {
+                setState(() => _errorMsg = e.toString().replaceAll(RegExp(r'\[.*?\]\s*'), ''));
+              }
             }
-            Navigator.pop(context);
           },
           child: Text(isEditing ? 'Modifier' : 'Créer', style: const TextStyle(color: Colors.white)),
         ),

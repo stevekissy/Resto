@@ -89,8 +89,10 @@ class _PersonnelTab extends StatelessWidget {
   void _showAddUserDialog(BuildContext context, AppProvider provider) {
     final nameCtrl     = TextEditingController();
     final emailCtrl    = TextEditingController();
+    final phoneCtrl    = TextEditingController();
     final passwordCtrl = TextEditingController();
     UserRole role = UserRole.server;
+    bool hasAppAccess    = false; // toggle : accès application
     bool obscurePassword = true;
     String? errorMsg;
 
@@ -98,41 +100,45 @@ class _PersonnelTab extends StatelessWidget {
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
-          title: const Text('Ajouter un membre'),
+          backgroundColor: AppTheme.surface,
+          title: const Text('Ajouter un membre', style: TextStyle(color: Colors.white)),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Nom
                 TextField(
                   controller: nameCtrl,
                   style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(labelText: 'Nom complet'),
+                  decoration: const InputDecoration(
+                    labelText: 'Nom complet',
+                    prefixIcon: Icon(Icons.person, color: AppTheme.primary, size: 18),
+                  ),
                 ),
                 const SizedBox(height: 8),
+                // Email
                 TextField(
                   controller: emailCtrl,
                   keyboardType: TextInputType.emailAddress,
                   style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(labelText: 'Email'),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: passwordCtrl,
-                  obscureText: obscurePassword,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    labelText: 'Mot de passe',
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        obscurePassword ? Icons.visibility_off : Icons.visibility,
-                        color: Colors.white54,
-                        size: 20,
-                      ),
-                      onPressed: () => setS(() => obscurePassword = !obscurePassword),
-                    ),
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    prefixIcon: Icon(Icons.email, color: AppTheme.primary, size: 18),
                   ),
                 ),
                 const SizedBox(height: 8),
+                // Téléphone
+                TextField(
+                  controller: phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Téléphone',
+                    prefixIcon: Icon(Icons.phone, color: AppTheme.primary, size: 18),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Rôle
                 DropdownButtonFormField<UserRole>(
                   value: role,
                   style: const TextStyle(color: Colors.white),
@@ -144,6 +150,86 @@ class _PersonnelTab extends StatelessWidget {
                   }).toList(),
                   onChanged: (v) => setS(() => role = v!),
                 ),
+                const SizedBox(height: 12),
+                // Toggle accès application
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: hasAppAccess
+                        ? AppTheme.primary.withValues(alpha: 0.12)
+                        : AppTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: hasAppAccess
+                          ? AppTheme.primary.withValues(alpha: 0.4)
+                          : Colors.white12,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        hasAppAccess ? Icons.lock_open : Icons.lock_outline,
+                        color: hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Accès application',
+                              style: TextStyle(
+                                color: hasAppAccess ? Colors.white : AppTheme.textSecondary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                            Text(
+                              hasAppAccess
+                                  ? 'Compte Firebase Auth créé'
+                                  : 'Cet employé n\'a pas d\'accès de connexion',
+                              style: TextStyle(
+                                color: hasAppAccess ? AppTheme.primary : AppTheme.textSecondary,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: hasAppAccess,
+                        activeColor: AppTheme.primary,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        onChanged: (v) => setS(() {
+                          hasAppAccess = v;
+                          if (!v) passwordCtrl.clear();
+                        }),
+                      ),
+                    ],
+                  ),
+                ),
+                // Mot de passe — visible uniquement si accès activé
+                if (hasAppAccess) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: passwordCtrl,
+                    obscureText: obscurePassword,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Mot de passe (obligatoire)',
+                      prefixIcon: const Icon(Icons.lock, color: AppTheme.primary, size: 18),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword ? Icons.visibility_off : Icons.visibility,
+                          color: Colors.white54,
+                          size: 20,
+                        ),
+                        onPressed: () => setS(() => obscurePassword = !obscurePassword),
+                      ),
+                    ),
+                  ),
+                ],
                 if (errorMsg != null) ...[
                   const SizedBox(height: 8),
                   Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 12)),
@@ -152,35 +238,69 @@ class _PersonnelTab extends StatelessWidget {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
+            ),
             ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
               onPressed: () async {
-                final name     = nameCtrl.text.trim();
-                final email    = emailCtrl.text.trim();
-                final password = passwordCtrl.text;
+                final name  = nameCtrl.text.trim();
+                final email = emailCtrl.text.trim();
+                final phone = phoneCtrl.text.trim();
 
-                if (name.isEmpty || email.isEmpty || password.isEmpty) {
-                  setS(() => errorMsg = 'Nom, email et mot de passe obligatoires.');
+                if (name.isEmpty || email.isEmpty) {
+                  setS(() => errorMsg = 'Nom et email obligatoires.');
                   return;
                 }
-                if (password.length < 6) {
-                  setS(() => errorMsg = 'Le mot de passe doit comporter au moins 6 caractères.');
-                  return;
-                }
-                setS(() => errorMsg = null);
-                try {
-                  await provider.addUser(
-                    name: name,
-                    email: email,
-                    password: password,
-                    role: role,
-                  );
-                  if (ctx.mounted) Navigator.pop(ctx);
-                } catch (e) {
-                  setS(() => errorMsg = e.toString().replaceAll(RegExp(r'\[.*?\]\s*'), ''));
+
+                if (hasAppAccess) {
+                  // CAS 2 — Accès application : mot de passe obligatoire
+                  final password = passwordCtrl.text;
+                  if (password.isEmpty) {
+                    setS(() => errorMsg = 'Le mot de passe est obligatoire pour l\'accès application.');
+                    return;
+                  }
+                  if (password.length < 6) {
+                    setS(() => errorMsg = 'Le mot de passe doit comporter au moins 6 caractères.');
+                    return;
+                  }
+                  setS(() => errorMsg = null);
+                  try {
+                    await provider.addUser(
+                      name: name, email: email,
+                      password: password, phone: phone, role: role,
+                    );
+                    if (ctx.mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Utilisateur créé avec accès application (Auth + Firestore)'),
+                        backgroundColor: AppTheme.success,
+                      ));
+                    }
+                  } catch (e) {
+                    setS(() => errorMsg = e.toString().replaceAll(RegExp(r'\[.*?\]\s*'), ''));
+                  }
+                } else {
+                  // CAS 1 — Personnel simple : Firestore uniquement
+                  setS(() => errorMsg = null);
+                  try {
+                    await provider.addStaff(
+                      name: name, email: email, phone: phone, role: role,
+                    );
+                    if (ctx.mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Personnel ajouté (sans accès application)'),
+                        backgroundColor: AppTheme.primary,
+                      ));
+                    }
+                  } catch (e) {
+                    setS(() => errorMsg = e.toString().replaceAll(RegExp(r'\[.*?\]\s*'), ''));
+                  }
                 }
               },
-              child: const Text('Ajouter'),
+              child: const Text('Ajouter', style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -231,7 +351,26 @@ class _UserCard extends StatelessWidget {
                   ],
                 ),
                 Text(user.email, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-                Text(user.phone, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                if (user.phone.isNotEmpty)
+                  Text(user.phone, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Icon(
+                      user.hasAppAccess ? Icons.lock_open : Icons.lock_outline,
+                      size: 10,
+                      color: user.hasAppAccess ? AppTheme.success : AppTheme.textSecondary,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      user.hasAppAccess ? 'Accès app' : 'Sans connexion',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: user.hasAppAccess ? AppTheme.success : AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),

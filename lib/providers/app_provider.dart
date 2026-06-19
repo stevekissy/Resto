@@ -859,13 +859,34 @@ class AppProvider extends ChangeNotifier {
 
   // =================== GESTION UTILISATEURS ADMIN ===================
 
-  /// Point d'entrée unique pour créer un utilisateur.
+  /// CAS 1 — Personnel simple : Firestore uniquement, pas de compte Auth.
+  /// L'employé n'a PAS accès à l'application (hasAppAccess = false).
+  Future<AppUser> addStaff({
+    required String name,
+    required String email,
+    required String phone,
+    required UserRole role,
+  }) async {
+    final createdBy = _currentUser?.name ?? 'Admin';
+    final newUser = await _firebase.addStaffOnly(
+      name: name,
+      email: email,
+      phone: phone,
+      role: role,
+      createdBy: createdBy,
+    );
+    // Le stream Firestore met _users à jour automatiquement
+    return newUser;
+  }
+
+  /// CAS 2 — Utilisateur avec accès application.
   /// Crée le compte Firebase Auth PUIS le document Firestore.
   /// Si Auth échoue → exception propagée (pas de doc Firestore créé).
   Future<AppUser> addUser({
     required String name,
     required String email,
     required String password,
+    required String phone,
     required UserRole role,
   }) async {
     final createdBy = _currentUser?.name ?? 'Admin';
@@ -873,6 +894,7 @@ class AppProvider extends ChangeNotifier {
       name: name,
       email: email,
       password: password,
+      phone: phone,
       role: role,
       createdBy: createdBy,
     );
