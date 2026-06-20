@@ -666,6 +666,8 @@ class _ProductCardState extends State<_ProductCard> {
   }
 
   void _increment() {
+    // Incrémente ET ajoute immédiatement au panier
+    widget.onAdd(1);
     setState(() => _qty++);
   }
 
@@ -679,31 +681,32 @@ class _ProductCardState extends State<_ProductCard> {
     final cartQty = inCart ? cartItem.quantity : 0;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 7),
+      margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
         color: inCart
-            ? AppTheme.primary.withValues(alpha: 0.10)
+            ? AppTheme.primary.withValues(alpha: 0.08)
             : AppTheme.cardBg,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: inCart
-              ? AppTheme.primary.withValues(alpha: 0.55)
+              ? AppTheme.primary.withValues(alpha: 0.50)
               : const Color(0xFF2A2A5A),
           width: inCart ? 1.5 : 1,
         ),
       ),
-      // ─── UNE SEULE LIGNE : [ Infos | Prix | −qty+ | Ajouter ] ───
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // ── 1. Nom + sous-titre (prend tout l'espace disponible) ─
+
+            // ── GAUCHE : Nom / Prix / Catégorie ──────────────────────
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Nom — toujours visible, jamais coupé
                   Text(
                     widget.product.name,
                     style: const TextStyle(
@@ -711,163 +714,118 @@ class _ProductCardState extends State<_ProductCard> {
                       fontWeight: FontWeight.w700,
                       fontSize: 14,
                     ),
-                    // Jamais de coupure — on laisse le texte se dérouler
-                    overflow: TextOverflow.visible,
                     softWrap: true,
+                    overflow: TextOverflow.visible,
                   ),
-                  const SizedBox(height: 3),
-                  // Catégorie + badge panier sur la même ligne
-                  Row(
-                    children: [
-                      Text(
-                        widget.product.category,
-                        style: const TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 11,
-                        ),
-                      ),
-                      if (inCart) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: AppTheme.success.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            '×$cartQty au panier',
-                            style: const TextStyle(
-                              color: AppTheme.success,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+                  const SizedBox(height: 2),
+                  // Prix en bleu
+                  Text(
+                    '${widget.product.price.toStringAsFixed(0)} F',
+                    style: const TextStyle(
+                      color: AppTheme.primary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  // Catégorie en gris petit
+                  Text(
+                    widget.product.category.toUpperCase(),
+                    style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 10,
+                      letterSpacing: 0.3,
+                    ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(width: 16),
-
-            // ── 2. Prix (largeur fixe, aligné à droite) ──────────────
-            SizedBox(
-              width: 80,
-              child: Text(
-                '${widget.product.price.toStringAsFixed(0)} F',
-                style: const TextStyle(
-                  color: AppTheme.primary,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 14,
-                ),
-                textAlign: TextAlign.right,
-              ),
-            ),
-
             const SizedBox(width: 12),
 
-            // ── 3. Sélecteur − qty + (sur une ligne) ─────────────────
-            Row(
+            // ── DROITE : label "Quantité" + [−] chiffre [+] ──────────
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
-                _QtyButton(
-                  icon: Icons.remove,
-                  onTap: _decrement,
-                  enabled: _qty > 1,
-                  color: AppTheme.error,
-                ),
-                SizedBox(
-                  width: 32,
-                  child: Text(
-                    '$_qty',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15,
-                    ),
-                    textAlign: TextAlign.center,
+                // Label "Quantité"
+                Text(
+                  inCart ? '×$cartQty au panier' : 'Quantité',
+                  style: TextStyle(
+                    color: inCart ? AppTheme.success : AppTheme.textSecondary,
+                    fontSize: 10,
+                    fontWeight: inCart ? FontWeight.w600 : FontWeight.normal,
                   ),
                 ),
-                _QtyButton(
-                  icon: Icons.add,
-                  onTap: _increment,
-                  enabled: true,
-                  color: AppTheme.success,
+                const SizedBox(height: 6),
+                // Ligne [−] chiffre [+]
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Bouton −
+                    GestureDetector(
+                      onTap: _decrement,
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: _qty > 1
+                              ? const Color(0xFF1E2A4A)
+                              : const Color(0xFF161E36),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _qty > 1
+                                ? const Color(0xFF3A4A7A)
+                                : const Color(0xFF252D4A),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.remove,
+                          size: 16,
+                          color: _qty > 1
+                              ? Colors.white
+                              : AppTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                    // Chiffre quantité
+                    SizedBox(
+                      width: 36,
+                      child: Text(
+                        '$_qty',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    // Bouton +
+                    GestureDetector(
+                      onTap: _increment,
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E2A4A),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: const Color(0xFF3A4A7A),
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.add,
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-
-            const SizedBox(width: 10),
-
-            // ── 4. Bouton Ajouter ─────────────────────────────────────
-            GestureDetector(
-              onTap: () {
-                widget.onAdd(_qty);
-                setState(() => _qty = 1);
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppTheme.primary,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'Ajouter',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Bouton rond pour décrémenter / incrémenter la quantité
-class _QtyButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool enabled;
-  final Color color;
-
-  const _QtyButton({
-    required this.icon,
-    required this.onTap,
-    required this.enabled,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          color: enabled
-              ? color.withValues(alpha: 0.18)
-              : const Color(0xFF2A2A5A),
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(
-            color: enabled
-                ? color.withValues(alpha: 0.55)
-                : const Color(0xFF3A3A6A),
-          ),
-        ),
-        child: Icon(
-          icon,
-          size: 14,
-          color: enabled ? color : AppTheme.textSecondary,
         ),
       ),
     );
