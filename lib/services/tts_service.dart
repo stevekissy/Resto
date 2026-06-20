@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 import '../providers/app_provider.dart';
 
@@ -71,6 +72,55 @@ class TtsService {
 
   // --- Settings exposés ---
   KitchenVoiceSettings settings = KitchenVoiceSettings();
+
+  // --- Dernier message d'erreur audio (navigateur bloqué) ---
+  String? lastAudioError;
+
+  // ====================================================================
+  // CLÉS SHARED PREFERENCES (persistance état ON/OFF)
+  // ====================================================================
+  static const _kKitchenEnabled  = 'tts_kitchen_enabled';
+  static const _kCashierEnabled  = 'tts_cashier_enabled';
+
+  /// Charge l'état persisté depuis SharedPreferences.
+  /// À appeler au démarrage de l'application (ou des écrans cuisine/caisse).
+  Future<void> loadPersistedState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      settings.enabled = prefs.getBool(_kKitchenEnabled) ?? true;
+      _cashierEnabledPersisted = prefs.getBool(_kCashierEnabled) ?? false;
+      if (kDebugMode) {
+        debugPrint('[TTS] État chargé — cuisine: ${settings.enabled}, caisse: $_cashierEnabledPersisted');
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[TTS] loadPersistedState erreur: $e');
+    }
+  }
+
+  /// Sauvegarde l'état cuisine ON/OFF.
+  Future<void> saveKitchenEnabled(bool value) async {
+    settings.enabled = value;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kKitchenEnabled, value);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[TTS] saveKitchenEnabled erreur: $e');
+    }
+  }
+
+  /// Sauvegarde l'état caisse ON/OFF.
+  bool _cashierEnabledPersisted = false;
+  bool get cashierEnabledPersisted => _cashierEnabledPersisted;
+
+  Future<void> saveCashierEnabled(bool value) async {
+    _cashierEnabledPersisted = value;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kCashierEnabled, value);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[TTS] saveCashierEnabled erreur: $e');
+    }
+  }
 
   // ====================================================================
   // INITIALISATION
@@ -189,6 +239,7 @@ class TtsService {
     try {
       if (kIsWeb) {
         tts_web.africanSpeak(text, 0.82, 1.2, settings.volume);
+        lastAudioError = null; // Succès : effacer toute erreur précédente
         // Sur Web, on ne peut pas détecter la fin → estimation basée sur longueur
         final durationMs = (text.length * 65).clamp(1500, 15000);
         Future.delayed(Duration(milliseconds: durationMs), () {
@@ -198,11 +249,13 @@ class TtsService {
       } else {
         try { await _flutterTts?.setVolume(settings.volume); } catch (_) {}
         await _flutterTts?.speak(text);
+        lastAudioError = null;
         // Le handler setCompletionHandler gère la suite sur mobile
       }
     } catch (e) {
       _isSpeaking = false;
       _processQueue();
+      lastAudioError = 'Le navigateur a bloqué l\'audio. Cliquez sur la page puis réessayez.';
       if (kDebugMode) debugPrint('[TTS] Erreur _speakNow: $e');
     }
   }
@@ -496,6 +549,12 @@ class TtsService {
     enqueue('Bonjour cuisine ! L\'assistant vocal est opérationnel. Bonne journée à toute l\'équipe !');
   }
 
+  /// Test voix pour la caisse
+  Future<void> testCashierVoice() async {
+    await stop();
+    enqueue('Bonjour caisse ! L\'assistant vocal est opérationnel. Bonne journée !');
+  }
+
   // ====================================================================
   // GETTERS
   // ====================================================================
@@ -555,15 +614,20 @@ class TtsService {
     enqueue('Encaissement de $fmtAmt francs — $paymentMethod');
   }
 
-  /// Démarre les rappels périodiques caisse (toutes les 2 min)
+  /// Démarre les rappels périodiques caisse (toutes les 2 min par défaut).
+  /// Idempotent : ne redémarre pas si déjà actif avec le même intervalle.
   void startCashierReminders(AppProvider provider, {int intervalMinutes = 2}) {
+    // Si déjà actif avec le même intervalle, ne rien faire
     if (_cashierRemindersActive) return;
     _cashierRemindersActive = true;
     _cashierReminderTimer?.cancel();
     _cashierReminderTimer = Timer.periodic(
         Duration(minutes: intervalMinutes), (_) async {
-      await _announceCashierSummary(provider);
+      if (_cashierRemindersActive) {
+        await _announceCashierSummary(provider);
+      }
     });
+    if (kDebugMode) debugPrint('[TTS Caisse] Rappels démarrés — intervalle: ${intervalMinutes}min');
   }
 
   /// Arrête les rappels caisse
@@ -571,6 +635,7 @@ class TtsService {
     _cashierReminderTimer?.cancel();
     _cashierReminderTimer = null;
     _cashierRemindersActive = false;
+    if (kDebugMode) debugPrint('[TTS Caisse] Rappels arrêtés');
   }
 
   bool get cashierRemindersActive => _cashierRemindersActive;

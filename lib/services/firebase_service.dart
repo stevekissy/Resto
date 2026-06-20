@@ -1363,17 +1363,20 @@ class FirebaseService {
 
   /// Stream combiné : cashout_invoices + settlement_invoices
   /// Chaque doc reçoit un champ 'invoiceKind' = 'cashout' | 'settlement'
+  /// NOTE: Les champs timestamp réels sont 'cashoutAtMs' et 'settledAtMs' (int ms).
   Stream<List<Map<String, dynamic>>> streamInvoiceHistory() {
+    // On utilise un stream simple sur cashout_invoices SANS orderBy
+    // pour éviter l'erreur d'index (le champ 'cashoutAt' n'existe pas — c'est 'cashoutAtMs').
+    // Le tri se fait en mémoire après fusion.
     return _db
         .collection('cashout_invoices')
-        .orderBy('cashoutAt', descending: true)
-        .limit(200)
+        .limit(300)
         .snapshots()
         .asyncMap((cashoutSnap) async {
+      // settlement_invoices — également sans orderBy pour éviter index manquant
       final settSnap = await _db
           .collection('settlement_invoices')
-          .orderBy('settledAt', descending: true)
-          .limit(200)
+          .limit(300)
           .get();
 
       final list = <Map<String, dynamic>>[];
@@ -1382,23 +1385,52 @@ class FirebaseService {
         final d = Map<String, dynamic>.from(doc.data());
         d['invoiceKind'] = 'cashout';
         d['docId'] = doc.id;
+        // Normaliser le timestamp : cashoutAtMs → cashoutAt pour l'UI
+        if (d['cashoutAtMs'] != null) {
+          d['cashoutAt'] = (d['cashoutAtMs'] as num).toInt();
+        } else if (d['cashoutAt'] is int) {
+          // déjà bon
+        } else {
+          d['cashoutAt'] = 0;
+        }
+        // Normaliser totalAmount (stocké sous amountDue dans cashout_invoices)
+        d['totalAmount'] ??= d['amountDue'];
         list.add(d);
       }
+
       for (final doc in settSnap.docs) {
         final d = Map<String, dynamic>.from(doc.data());
         d['invoiceKind'] = 'settlement';
         d['docId'] = doc.id;
+        // Normaliser le timestamp : settledAtMs → settledAt pour l'UI
+        if (d['settledAtMs'] != null) {
+          d['settledAt'] = (d['settledAtMs'] as num).toInt();
+        } else if (d['settledAt'] is int) {
+          // déjà bon
+        } else {
+          d['settledAt'] = 0;
+        }
+        // Normaliser totalAmount (stocké sous amountDue dans settlement_invoices)
+        d['totalAmount'] ??= d['amountDue'];
         list.add(d);
       }
 
-      // Trier par date décroissante
+      // Trier par date décroissante (champs normalisés)
       list.sort((a, b) {
-        final ta = (a['settledAt'] ?? a['cashoutAt'] ?? 0) as int;
-        final tb = (b['settledAt'] ?? b['cashoutAt'] ?? 0) as int;
+        final ta = _invoiceTimestamp(a);
+        final tb = _invoiceTimestamp(b);
         return tb.compareTo(ta);
       });
       return list;
     });
+  }
+
+  /// Extrait le timestamp ms d'une facture (cashout ou settlement)
+  int _invoiceTimestamp(Map<String, dynamic> inv) {
+    final v = inv['settledAt'] ?? inv['cashoutAt'];
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return 0;
   }
 
   // ══════════════════════════════════════════════════════════════════════

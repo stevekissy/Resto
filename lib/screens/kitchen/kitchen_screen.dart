@@ -26,11 +26,15 @@ class _KitchenScreenState extends State<KitchenScreen> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+
+    // Charger l'état persisté PUIS configurer les callbacks
+    _tts.loadPersistedState().then((_) {
+      if (!mounted) return;
       final provider = context.read<AppProvider>();
 
       // Annonce immédiate de chaque nouvelle commande
       provider.onNewOrder = (order) {
+        if (!_tts.settings.enabled) return;
         if (!_announcedOrders.contains(order.id)) {
           _announcedOrders.add(order.id);
           _tts.announceNewOrder(order);
@@ -38,21 +42,22 @@ class _KitchenScreenState extends State<KitchenScreen> {
       };
 
       provider.onOrderDelayed = (order) {
-        _tts.announceDelay(order);
+        if (_tts.settings.enabled) _tts.announceDelay(order);
       };
 
-      // Démarrer les rappels avec les settings courants (reprise après refresh)
+      // Reprendre les rappels si l'assistant était ON avant le refresh
       if (_tts.settings.enabled) {
         _tts.startPeriodicReminders(provider);
       }
+      if (mounted) setState(() {}); // Rafraîchir le bouton ON/OFF
     });
   }
 
   @override
   void dispose() {
     _timer.cancel();
-    _tts.stopPeriodicReminders();
-    _tts.stop();
+    // NE PAS arrêter les rappels si l'utilisateur a choisi ON —
+    // l'état est persisté et sera relancé à la prochaine ouverture
     super.dispose();
   }
 
@@ -300,12 +305,13 @@ class _KitchenHeaderState extends State<_KitchenHeader> {
               ),
               const Spacer(),
               GestureDetector(
-                onTap: () {
+                onTap: () async {
                   if (remindersOn) {
-                    widget.tts.settings.enabled = false;
                     widget.tts.stopPeriodicReminders();
+                    widget.tts.stop();
+                    await widget.tts.saveKitchenEnabled(false);
                   } else {
-                    widget.tts.settings.enabled = true;
+                    await widget.tts.saveKitchenEnabled(true);
                     widget.tts.startPeriodicReminders(widget.provider);
                   }
                   setState(() {});
@@ -388,10 +394,11 @@ class _KitchenVoiceSettingsDialogState
   }
 
   void _apply() {
-    widget.tts.settings.enabled = _enabled;
     widget.tts.settings.volume = _volume;
     widget.tts.settings.intervalMinutes = _intervalMinutes;
     widget.tts.settings.coachMode = _coachMode;
+    // Sauvegarder et appliquer le nouvel état enabled
+    widget.tts.saveKitchenEnabled(_enabled);
     // Redémarrer les rappels avec les nouveaux paramètres
     widget.tts.restartReminders(widget.provider);
     widget.onChanged();

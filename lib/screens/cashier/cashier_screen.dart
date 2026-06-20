@@ -27,26 +27,41 @@ class _CashierScreenState extends State<CashierScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   bool _voiceAssistantEnabled = false;
+  final TtsService _tts = TtsService();
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    // Charger l'état persisté au démarrage
+    _tts.loadPersistedState().then((_) {
+      if (!mounted) return;
+      final wasEnabled = _tts.cashierEnabledPersisted;
+      if (wasEnabled) {
+        setState(() => _voiceAssistantEnabled = true);
+        final provider = context.read<AppProvider>();
+        _tts.startCashierReminders(provider);
+      }
+    });
   }
 
   @override
   void dispose() {
     _tabController.dispose();
-    if (_voiceAssistantEnabled) {
-      TtsService().stopCashierReminders();
-    }
+    // NE PAS arrêter les rappels au dispose — l'utilisateur a choisi ON
+    // (ils s'arrêtent seulement si l'utilisateur désactive explicitement)
     super.dispose();
   }
 
-  void _toggleVoiceAssistant(AppProvider provider) {
-    setState(() => _voiceAssistantEnabled = !_voiceAssistantEnabled);
-    if (_voiceAssistantEnabled) {
-      TtsService().startCashierReminders(provider);
+  Future<void> _toggleVoiceAssistant(AppProvider provider) async {
+    final newState = !_voiceAssistantEnabled;
+    setState(() => _voiceAssistantEnabled = newState);
+    // Persister l'état
+    await _tts.saveCashierEnabled(newState);
+
+    if (newState) {
+      _tts.startCashierReminders(provider);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('🔊 Assistant vocal activé — rappels toutes les 2 min'),
@@ -55,11 +70,30 @@ class _CashierScreenState extends State<CashierScreen>
         ),
       );
     } else {
-      TtsService().stopCashierReminders();
+      _tts.stopCashierReminders();
+      _tts.stop();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('🔇 Assistant vocal désactivé'),
           duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _testCashierVoice() async {
+    await _tts.testCashierVoice();
+    // Petit délai puis vérifier si erreur audio
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+    final err = _tts.lastAudioError;
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('⚠ Audio bloqué : $err'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 5),
         ),
       );
     }
@@ -114,7 +148,34 @@ class _CashierScreenState extends State<CashierScreen>
                     ],
                   ),
                 ),
-                // Bouton assistant vocal
+                // Bouton Test voix (visible seulement si assistant ON)
+                if (_voiceAssistantEnabled)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 2),
+                    child: Tooltip(
+                      message: 'Test voix',
+                      child: InkWell(
+                        onTap: _testCashierVoice,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1565C0).withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF1565C0).withValues(alpha: 0.4),
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.record_voice_over,
+                            color: Color(0xFF1565C0),
+                            size: 15,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                // Bouton assistant vocal ON/OFF
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Tooltip(
