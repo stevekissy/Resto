@@ -331,6 +331,23 @@ class _NewOrderTabState extends State<NewOrderTab> {
           flex: 6,
           child: Column(
             children: [
+              // ═══ BADGE BUILD — à supprimer après vérification ═══
+              Container(
+                width: double.infinity,
+                color: Colors.red,
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                child: const Text(
+                  '🔨 BUILD 20 JUIN 04H33 — CACHE BUST OK',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              // ════════════════════════════════════════════════════
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                 child: Column(
