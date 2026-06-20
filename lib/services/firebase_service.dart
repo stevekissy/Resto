@@ -484,6 +484,34 @@ class FirebaseService {
     await _db.collection('stock').doc(itemId).delete();
   }
 
+  // =================== STOCK CATEGORIES ===================
+
+  Future<List<String>> fetchStockCategories() async {
+    final snap = await _db.collection('stock_categories').orderBy('name').get();
+    if (snap.docs.isEmpty) return [];
+    return snap.docs.map((d) => (d.data()['name'] as String? ?? '')).where((n) => n.isNotEmpty).toList();
+  }
+
+  Future<void> addStockCategory(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    // Utilise le nom en minuscule comme id pour éviter les doublons
+    final id = trimmed.toLowerCase().replaceAll(' ', '_');
+    await _db.collection('stock_categories').doc(id).set({'name': trimmed, 'id': id});
+  }
+
+  Future<void> updateStockCategory(String oldName, String newName) async {
+    final oldId = oldName.trim().toLowerCase().replaceAll(' ', '_');
+    final newId = newName.trim().toLowerCase().replaceAll(' ', '_');
+    await _db.collection('stock_categories').doc(oldId).delete();
+    await _db.collection('stock_categories').doc(newId).set({'name': newName.trim(), 'id': newId});
+  }
+
+  Future<void> deleteStockCategory(String name) async {
+    final id = name.trim().toLowerCase().replaceAll(' ', '_');
+    await _db.collection('stock_categories').doc(id).delete();
+  }
+
   // =================== STOCK MOVEMENTS ===================
 
   /// Enregistre un mouvement dans la collection stock_movements.

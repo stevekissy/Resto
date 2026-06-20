@@ -1040,6 +1040,12 @@ class AppProvider extends ChangeNotifier {
     await _firebase.deleteStockItem(id);
   }
 
+  // ── Catégories stock (Firestore stock_categories) ────────────────────────
+  Future<List<String>> fetchStockCategories() => _firebase.fetchStockCategories();
+  Future<void> addStockCategory(String name) => _firebase.addStockCategory(name);
+  Future<void> updateStockCategory(String oldName, String newName) => _firebase.updateStockCategory(oldName, newName);
+  Future<void> deleteStockCategory(String name) => _firebase.deleteStockCategory(name);
+
   /// Approvisionne un article de stock (entrée + stock_movements)
   Future<void> restockItem({
     required String stockItemId,

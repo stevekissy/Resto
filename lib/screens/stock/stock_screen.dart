@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
@@ -70,17 +71,58 @@ class _StockTab extends StatefulWidget {
 class _StockTabState extends State<_StockTab> {
   String _selectedCategory = 'Tous';
   String _filter = 'all';
+  String _searchQuery = '';
+  List<String> _firestoreCategories = [];
+  bool _categoriesLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+  }
+
+  Future<void> _loadCategories() async {
+    final provider = context.read<AppProvider>();
+    final cats = await provider.fetchStockCategories();
+    if (mounted) {
+      setState(() {
+        _firestoreCategories = cats;
+        _categoriesLoaded = true;
+      });
+    }
+  }
+
+  /// Retourne les catégories fusionnées : Firestore + items existants (dédupliqué)
+  List<String> _buildCategories(List<StockItem> stockItems) {
+    final fromItems = stockItems.map((s) => s.category).toSet();
+    final merged = <String>{..._firestoreCategories, ...fromItems}
+        .where((c) => c.isNotEmpty)
+        .toList()
+      ..sort();
+    return ['Tous', ...merged];
+  }
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    final categories = ['Tous', ...{...provider.stockItems.map((s) => s.category)}];
-    var items = provider.stockItems;
+    final categories = _buildCategories(provider.stockItems);
 
-    if (_selectedCategory != 'Tous') items = items.where((s) => s.category == _selectedCategory).toList();
-    if (_filter == 'low') items = items.where((s) => s.isLow).toList();
-    if (_filter == 'out') items = items.where((s) => s.isOut).toList();
+    var items = provider.stockItems;
+    if (_selectedCategory != 'Tous') {
+      items = items.where((s) => s.category == _selectedCategory).toList();
+    }
+    if (_filter == 'low')  items = items.where((s) => s.isLow).toList();
+    if (_filter == 'out')  items = items.where((s) => s.isOut).toList();
     if (_filter == 'expired') items = items.where((s) => s.isExpired).toList();
+
+    // Recherche multi-champ : nom, catégorie, fournisseur (stocké dans unitCost/note via convention)
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      items = items.where((s) =>
+        s.name.toLowerCase().contains(q) ||
+        s.category.toLowerCase().contains(q)
+      ).toList();
+    }
 
     return Scaffold(
       body: Column(
@@ -89,23 +131,21 @@ class _StockTabState extends State<_StockTab> {
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
-                // Ligne filtres + bouton Approvisionner
+                // ── Ligne 1 : filtres statut + boutons ───────────────
                 Row(
                   children: [
-                    _FilterBtn(label: 'Tous', selected: _filter == 'all', onTap: () => setState(() => _filter = 'all'), color: AppTheme.primary),
+                    _FilterBtn(label: 'Tous',    selected: _filter == 'all',     onTap: () => setState(() => _filter = 'all'),     color: AppTheme.primary),
                     const SizedBox(width: 6),
-                    _FilterBtn(label: '⚠ Faible (${provider.lowStockItems.length})', selected: _filter == 'low', onTap: () => setState(() => _filter = 'low'), color: AppTheme.warning),
+                    _FilterBtn(label: '⚠ Faible (${provider.lowStockItems.length})',   selected: _filter == 'low',     onTap: () => setState(() => _filter = 'low'),     color: AppTheme.warning),
                     const SizedBox(width: 6),
-                    _FilterBtn(label: '🔴 Rupture (${provider.outOfStockItems.length})', selected: _filter == 'out', onTap: () => setState(() => _filter = 'out'), color: AppTheme.error),
+                    _FilterBtn(label: '🔴 Rupture (${provider.outOfStockItems.length})', selected: _filter == 'out',  onTap: () => setState(() => _filter = 'out'),     color: AppTheme.error),
                     const Spacer(),
-                    // Bouton Approvisionner — en haut, ne couvre pas la liste
+                    // Bouton Approvisionner
                     TextButton.icon(
                       onPressed: () => _showRestockDialog(context, provider),
-                      icon: const Icon(Icons.add_shopping_cart, size: 16, color: Color(0xFF2E7D32)),
-                      label: const Text(
-                        'Approvisionner',
-                        style: TextStyle(color: Color(0xFF2E7D32), fontSize: 12, fontWeight: FontWeight.w700),
-                      ),
+                      icon: const Icon(Icons.add_shopping_cart, size: 15, color: Color(0xFF2E7D32)),
+                      label: const Text('Approvisionner',
+                          style: TextStyle(color: Color(0xFF2E7D32), fontSize: 12, fontWeight: FontWeight.w700)),
                       style: TextButton.styleFrom(
                         backgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.12),
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -115,71 +155,137 @@ class _StockTabState extends State<_StockTab> {
                         ),
                       ),
                     ),
+                    const SizedBox(width: 6),
+                    // Bouton Ajouter stock
+                    TextButton.icon(
+                      onPressed: () => _showAddStockDialog(context, provider, categories),
+                      icon: const Icon(Icons.add_box_outlined, size: 15, color: AppTheme.primary),
+                      label: const Text('Ajouter stock',
+                          style: TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w700)),
+                      style: TextButton.styleFrom(
+                        backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: BorderSide(color: AppTheme.primary, width: 1),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
-                // Category chips
-                SizedBox(
-                  height: 34,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: categories.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 6),
-                    itemBuilder: (context, i) {
-                      final cat = categories[i];
-                      final selected = _selectedCategory == cat;
-                      return GestureDetector(
-                        onTap: () => setState(() => _selectedCategory = cat),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: selected ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.surfaceLight,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: selected ? AppTheme.primary : const Color(0xFF2A2A5A)),
-                          ),
-                          child: Text(cat, style: TextStyle(color: selected ? AppTheme.primary : AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w600)),
-                        ),
-                      );
-                    },
+
+                // ── Ligne 2 : barre de recherche ─────────────────────
+                TextField(
+                  onChanged: (v) => setState(() => _searchQuery = v),
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'Rechercher par nom, catégorie…',
+                    prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary, size: 18),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, color: AppTheme.textSecondary, size: 16),
+                            onPressed: () => setState(() => _searchQuery = ''),
+                          )
+                        : null,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                    isDense: true,
                   ),
+                ),
+                const SizedBox(height: 8),
+
+                // ── Ligne 3 : chips catégories + Gérer catégories ────
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 34,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: categories.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 6),
+                          itemBuilder: (context, i) {
+                            final cat = categories[i];
+                            final selected = _selectedCategory == cat;
+                            return GestureDetector(
+                              onTap: () => setState(() => _selectedCategory = cat),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: selected ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.surfaceLight,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: selected ? AppTheme.primary : const Color(0xFF2A2A5A)),
+                                ),
+                                child: Text(cat,
+                                    style: TextStyle(
+                                        color: selected ? AppTheme.primary : AppTheme.textSecondary,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Bouton Gérer catégories
+                    GestureDetector(
+                      onTap: () => _showManageCategoriesDialog(context, provider),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: AppTheme.surfaceLight,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF2A2A5A)),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.tune, color: AppTheme.textSecondary, size: 14),
+                            SizedBox(width: 4),
+                            Text('Catégories', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
           Expanded(
             child: items.isEmpty
-              ? EmptyState(
-                  icon: Icons.inventory_2,
-                  title: provider.stockItems.isEmpty
-                      ? 'Aucun article de stock enregistré'
-                      : 'Aucun article dans cette catégorie',
-                  subtitle: null,
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  itemCount: items.length,
-                  itemBuilder: (context, i) => _StockItemCard(
-                    item: items[i],
-                    onEdit: () => _showEditDialog(context, items[i], provider),
+                ? EmptyState(
+                    icon: Icons.inventory_2,
+                    title: _searchQuery.isNotEmpty
+                        ? 'Aucun résultat pour "$_searchQuery"'
+                        : provider.stockItems.isEmpty
+                            ? 'Aucun article de stock enregistré'
+                            : 'Aucun article dans cette catégorie',
+                    subtitle: null,
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    itemCount: items.length,
+                    itemBuilder: (context, i) => _StockItemCard(
+                      item: items[i],
+                      onEdit: () => _showEditDialog(context, items[i], provider, _buildCategories(provider.stockItems)),
+                    ),
                   ),
-                ),
           ),
         ],
       ),
     );
   }
 
-  void _showEditDialog(BuildContext context, StockItem item, AppProvider provider) {
-    final nameCtrl  = TextEditingController(text: item.name);
-    final unitCtrl  = TextEditingController(text: item.unit);
-    final minCtrl   = TextEditingController(text: item.minQuantity.toString());
+  // ── Dialog Modifier article ─────────────────────────────────────────────
+  void _showEditDialog(BuildContext context, StockItem item, AppProvider provider, List<String> categories) {
+    final nameCtrl = TextEditingController(text: item.name);
+    final unitCtrl = TextEditingController(text: item.unit);
+    final minCtrl  = TextEditingController(text: item.minQuantity.toString());
     String category = item.category;
 
-    final availableCategories = [
-      'Viandes & Poissons', 'Légumes', 'Féculents',
-      'Épices & Huiles', 'Boissons', 'Autres',
-    ];
-    // Si la catégorie de l'article n'est pas dans la liste prédéfinie, on l'ajoute
+    final availableCategories = categories.where((c) => c != 'Tous').toList();
     if (!availableCategories.contains(category)) {
       availableCategories.insert(0, category);
     }
@@ -212,61 +318,37 @@ class _StockTabState extends State<_StockTab> {
                     children: [
                       const Icon(Icons.inventory_2, color: AppTheme.textSecondary, size: 16),
                       const SizedBox(width: 8),
-                      Text(
-                        'Stock actuel : ${item.currentQuantity} ${item.unit}',
-                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-                      ),
+                      Text('Stock actuel : ${item.currentQuantity} ${item.unit}',
+                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
                       const Spacer(),
                       const Text('(non modifiable)', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
                     ],
                   ),
                 ),
-                // Nom
-                TextField(
-                  controller: nameCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'Nom du produit',
-                    prefixIcon: Icon(Icons.label_outline, color: AppTheme.primary),
-                  ),
-                ),
+                TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'Nom du produit',
+                        prefixIcon: Icon(Icons.label_outline, color: AppTheme.primary))),
                 const SizedBox(height: 10),
-                // Catégorie
                 DropdownButtonFormField<String>(
-                  value: category,
+                  value: availableCategories.contains(category) ? category : availableCategories.first,
                   style: const TextStyle(color: Colors.white),
                   dropdownColor: AppTheme.cardBg,
                   isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Catégorie',
-                    prefixIcon: Icon(Icons.category_outlined, color: AppTheme.primary),
-                  ),
-                  items: availableCategories
-                      .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                      .toList(),
+                  decoration: const InputDecoration(labelText: 'Catégorie',
+                      prefixIcon: Icon(Icons.category_outlined, color: AppTheme.primary)),
+                  items: availableCategories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                   onChanged: (v) => setS(() => category = v!),
                 ),
                 const SizedBox(height: 10),
-                // Unité
-                TextField(
-                  controller: unitCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'Unité (kg, L, pcs…)',
-                    prefixIcon: Icon(Icons.straighten, color: AppTheme.primary),
-                  ),
-                ),
+                TextField(controller: unitCtrl, style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'Unité (kg, L, pcs…)',
+                        prefixIcon: Icon(Icons.straighten, color: AppTheme.primary))),
                 const SizedBox(height: 10),
-                // Seuil d'alerte
-                TextField(
-                  controller: minCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'Seuil d\'alerte (quantité minimale)',
-                    prefixIcon: Icon(Icons.warning_amber_outlined, color: AppTheme.warning),
-                  ),
-                ),
+                TextField(controller: minCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'Seuil d\'alerte',
+                        prefixIcon: Icon(Icons.warning_amber_outlined, color: AppTheme.warning))),
               ],
             ),
           ),
@@ -277,15 +359,11 @@ class _StockTabState extends State<_StockTab> {
               label: const Text('Enregistrer'),
               onPressed: () async {
                 if (nameCtrl.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    const SnackBar(
-                      content: Text('Le nom du produit est obligatoire'),
-                      backgroundColor: AppTheme.warning,
-                    ),
-                  );
+                  ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                      content: Text('Le nom est obligatoire'), backgroundColor: AppTheme.warning));
                   return;
                 }
-                final updatedItem = StockItem(
+                final updated = StockItem(
                   id: item.id,
                   name: nameCtrl.text.trim(),
                   unit: unitCtrl.text.trim().isEmpty ? item.unit : unitCtrl.text.trim(),
@@ -296,20 +374,188 @@ class _StockTabState extends State<_StockTab> {
                   category: category,
                   expiryDate: item.expiryDate,
                 );
-                await provider.updateStockItem(updatedItem);
+                await provider.updateStockItem(updated);
                 if (ctx.mounted) {
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    SnackBar(
-                      content: Text('✅ ${updatedItem.name} mis à jour'),
-                      backgroundColor: AppTheme.success,
-                    ),
-                  );
+                  ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                      content: Text('✅ ${updated.name} mis à jour'), backgroundColor: AppTheme.success));
                 }
               },
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ── Dialog Ajouter nouveau produit stock ────────────────────────────────
+  void _showAddStockDialog(BuildContext context, AppProvider provider, List<String> categories) {
+    final nameCtrl     = TextEditingController();
+    final qtyCtrl      = TextEditingController(text: '0');
+    final unitCtrl     = TextEditingController();
+    final minCtrl      = TextEditingController(text: '0');
+    final priceCtrl    = TextEditingController();
+    final noteCtrl     = TextEditingController();
+    String? selectedCategory = categories.where((c) => c != 'Tous').firstOrNull;
+    String? selectedSupplierId;
+    String? selectedSupplierName;
+
+    final availableCats = categories.where((c) => c != 'Tous').toList();
+    if (availableCats.isEmpty) availableCats.addAll(['Viandes & Poissons', 'Légumes', 'Boissons', 'Autres']);
+
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.add_box_outlined, color: AppTheme.primary, size: 22),
+              SizedBox(width: 8),
+              Text('Ajouter un produit stock'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Nom
+                TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'Nom du produit *',
+                        prefixIcon: Icon(Icons.label_outline, color: AppTheme.primary))),
+                const SizedBox(height: 10),
+                // Catégorie
+                DropdownButtonFormField<String>(
+                  value: selectedCategory,
+                  style: const TextStyle(color: Colors.white),
+                  dropdownColor: AppTheme.cardBg,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Catégorie *',
+                      prefixIcon: Icon(Icons.category_outlined, color: AppTheme.primary)),
+                  items: availableCats.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  onChanged: (v) => setS(() => selectedCategory = v),
+                ),
+                const SizedBox(height: 10),
+                // Quantité initiale
+                TextField(controller: qtyCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'Quantité initiale *',
+                        prefixIcon: Icon(Icons.inventory_2, color: AppTheme.primary))),
+                const SizedBox(height: 10),
+                // Unité
+                TextField(controller: unitCtrl, style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'Unité (kg, L, pcs, boîtes…) *',
+                        prefixIcon: Icon(Icons.straighten, color: AppTheme.primary))),
+                const SizedBox(height: 10),
+                // Seuil d'alerte
+                TextField(controller: minCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'Seuil d\'alerte (quantité minimale)',
+                        prefixIcon: Icon(Icons.warning_amber_outlined, color: AppTheme.warning))),
+                const SizedBox(height: 10),
+                // Fournisseur (optionnel)
+                if (provider.suppliers.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    value: selectedSupplierId,
+                    style: const TextStyle(color: Colors.white),
+                    dropdownColor: AppTheme.cardBg,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Fournisseur (optionnel)',
+                        prefixIcon: Icon(Icons.local_shipping_outlined, color: AppTheme.textSecondary)),
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('— Aucun —')),
+                      ...provider.suppliers.map((s) => DropdownMenuItem(
+                            value: s.id,
+                            child: Text(s.name, overflow: TextOverflow.ellipsis),
+                          )),
+                    ],
+                    onChanged: (v) => setS(() {
+                      selectedSupplierId = v;
+                      selectedSupplierName = v == null
+                          ? null
+                          : provider.suppliers.firstWhere((s) => s.id == v).name;
+                    }),
+                  ),
+                const SizedBox(height: 10),
+                // Prix d'achat (optionnel)
+                TextField(controller: priceCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'Prix d\'achat unitaire (F CFA, optionnel)',
+                        prefixIcon: Icon(Icons.monetization_on_outlined, color: AppTheme.primary))),
+                const SizedBox(height: 10),
+                // Note
+                TextField(controller: noteCtrl, style: const TextStyle(color: Colors.white),
+                    maxLines: 2,
+                    decoration: const InputDecoration(labelText: 'Note (optionnel)',
+                        prefixIcon: Icon(Icons.notes, color: AppTheme.textSecondary))),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.save, size: 16),
+              label: const Text('Créer'),
+              onPressed: () async {
+                final name = nameCtrl.text.trim();
+                final unit = unitCtrl.text.trim();
+                final qty  = double.tryParse(qtyCtrl.text) ?? 0;
+                final cat  = selectedCategory ?? 'Autres';
+
+                if (name.isEmpty || unit.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                      content: Text('Nom et unité sont obligatoires'), backgroundColor: AppTheme.warning));
+                  return;
+                }
+
+                final id = FirebaseFirestore.instance.collection('stock').doc().id;
+                final minQty = double.tryParse(minCtrl.text) ?? 0;
+                final unitCost = double.tryParse(priceCtrl.text) ?? 0;
+
+                final newItem = StockItem(
+                  id: id,
+                  name: name,
+                  unit: unit,
+                  currentQuantity: qty,
+                  minQuantity: minQty,
+                  maxQuantity: qty > 0 ? qty * 2 : 100,
+                  unitCost: unitCost,
+                  category: cat,
+                );
+
+                try {
+                  // Crée l'article dans Firestore (qty initiale incluse)
+                  await provider.addStockItem(newItem);
+
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                        content: Text('✅ $name ajouté au stock'), backgroundColor: AppTheme.success));
+                  }
+                } catch (e) {
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                        content: Text('Erreur: $e'), backgroundColor: AppTheme.error));
+                  }
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Dialog Gérer catégories ──────────────────────────────────────────────
+  void _showManageCategoriesDialog(BuildContext context, AppProvider provider) {
+    showDialog(
+      context: context,
+      builder: (_) => _ManageCategoriesDialog(
+        provider: provider,
+        onCategoriesChanged: _loadCategories,
       ),
     );
   }
@@ -502,6 +748,228 @@ class _StockTabState extends State<_StockTab> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// =================== MANAGE CATEGORIES DIALOG ===================
+class _ManageCategoriesDialog extends StatefulWidget {
+  final AppProvider provider;
+  final VoidCallback onCategoriesChanged;
+
+  const _ManageCategoriesDialog({required this.provider, required this.onCategoriesChanged});
+
+  @override
+  State<_ManageCategoriesDialog> createState() => _ManageCategoriesDialogState();
+}
+
+class _ManageCategoriesDialogState extends State<_ManageCategoriesDialog> {
+  List<String> _categories = [];
+  bool _loading = true;
+  final _newCatCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _newCatCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final cats = await widget.provider.fetchStockCategories();
+    if (mounted) setState(() { _categories = cats; _loading = false; });
+  }
+
+  /// Vérifie si un produit stock utilise cette catégorie
+  bool _isCategoryInUse(String name) {
+    return widget.provider.stockItems.any((s) => s.category == name);
+  }
+
+  Future<void> _add() async {
+    final name = _newCatCtrl.text.trim();
+    if (name.isEmpty) return;
+    if (_categories.contains(name)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('La catégorie "$name" existe déjà'), backgroundColor: AppTheme.warning));
+      return;
+    }
+    await widget.provider.addStockCategory(name);
+    _newCatCtrl.clear();
+    widget.onCategoriesChanged();
+    _load();
+  }
+
+  Future<void> _rename(String oldName) async {
+    final ctrl = TextEditingController(text: oldName);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Renommer la catégorie'),
+        content: TextField(
+          controller: ctrl,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(labelText: 'Nouveau nom'),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Renommer')),
+        ],
+      ),
+    );
+    if (confirmed == true && ctrl.text.trim().isNotEmpty && ctrl.text.trim() != oldName) {
+      await widget.provider.updateStockCategory(oldName, ctrl.text.trim());
+      widget.onCategoriesChanged();
+      _load();
+    }
+  }
+
+  Future<void> _delete(String name) async {
+    if (_isCategoryInUse(name)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Impossible : des produits utilisent la catégorie "$name"'),
+          backgroundColor: AppTheme.error));
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Supprimer la catégorie ?'),
+        content: Text('Supprimer "$name" définitivement ?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await widget.provider.deleteStockCategory(name);
+      widget.onCategoriesChanged();
+      _load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.tune, color: AppTheme.primary, size: 20),
+          SizedBox(width: 8),
+          Text('Gérer les catégories'),
+        ],
+      ),
+      content: SizedBox(
+        width: 340,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Champ ajout nouvelle catégorie
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _newCatCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: 'Nouvelle catégorie…',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                    ),
+                    onSubmitted: (_) => _add(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _add,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    backgroundColor: AppTheme.primary,
+                  ),
+                  child: const Text('Ajouter', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Divider(color: Color(0xFF2A2A5A)),
+            const SizedBox(height: 8),
+            if (_loading)
+              const Center(child: CircularProgressIndicator())
+            else if (_categories.isEmpty)
+              const Text('Aucune catégorie. Ajoutez-en une ci-dessus.',
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12))
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 260),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _categories.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFF2A2A5A)),
+                  itemBuilder: (_, i) {
+                    final cat = _categories[i];
+                    final inUse = _isCategoryInUse(cat);
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.label_outline, color: AppTheme.textSecondary, size: 14),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(cat,
+                                style: const TextStyle(color: Colors.white, fontSize: 13)),
+                          ),
+                          if (inUse)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppTheme.primary.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '${widget.provider.stockItems.where((s) => s.category == cat).length} produits',
+                                style: const TextStyle(color: AppTheme.primary, fontSize: 10),
+                              ),
+                            ),
+                          const SizedBox(width: 8),
+                          // Renommer
+                          IconButton(
+                            icon: const Icon(Icons.edit, size: 16, color: AppTheme.textSecondary),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                            tooltip: 'Renommer',
+                            onPressed: () => _rename(cat),
+                          ),
+                          // Supprimer
+                          IconButton(
+                            icon: Icon(Icons.delete_outline, size: 16,
+                                color: inUse ? AppTheme.textSecondary.withValues(alpha: 0.4) : AppTheme.error),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                            tooltip: inUse ? 'Catégorie utilisée par des produits' : 'Supprimer',
+                            onPressed: inUse ? null : () => _delete(cat),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fermer')),
+      ],
     );
   }
 }
