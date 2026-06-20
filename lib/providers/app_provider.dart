@@ -723,6 +723,7 @@ class AppProvider extends ChangeNotifier {
     String? serverEmail,
     String? specialInstructions,
     bool isUrgent = false,
+    String orderType = 'dine_in',
   }) async {
     // Numéro de commande unique via transaction Firestore (pas de RAM)
     final orderNumber = await _firebase.getNextOrderNumber();
@@ -736,6 +737,7 @@ class AppProvider extends ChangeNotifier {
       items: items,
       specialInstructions: specialInstructions,
       isUrgent: isUrgent,
+      orderType: orderType,
     );
     await _firebase.saveOrder(order);
 

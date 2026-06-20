@@ -352,6 +352,10 @@ class Order {
   String? serverId;
   String? serverEmail;
 
+  // ── Type de commande (sur place / à emporter) ────────────────────────
+  String orderType;          // 'dine_in' | 'takeaway'
+  bool get isTakeaway => orderType == 'takeaway';
+
   // ── Cycle de vie modification / annulation ──────────────────────────
   DateTime? updatedAt;
   DateTime? cancelledAt;
@@ -395,10 +399,14 @@ class Order {
     this.cancelReason,
     this.paymentStatus,
     this.settlementStatus,
+    this.orderType = 'dine_in',
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.totalPrice);
   double get totalAmount => subtotal - discount;
+
+  /// Libellé de table affiché partout (cuisine, caisse, facture)
+  String get tableLabel => isTakeaway ? 'À emporter' : 'Table $tableNumber';
 
   int get elapsedMinutes => DateTime.now().difference(createdAt).inMinutes;
 
@@ -461,6 +469,7 @@ class Order {
     'cancelReason': cancelReason,
     'paymentStatus': paymentStatus,
     'settlementStatus': settlementStatus,
+    'orderType': orderType,
   };
 
   factory Order.fromMap(Map<String, dynamic> map) => Order(
@@ -503,6 +512,7 @@ class Order {
     cancelReason: map['cancelReason'] as String?,
     paymentStatus: map['paymentStatus'] as String?,
     settlementStatus: map['settlementStatus'] as String?,
+    orderType: map['orderType'] as String? ?? 'dine_in',
   );
 }
 

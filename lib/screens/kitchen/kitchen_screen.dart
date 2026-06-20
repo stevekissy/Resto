@@ -922,7 +922,7 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                       ),
                     ),
                     Text(
-                      'Table ${order.tableNumber}',
+                      order.tableLabel,
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w700,
@@ -1278,7 +1278,7 @@ class _ReadyOrderCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Commande #${order.orderNumber} - Table ${order.tableNumber}',
+                  'Commande #${order.orderNumber} - ${order.tableLabel}',
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,

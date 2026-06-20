@@ -272,7 +272,7 @@ class _CaisseTabState extends State<_CaisseTab> {
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
                     fontSize: 15)),
-            Text('Table : ${order.tableNumber}',
+            Text(order.tableLabel,
                 style: const TextStyle(
                     color: AppTheme.textSecondary, fontSize: 13)),
             const SizedBox(height: 12),
@@ -402,7 +402,7 @@ class _CaisseTabState extends State<_CaisseTab> {
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                      '#${order.orderNumber} - Table ${order.tableNumber}',
+                                      '#${order.orderNumber} - ${order.tableLabel}',
                                       style: const TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.w700,
@@ -600,7 +600,7 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                      '#${order.orderNumber} - Table ${order.tableNumber}',
+                                      '#${order.orderNumber} - ${order.tableLabel}',
                                       style: const TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.w700,
@@ -806,7 +806,7 @@ class _ReglementSuccessDialog extends StatelessWidget {
             child: Column(
               children: [
                 _Row('N° Facture', settlementNumber),
-                _Row('Table', 'Table ${order.tableNumber}'),
+                _Row('Table', order.tableLabel),
                 _Row('Mode paiement', paymentMethod),
                 _Row('Montant réglé', '${fmt.format(order.totalAmount)} F CFA'),
                 _Row('Montant versé', '${fmt.format(amountPaid)} F CFA'),
@@ -947,7 +947,7 @@ class _ReglementDialogState extends State<_ReglementDialog> {
                   style:
                       TextStyle(color: Colors.white, fontSize: 16)),
               Text(
-                  'Commande #${widget.order.orderNumber} — Table ${widget.order.tableNumber}',
+                  'Commande #${widget.order.orderNumber} — ${widget.order.tableLabel}',
                   style: const TextStyle(
                       color: AppTheme.textSecondary, fontSize: 11)),
             ],
@@ -1547,7 +1547,7 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
                             MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                              '#${o.orderNumber} Table ${o.tableNumber}',
+                              '#${o.orderNumber} ${o.tableLabel}',
                               style: const TextStyle(
                                   color: AppTheme.textPrimary,
                                   fontSize: 12)),
@@ -2121,7 +2121,11 @@ class _InvoiceHistoryCard extends StatelessWidget {
 
     final invoiceNum = (invoice['cashoutInvoiceNumber'] ??
                        invoice['settlementInvoiceNumber'] ?? '') as String;
-    final tableNum   = invoice['tableNumber']  ?? '—';
+    final rawOrderType = invoice['orderType'] as String? ?? 'dine_in';
+    final rawTableNum  = (invoice['tableNumber'] ?? '').toString();
+    final tableNum     = rawOrderType == 'takeaway'
+        ? 'À emporter'
+        : rawTableNum.isNotEmpty ? 'Table $rawTableNum' : '—';
     final server     = invoice['serverName']   as String? ?? '—';
     final cashier    = invoice['cashierName']  as String? ?? '—';
     final total      = (invoice['totalAmount'] as num?)?.toDouble() ?? 0;
@@ -2182,7 +2186,7 @@ class _InvoiceHistoryCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _InfoRow(icon: Icons.table_restaurant, label: 'Table $tableNum'),
+                    _InfoRow(icon: Icons.table_restaurant, label: tableNum),
                     _InfoRow(icon: Icons.person,           label: server),
                     _InfoRow(icon: Icons.manage_accounts,  label: cashier),
                     if (isSettlement) ...[

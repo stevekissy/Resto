@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show min;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
@@ -74,6 +75,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
   final _notesController = TextEditingController();
   final List<OrderItem> _cartItems = [];
   bool _isUrgent = false;
+  bool _isTakeaway = false;
   String _selectedCategory = 'Tous';
   String _searchQuery = '';
   AppUser? _selectedServer;
@@ -132,7 +134,8 @@ class _NewOrderTabState extends State<NewOrderTab> {
   }
 
   Future<void> _submitOrder() async {
-    if (_tableController.text.isEmpty) {
+    // Table obligatoire seulement pour les commandes sur place
+    if (!_isTakeaway && _tableController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Veuillez saisir un numéro de table'), backgroundColor: AppTheme.error),
       );
@@ -159,13 +162,14 @@ class _NewOrderTabState extends State<NewOrderTab> {
     }
 
     final order = await provider.createOrder(
-      tableNumber: _tableController.text,
+      tableNumber: _isTakeaway ? '' : _tableController.text,
       items: List.from(_cartItems),
       specialInstructions: _notesController.text.isEmpty ? null : _notesController.text,
       isUrgent: _isUrgent,
       serverId: _selectedServer?.id,
       serverName: _selectedServer?.name,
       serverEmail: _selectedServer?.email,
+      orderType: _isTakeaway ? 'takeaway' : 'dine_in',
     );
 
     if (!mounted) return;
@@ -174,6 +178,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
       _tableController.clear();
       _notesController.clear();
       _isUrgent = false;
+      _isTakeaway = false;
       _selectedServer = null;
     });
 
@@ -289,6 +294,25 @@ class _NewOrderTabState extends State<NewOrderTab> {
         false;
   }
 
+  /// Tri alphabétique+numérique (natural sort)
+  int _naturalCompare(String a, String b) {
+    final regExp = RegExp(r'(\d+|\D+)');
+    final partsA = regExp.allMatches(a).map((m) => m.group(0)!).toList();
+    final partsB = regExp.allMatches(b).map((m) => m.group(0)!).toList();
+    for (int i = 0; i < min(partsA.length, partsB.length); i++) {
+      final numA = int.tryParse(partsA[i]);
+      final numB = int.tryParse(partsB[i]);
+      if (numA != null && numB != null) {
+        final cmp = numA.compareTo(numB);
+        if (cmp != 0) return cmp;
+      } else {
+        final cmp = partsA[i].toLowerCase().compareTo(partsB[i].toLowerCase());
+        if (cmp != 0) return cmp;
+      }
+    }
+    return partsA.length.compareTo(partsB.length);
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
@@ -297,7 +321,8 @@ class _NewOrderTabState extends State<NewOrderTab> {
       final catMatch = _selectedCategory == 'Tous' || p.category == _selectedCategory;
       final searchMatch = _searchQuery.isEmpty || p.name.toLowerCase().contains(_searchQuery.toLowerCase());
       return catMatch && searchMatch;
-    }).toList();
+    }).toList()
+      ..sort((a, b) => _naturalCompare(a.name, b.name));
 
     return Row(
       children: [
@@ -348,18 +373,17 @@ class _NewOrderTabState extends State<NewOrderTab> {
                 ),
               ),
               Expanded(
-                child: GridView.builder(
-                  padding: const EdgeInsets.all(12),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.2,
-                  ),
-                  itemCount: filteredProducts.length,
-                  itemBuilder: (context, i) => _ProductCard(
-                    product: filteredProducts[i],
-                    cartItems: _cartItems,
-                    onAdd: () => _addToCart(filteredProducts[i]),
-                  ),
-                ),
+                child: filteredProducts.isEmpty
+                  ? const EmptyState(icon: Icons.search_off, title: 'Aucun plat trouvé', subtitle: 'Modifiez votre recherche ou la catégorie')
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      itemCount: filteredProducts.length,
+                      itemBuilder: (context, i) => _ProductRow(
+                        product: filteredProducts[i],
+                        cartItems: _cartItems,
+                        onAdd: () => _addToCart(filteredProducts[i]),
+                      ),
+                    ),
               ),
             ],
           ),
@@ -391,6 +415,60 @@ class _NewOrderTabState extends State<NewOrderTab> {
                       ],
                     ),
                     const SizedBox(height: 10),
+                    // ── Toggle Commande à emporter ──────────────────────
+                    GestureDetector(
+                      onTap: () => setState(() {
+                        _isTakeaway = !_isTakeaway;
+                        if (_isTakeaway) _tableController.clear();
+                      }),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: _isTakeaway
+                              ? const Color(0xFFE65100).withValues(alpha: 0.18)
+                              : AppTheme.surfaceLight,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: _isTakeaway
+                                ? const Color(0xFFE65100)
+                                : const Color(0xFF2A2A5A),
+                            width: _isTakeaway ? 1.5 : 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.takeout_dining,
+                              size: 18,
+                              color: _isTakeaway ? const Color(0xFFE65100) : AppTheme.textSecondary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Commande à emporter',
+                                style: TextStyle(
+                                  color: _isTakeaway ? const Color(0xFFE65100) : AppTheme.textSecondary,
+                                  fontSize: 12,
+                                  fontWeight: _isTakeaway ? FontWeight.w700 : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                            Switch(
+                              value: _isTakeaway,
+                              onChanged: (v) => setState(() {
+                                _isTakeaway = v;
+                                if (v) _tableController.clear();
+                              }),
+                              activeColor: const Color(0xFFE65100),
+                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // ── Champ table (masqué si à emporter) ──────────────
+                    if (!_isTakeaway)
                     TextField(
                       controller: _tableController,
                       keyboardType: TextInputType.number,
@@ -564,12 +642,13 @@ class _NewOrderTabState extends State<NewOrderTab> {
   }
 }
 
-class _ProductCard extends StatelessWidget {
+/// Ligne produit en liste — sans icône, nom/catégorie/prix/bouton Ajouter
+class _ProductRow extends StatelessWidget {
   final Product product;
   final List<OrderItem> cartItems;
   final VoidCallback onAdd;
 
-  const _ProductCard({required this.product, required this.cartItems, required this.onAdd});
+  const _ProductRow({required this.product, required this.cartItems, required this.onAdd});
 
   @override
   Widget build(BuildContext context) {
@@ -578,72 +657,87 @@ class _ProductCard extends StatelessWidget {
       orElse: () => OrderItem(productId: '', productName: '', quantity: 0, unitPrice: 0),
     );
     final inCart = cartItem.productId.isNotEmpty;
+    final qty = inCart ? cartItem.quantity : 0;
 
-    return GestureDetector(
-      onTap: onAdd,
-      child: Container(
-        decoration: BoxDecoration(
-          color: inCart ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.cardBg,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: inCart ? AppTheme.primary : const Color(0xFF2A2A5A),
-            width: inCart ? 2 : 1,
-          ),
-        ),
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
-                  child: Icon(_getCategoryIcon(product.category), color: AppTheme.primary, size: 18),
-                ),
-                if (inCart) ...[
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(color: AppTheme.primary, borderRadius: BorderRadius.circular(10)),
-                    child: Text('×${cartItem.quantity}', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
-                  ),
-                ],
-              ],
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(product.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13), maxLines: 2, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 4),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('${product.price.toStringAsFixed(0)} F', style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 12)),
-                    Row(
-                      children: [
-                        const Icon(Icons.timer_outlined, color: AppTheme.textSecondary, size: 11),
-                        const SizedBox(width: 2),
-                        Text('${product.prepTime.toInt()}min', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ],
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: inCart ? AppTheme.primary.withValues(alpha: 0.12) : AppTheme.cardBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: inCart ? AppTheme.primary.withValues(alpha: 0.6) : const Color(0xFF2A2A5A),
+          width: inCart ? 1.5 : 1,
         ),
       ),
+      child: Row(
+        children: [
+          // Nom + catégorie
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  product.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                  overflow: TextOverflow.visible,
+                  softWrap: true,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  product.category,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Prix
+          Text(
+            '${product.price.toStringAsFixed(0)} F',
+            style: const TextStyle(
+              color: AppTheme.primary,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(width: 10),
+          // Badge quantité + bouton Ajouter
+          if (inCart)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              margin: const EdgeInsets.only(right: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.primary,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '×$qty',
+                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+            ),
+          GestureDetector(
+            onTap: onAdd,
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.5)),
+              ),
+              child: const Icon(Icons.add, color: AppTheme.primary, size: 16),
+            ),
+          ),
+        ],
+      ),
     );
-  }
-
-  IconData _getCategoryIcon(String cat) {
-    switch (cat) {
-      case 'Boissons': return Icons.local_drink;
-      case 'Accompagnements': return Icons.rice_bowl;
-      default: return Icons.restaurant;
-    }
   }
 }
 
@@ -853,7 +947,7 @@ class _OrderListCard extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Text('Table ${order.tableNumber}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+                        Text(order.tableLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
                         if (order.isUrgent) ...[
                           const SizedBox(width: 8),
                           Container(
@@ -1007,7 +1101,7 @@ class _OrderListCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Table ${order.tableNumber} — ${order.totalAmount.toStringAsFixed(0)} F CFA',
+            Text('${order.tableLabel} — ${order.totalAmount.toStringAsFixed(0)} F CFA',
                 style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
             const SizedBox(height: 14),
             const Text('Raison de l\'annulation *',
