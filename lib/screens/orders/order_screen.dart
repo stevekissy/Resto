@@ -679,12 +679,12 @@ class _ProductCardState extends State<_ProductCard> {
     final cartQty = inCart ? cartItem.quantity : 0;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 7),
       decoration: BoxDecoration(
         color: inCart
             ? AppTheme.primary.withValues(alpha: 0.10)
             : AppTheme.cardBg,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: inCart
               ? AppTheme.primary.withValues(alpha: 0.55)
@@ -692,17 +692,18 @@ class _ProductCardState extends State<_ProductCard> {
           width: inCart ? 1.5 : 1,
         ),
       ),
+      // ─── UNE SEULE LIGNE : [ Infos | Prix | −qty+ | Ajouter ] ───
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // ── Infos plat ──────────────────────────────────────────
+            // ── 1. Nom + sous-titre (prend tout l'espace disponible) ─
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Nom
                   Text(
                     widget.product.name,
                     style: const TextStyle(
@@ -710,139 +711,119 @@ class _ProductCardState extends State<_ProductCard> {
                       fontWeight: FontWeight.w700,
                       fontSize: 14,
                     ),
+                    // Jamais de coupure — on laisse le texte se dérouler
+                    overflow: TextOverflow.visible,
                     softWrap: true,
                   ),
                   const SizedBox(height: 3),
-                  // Description (si disponible)
-                  if (widget.product.description != null &&
-                      widget.product.description!.isNotEmpty) ...
-                    [
+                  // Catégorie + badge panier sur la même ligne
+                  Row(
+                    children: [
                       Text(
-                        widget.product.description!,
+                        widget.product.category,
                         style: const TextStyle(
                           color: AppTheme.textSecondary,
                           fontSize: 11,
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 3),
-                    ],
-                  // Catégorie
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppTheme.primary.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          widget.product.category,
-                          style: const TextStyle(
-                            color: AppTheme.primary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
+                      if (inCart) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AppTheme.success.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(4),
                           ),
-                        ),
-                      ),
-                      if (inCart) ...
-                        [
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 7, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: AppTheme.success.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              '×$cartQty au panier',
-                              style: const TextStyle(
-                                color: AppTheme.success,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
+                          child: Text(
+                            '×$cartQty au panier',
+                            style: const TextStyle(
+                              color: AppTheme.success,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                        ],
+                        ),
+                      ],
                     ],
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 12),
-            // ── Prix ────────────────────────────────────────────────
-            Text(
-              '${widget.product.price.toStringAsFixed(0)} F',
-              style: const TextStyle(
-                color: AppTheme.primary,
-                fontWeight: FontWeight.w800,
-                fontSize: 14,
+
+            const SizedBox(width: 16),
+
+            // ── 2. Prix (largeur fixe, aligné à droite) ──────────────
+            SizedBox(
+              width: 80,
+              child: Text(
+                '${widget.product.price.toStringAsFixed(0)} F',
+                style: const TextStyle(
+                  color: AppTheme.primary,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.right,
               ),
             ),
-            const SizedBox(width: 14),
-            // ── Sélecteur quantité + bouton Ajouter ─────────────────
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+
+            const SizedBox(width: 12),
+
+            // ── 3. Sélecteur − qty + (sur une ligne) ─────────────────
+            Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Ligne -/qty/+
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _QtyButton(
-                      icon: Icons.remove,
-                      onTap: _decrement,
-                      enabled: _qty > 1,
-                      color: AppTheme.error,
-                    ),
-                    Container(
-                      width: 34,
-                      alignment: Alignment.center,
-                      child: Text(
-                        '$_qty',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ),
-                    _QtyButton(
-                      icon: Icons.add,
-                      onTap: _increment,
-                      enabled: true,
-                      color: AppTheme.success,
-                    ),
-                  ],
+                _QtyButton(
+                  icon: Icons.remove,
+                  onTap: _decrement,
+                  enabled: _qty > 1,
+                  color: AppTheme.error,
                 ),
-                const SizedBox(height: 6),
-                // Bouton Ajouter
-                GestureDetector(
-                  onTap: () {
-                    widget.onAdd(_qty);
-                    setState(() => _qty = 1); // reset après ajout
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primary,
-                      borderRadius: BorderRadius.circular(8),
+                SizedBox(
+                  width: 32,
+                  child: Text(
+                    '$_qty',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
                     ),
-                    child: const Text(
-                      'Ajouter',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                    textAlign: TextAlign.center,
                   ),
                 ),
+                _QtyButton(
+                  icon: Icons.add,
+                  onTap: _increment,
+                  enabled: true,
+                  color: AppTheme.success,
+                ),
               ],
+            ),
+
+            const SizedBox(width: 10),
+
+            // ── 4. Bouton Ajouter ─────────────────────────────────────
+            GestureDetector(
+              onTap: () {
+                widget.onAdd(_qty);
+                setState(() => _qty = 1);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'Ajouter',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
             ),
           ],
         ),
