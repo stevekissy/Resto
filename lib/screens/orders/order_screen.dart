@@ -73,6 +73,7 @@ class NewOrderTab extends StatefulWidget {
 class _NewOrderTabState extends State<NewOrderTab> {
   final _tableController = TextEditingController();
   final _notesController = TextEditingController();
+  final _searchController = TextEditingController();
   final List<OrderItem> _cartItems = [];
   bool _isUrgent = false;
   bool _isTakeaway = false;
@@ -80,15 +81,11 @@ class _NewOrderTabState extends State<NewOrderTab> {
   String _searchQuery = '';
   AppUser? _selectedServer;
 
-  final List<String> _quickComments = [
-    'Sans piment', 'Très chaud', 'Portion supplémentaire', 'Livraison',
-    'Sauce à part', 'Peu de sel', 'Extra épicé', 'Sans oignon',
-  ];
-
   @override
   void dispose() {
     _tableController.dispose();
     _notesController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -99,6 +96,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
   }
 
   double get _cartTotal => _cartItems.fold(0, (sum, item) => sum + item.totalPrice);
+  int get _cartCount => _cartItems.fold(0, (sum, item) => sum + item.quantity);
 
   void _addToCart(Product product, {int qty = 1}) {
     setState(() {
@@ -134,7 +132,6 @@ class _NewOrderTabState extends State<NewOrderTab> {
   }
 
   Future<void> _submitOrder() async {
-    // Table obligatoire seulement pour les commandes sur place
     if (!_isTakeaway && _tableController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Veuillez saisir un numéro de table'), backgroundColor: AppTheme.error),
@@ -150,15 +147,13 @@ class _NewOrderTabState extends State<NewOrderTab> {
 
     final provider = context.read<AppProvider>();
 
-    // ── Vérification stock avant validation ─────────────────────────────
     final insufficient = await provider.checkStockForItems(_cartItems);
     if (!mounted) return;
 
     if (insufficient.isNotEmpty) {
-      // Afficher dialogue stock insuffisant
       final confirmed = await _showStockWarningDialog(insufficient);
       if (!mounted) return;
-      if (!confirmed) return; // admin n'a pas confirmé → annuler
+      if (!confirmed) return;
     }
 
     final order = await provider.createOrder(
@@ -173,6 +168,8 @@ class _NewOrderTabState extends State<NewOrderTab> {
     );
 
     if (!mounted) return;
+    // Fermer le bottom sheet panier s'il est ouvert
+    Navigator.of(context).popUntil((route) => route.isFirst || route.settings.name != '/cart');
     setState(() {
       _cartItems.clear();
       _tableController.clear();
@@ -192,7 +189,6 @@ class _NewOrderTabState extends State<NewOrderTab> {
   }
 
   /// Dialogue stock insuffisant.
-  /// Retourne true si un admin/manager confirme quand même, false sinon.
   Future<bool> _showStockWarningDialog(List<String> items) async {
     final provider = context.read<AppProvider>();
     final role = provider.currentUser?.role;
@@ -313,342 +309,292 @@ class _NewOrderTabState extends State<NewOrderTab> {
     return partsA.length.compareTo(partsB.length);
   }
 
+  /// Ouvre le panier en bottom sheet plein écran
+  void _openCart() {
+    final provider = context.read<AppProvider>();
+    final servers = _getServers(provider);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => _CartBottomSheet(
+          cartItems: _cartItems,
+          cartTotal: _cartTotal,
+          isTakeaway: _isTakeaway,
+          isUrgent: _isUrgent,
+          tableController: _tableController,
+          notesController: _notesController,
+          selectedServer: _selectedServer,
+          servers: servers,
+          onTakeawayChanged: (v) {
+            setState(() { _isTakeaway = v; if (v) _tableController.clear(); });
+            setSheetState(() {});
+          },
+          onUrgentChanged: (v) {
+            setState(() => _isUrgent = v);
+            setSheetState(() {});
+          },
+          onServerChanged: (v) {
+            setState(() => _selectedServer = v);
+            setSheetState(() {});
+          },
+          onRemove: (id) {
+            _removeFromCart(id);
+            setSheetState(() {});
+            if (_cartItems.isEmpty) Navigator.pop(ctx);
+          },
+          onDecrease: (id) {
+            _updateQty(id, -1);
+            setSheetState(() {});
+            if (_cartItems.isEmpty) Navigator.pop(ctx);
+          },
+          onIncrease: (id) {
+            _updateQty(id, 1);
+            setSheetState(() {});
+          },
+          onSubmit: () { Navigator.pop(ctx); _submitOrder(); },
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    final categories = ['Tous', ...{...provider.availableProducts.map((p) => p.category)}];
+
+    // Catégories triées
+    final rawCats = provider.availableProducts.map((p) => p.category).toSet().toList()
+      ..sort((a, b) => a.compareTo(b));
+    final categories = ['Tous', ...rawCats];
+
+    // Filtrage : nom + catégorie + prix
+    final q = _searchQuery.toLowerCase();
     final filteredProducts = provider.availableProducts.where((p) {
       final catMatch = _selectedCategory == 'Tous' || p.category == _selectedCategory;
-      final searchMatch = _searchQuery.isEmpty || p.name.toLowerCase().contains(_searchQuery.toLowerCase());
-      return catMatch && searchMatch;
+      if (!catMatch) return false;
+      if (q.isEmpty) return true;
+      return p.name.toLowerCase().contains(q) ||
+             p.category.toLowerCase().contains(q) ||
+             p.price.toStringAsFixed(0).contains(q);
     }).toList()
       ..sort((a, b) => _naturalCompare(a.name, b.name));
 
-    return Row(
+    return Stack(
       children: [
-        // Products panel
-        Expanded(
-          flex: 7,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                child: Column(
-                  children: [
-                    TextField(
-                      onChanged: (v) => setState(() => _searchQuery = v),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        hintText: 'Rechercher un plat...',
-                        prefixIcon: Icon(Icons.search, color: AppTheme.textSecondary),
-                        contentPadding: EdgeInsets.symmetric(vertical: 10),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 36,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: categories.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 8),
-                        itemBuilder: (context, i) {
-                          final cat = categories[i];
-                          final selected = _selectedCategory == cat;
-                          return GestureDetector(
-                            onTap: () => setState(() => _selectedCategory = cat),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: selected ? AppTheme.primary : AppTheme.surfaceLight,
-                                borderRadius: BorderRadius.circular(20),
-                                border: selected ? null : Border.all(color: const Color(0xFF2A2A5A)),
-                              ),
-                              child: Text(cat, style: TextStyle(color: selected ? Colors.white : AppTheme.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+        // ── CORPS PRINCIPAL ─────────────────────────────────────────
+        Column(
+          children: [
+            // ── ZONE 1 : Recherche ──────────────────────────────────
+            Container(
+              color: AppTheme.surface,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (v) => setState(() => _searchQuery = v),
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+                decoration: InputDecoration(
+                  hintText: 'Rechercher par nom, catégorie, prix...',
+                  hintStyle: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                  prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary, size: 20),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, color: AppTheme.textSecondary, size: 18),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _searchQuery = '');
+                          },
+                        )
+                      : null,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 11, horizontal: 4),
+                  filled: true,
+                  fillColor: AppTheme.surfaceLight,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
-              Expanded(
-                child: filteredProducts.isEmpty
-                  ? const EmptyState(icon: Icons.search_off, title: 'Aucun plat trouvé', subtitle: 'Modifiez votre recherche ou la catégorie')
+            ),
+
+            // ── ZONE 2 : Catégories scrollables ────────────────────
+            Container(
+              color: AppTheme.surface,
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+              child: SizedBox(
+                height: 36,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: categories.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, i) {
+                    final cat = categories[i];
+                    final selected = _selectedCategory == cat;
+                    return GestureDetector(
+                      onTap: () => setState(() => _selectedCategory = cat),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: selected ? AppTheme.primary : AppTheme.surfaceLight,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: selected ? AppTheme.primary : const Color(0xFF2A2A5A),
+                          ),
+                          boxShadow: selected
+                              ? [BoxShadow(color: AppTheme.primary.withValues(alpha: 0.35), blurRadius: 6, offset: const Offset(0, 2))]
+                              : [],
+                        ),
+                        child: Text(
+                          cat,
+                          style: TextStyle(
+                            color: selected ? Colors.white : AppTheme.textSecondary,
+                            fontSize: 12,
+                            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+
+            // Séparateur
+            const Divider(height: 1, color: Color(0xFF2A2A5A)),
+
+            // ── ZONE 3 : Liste des plats ────────────────────────────
+            Expanded(
+              child: filteredProducts.isEmpty
+                  ? const EmptyState(
+                      icon: Icons.search_off,
+                      title: 'Aucun plat trouvé',
+                      subtitle: 'Modifiez votre recherche ou la catégorie',
+                    )
                   : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
                       itemCount: filteredProducts.length,
                       itemBuilder: (context, i) => _ProductCard(
+                        key: ValueKey(filteredProducts[i].id),
                         product: filteredProducts[i],
                         cartItems: _cartItems,
                         onAdd: (qty) => _addToCart(filteredProducts[i], qty: qty),
                       ),
                     ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
-        // Cart panel
-        Container(
-          width: 240,
-          decoration: BoxDecoration(
-            color: AppTheme.surface,
-            border: Border(left: BorderSide(color: const Color(0xFF2A2A5A), width: 1)),
-          ),
-          child: Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFF2A2A5A)))),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Commande', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
-                        if (_isUrgent)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(8)),
-                            child: const Text('URGENT', style: TextStyle(color: AppTheme.error, fontSize: 10, fontWeight: FontWeight.w900)),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    // ── Toggle Commande à emporter ──────────────────────
-                    GestureDetector(
-                      onTap: () => setState(() {
-                        _isTakeaway = !_isTakeaway;
-                        if (_isTakeaway) _tableController.clear();
-                      }),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: _isTakeaway
-                              ? const Color(0xFFE65100).withValues(alpha: 0.18)
-                              : AppTheme.surfaceLight,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: _isTakeaway
-                                ? const Color(0xFFE65100)
-                                : const Color(0xFF2A2A5A),
-                            width: _isTakeaway ? 1.5 : 1,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.takeout_dining,
-                              size: 18,
-                              color: _isTakeaway ? const Color(0xFFE65100) : AppTheme.textSecondary,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Commande à emporter',
-                                style: TextStyle(
-                                  color: _isTakeaway ? const Color(0xFFE65100) : AppTheme.textSecondary,
-                                  fontSize: 12,
-                                  fontWeight: _isTakeaway ? FontWeight.w700 : FontWeight.normal,
-                                ),
-                              ),
-                            ),
-                            Switch(
-                              value: _isTakeaway,
-                              onChanged: (v) => setState(() {
-                                _isTakeaway = v;
-                                if (v) _tableController.clear();
-                              }),
-                              activeColor: const Color(0xFFE65100),
-                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // ── Champ table (masqué si à emporter) ──────────────
-                    if (!_isTakeaway)
-                    TextField(
-                      controller: _tableController,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        hintText: 'N° de table',
-                        prefixIcon: Icon(Icons.table_restaurant, color: AppTheme.primary, size: 18),
-                        contentPadding: EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // ── Responsable de table (serveurs actifs) ──────────
-                    Consumer<AppProvider>(
-                      builder: (_, prov, __) {
-                        final servers = _getServers(prov);
-                        return DropdownButtonFormField<AppUser?>(
-                          value: _selectedServer,
-                          dropdownColor: AppTheme.surface,
-                          isExpanded: true,
-                          decoration: InputDecoration(
-                            hintText: 'Responsable de table',
-                            prefixIcon: const Icon(Icons.person_outline, color: AppTheme.primary, size: 18),
-                            contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                            hintStyle: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-                          ),
-                          style: const TextStyle(color: Colors.white, fontSize: 12),
-                          items: [
-                            const DropdownMenuItem<AppUser?>(
-                              value: null,
-                              child: Text('— Aucun serveur —', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                            ),
-                            ...servers.map((s) => DropdownMenuItem<AppUser?>(
-                              value: s,
-                              child: Text(s.name, style: const TextStyle(color: Colors.white, fontSize: 12), overflow: TextOverflow.ellipsis),
-                            )),
-                          ],
-                          onChanged: (v) => setState(() => _selectedServer = v),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Switch(
-                          value: _isUrgent,
-                          onChanged: (v) => setState(() => _isUrgent = v),
-                          activeColor: AppTheme.error,
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        const Text('Commande urgente', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              // Cart items
-              Expanded(
-                child: _cartItems.isEmpty
-                  ? const EmptyState(icon: Icons.shopping_cart_outlined, title: 'Panier vide', subtitle: 'Ajoutez des plats depuis le menu')
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(10),
-                      itemCount: _cartItems.length,
-                      itemBuilder: (context, i) => _CartItem(
-                        item: _cartItems[i],
-                        onRemove: () => _removeFromCart(_cartItems[i].productId),
-                        onDecrease: () => _updateQty(_cartItems[i].productId, -1),
-                        onIncrease: () => _updateQty(_cartItems[i].productId, 1),
-                        onComment: () => _addComment(_cartItems[i]),
-                      ),
-                    ),
-              ),
-              // Quick comments
-              if (_cartItems.isNotEmpty) ...[
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFF2A2A5A)))),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Commentaires rapides', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 4, runSpacing: 4,
-                        children: _quickComments.map((c) => GestureDetector(
-                          onTap: () {
-                            _notesController.text = _notesController.text.isEmpty ? c : '${_notesController.text}, $c';
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: AppTheme.primary.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
-                            ),
-                            child: Text(c, style: const TextStyle(color: AppTheme.primary, fontSize: 10)),
-                          ),
-                        )).toList(),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _notesController,
-                        style: const TextStyle(color: Colors.white, fontSize: 12),
-                        maxLines: 2,
-                        decoration: const InputDecoration(
-                          hintText: 'Instructions spéciales...',
-                          contentPadding: EdgeInsets.all(10),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              // Total & Submit
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.surface,
-                  border: Border(top: BorderSide(color: const Color(0xFF2A2A5A))),
-                ),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Total', style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
-                        Text('${_cartTotal.toStringAsFixed(0)} F CFA',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    PrimaryButton(
-                      label: 'Envoyer en Cuisine',
-                      icon: Icons.send,
-                      isFullWidth: true,
-                      onPressed: _cartItems.isEmpty ? null : _submitOrder,
-                    ),
-                  ],
-                ),
-              ),
-            ],
+
+        // ── ZONE 4 : FAB Panier flottant ────────────────────────────
+        Positioned(
+          bottom: 16,
+          left: 16,
+          right: 16,
+          child: _CartFab(
+            count: _cartCount,
+            total: _cartTotal,
+            onTap: _cartCount > 0 ? _openCart : null,
           ),
         ),
       ],
     );
   }
+}
 
-  void _addComment(OrderItem item) {
-    final ctrl = TextEditingController(text: item.specialComment);
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Commentaire - ${item.productName}'),
-        content: TextField(
-          controller: ctrl,
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(hintText: 'Ex: Sans piment, très chaud...'),
-          maxLines: 3,
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
-          ElevatedButton(
-            onPressed: () {
-              setState(() => item.specialComment = ctrl.text.isEmpty ? null : ctrl.text);
-              Navigator.pop(context);
-            },
-            child: const Text('Confirmer'),
+// =================== FAB PANIER ===================
+class _CartFab extends StatelessWidget {
+  final int count;
+  final double total;
+  final VoidCallback? onTap;
+
+  const _CartFab({required this.count, required this.total, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasItems = count > 0;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        height: 56,
+        decoration: BoxDecoration(
+          color: hasItems ? AppTheme.primary : const Color(0xFF1A2340),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: hasItems
+              ? [BoxShadow(color: AppTheme.primary.withValues(alpha: 0.45), blurRadius: 16, offset: const Offset(0, 4))]
+              : [const BoxShadow(color: Color(0x33000000), blurRadius: 8, offset: Offset(0, 2))],
+          border: Border.all(
+            color: hasItems ? AppTheme.primary : const Color(0xFF2A2A5A),
+            width: hasItems ? 0 : 1,
           ),
-        ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(Icons.shopping_cart_outlined,
+                      color: hasItems ? Colors.white : AppTheme.textSecondary, size: 24),
+                  if (hasItems)
+                    Positioned(
+                      top: -6,
+                      right: -6,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '$count',
+                          style: TextStyle(
+                            color: AppTheme.primary,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  hasItems ? 'Voir le panier ($count article${count > 1 ? 's' : ''})' : 'Panier vide',
+                  style: TextStyle(
+                    color: hasItems ? Colors.white : AppTheme.textSecondary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              if (hasItems)
+                Text(
+                  '${total.toStringAsFixed(0)} F',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-/// Carte produit horizontale avec sélecteur de quantité intégré
+// =================== CARTE PRODUIT (REFONTE COMPLÈTE) ===================
 class _ProductCard extends StatefulWidget {
   final Product product;
   final List<OrderItem> cartItems;
   final void Function(int qty) onAdd;
 
   const _ProductCard({
+    super.key,
     required this.product,
     required this.cartItems,
     required this.onAdd,
@@ -658,17 +604,43 @@ class _ProductCard extends StatefulWidget {
   State<_ProductCard> createState() => _ProductCardState();
 }
 
-class _ProductCardState extends State<_ProductCard> {
+class _ProductCardState extends State<_ProductCard>
+    with SingleTickerProviderStateMixin {
   int _qty = 1;
+  late AnimationController _animCtrl;
+  late Animation<double> _scaleAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _animCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _scaleAnim = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.08), weight: 50),
+      TweenSequenceItem(tween: Tween(begin: 1.08, end: 1.0), weight: 50),
+    ]).animate(CurvedAnimation(parent: _animCtrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    super.dispose();
+  }
 
   void _decrement() {
     if (_qty > 1) setState(() => _qty--);
   }
 
   void _increment() {
-    // Incrémente ET ajoute immédiatement au panier
-    widget.onAdd(1);
     setState(() => _qty++);
+  }
+
+  void _addToCart() {
+    widget.onAdd(_qty);
+    _animCtrl.forward(from: 0);
+    setState(() => _qty = 1);
   }
 
   @override
@@ -680,229 +652,871 @@ class _ProductCardState extends State<_ProductCard> {
     final inCart = cartItem.productId.isNotEmpty;
     final cartQty = inCart ? cartItem.quantity : 0;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      decoration: BoxDecoration(
-        color: inCart
-            ? AppTheme.primary.withValues(alpha: 0.08)
-            : AppTheme.cardBg,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
+    return ScaleTransition(
+      scale: _scaleAnim,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
           color: inCart
-              ? AppTheme.primary.withValues(alpha: 0.50)
-              : const Color(0xFF2A2A5A),
-          width: inCart ? 1.5 : 1,
+              ? AppTheme.primary.withValues(alpha: 0.07)
+              : AppTheme.cardBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: inCart
+                ? AppTheme.primary.withValues(alpha: 0.45)
+                : const Color(0xFF2A2A5A),
+            width: inCart ? 1.5 : 1,
+          ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-
-            // ── GAUCHE : Nom / Prix / Catégorie ──────────────────────
-            Expanded(
-              child: Column(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── LIGNE 1 : Infos produit ─────────────────────────
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Nom — toujours visible, jamais coupé
-                  Text(
-                    widget.product.name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                    ),
-                    softWrap: true,
-                    overflow: TextOverflow.visible,
-                  ),
-                  const SizedBox(height: 2),
-                  // Prix en bleu
-                  Text(
-                    '${widget.product.price.toStringAsFixed(0)} F',
-                    style: const TextStyle(
-                      color: AppTheme.primary,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  // Catégorie en gris petit
-                  Text(
-                    widget.product.category.toUpperCase(),
-                    style: const TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 10,
-                      letterSpacing: 0.3,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Nom — jamais coupé
+                        Text(
+                          widget.product.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                          ),
+                          softWrap: true,
+                          overflow: TextOverflow.visible,
+                        ),
+                        // Description (si disponible)
+                        if (widget.product.description != null &&
+                            widget.product.description!.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.product.description!,
+                            style: const TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 11,
+                              fontStyle: FontStyle.italic,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        const SizedBox(height: 4),
+                        // Prix + badge panier
+                        Row(
+                          children: [
+                            Text(
+                              '${widget.product.price.toStringAsFixed(0)} F',
+                              style: const TextStyle(
+                                color: AppTheme.primary,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                              ),
+                            ),
+                            if (inCart) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.success.withValues(alpha: 0.18),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: AppTheme.success.withValues(alpha: 0.4)),
+                                ),
+                                child: Text(
+                                  '×$cartQty au panier',
+                                  style: const TextStyle(
+                                    color: AppTheme.success,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-            ),
 
-            const SizedBox(width: 12),
+              const SizedBox(height: 10),
 
-            // ── DROITE : label "Quantité" + [−] chiffre [+] ──────────
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Label "Quantité"
-                Text(
-                  inCart ? '×$cartQty au panier' : 'Quantité',
-                  style: TextStyle(
-                    color: inCart ? AppTheme.success : AppTheme.textSecondary,
-                    fontSize: 10,
-                    fontWeight: inCart ? FontWeight.w600 : FontWeight.normal,
+              // ── LIGNE 2 : Contrôles quantité + bouton Ajouter ───
+              Row(
+                children: [
+                  // Bouton −
+                  _QtyButton(
+                    icon: Icons.remove,
+                    onTap: _decrement,
+                    enabled: _qty > 1,
+                    color: AppTheme.error,
                   ),
-                ),
-                const SizedBox(height: 6),
-                // Ligne [−] chiffre [+]
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Bouton −
-                    GestureDetector(
-                      onTap: _decrement,
+                  // Quantité
+                  Container(
+                    width: 44,
+                    alignment: Alignment.center,
+                    child: Text(
+                      '$_qty',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  // Bouton +
+                  _QtyButton(
+                    icon: Icons.add,
+                    onTap: _increment,
+                    enabled: true,
+                    color: AppTheme.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  // Bouton Ajouter
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: _addToCart,
                       child: Container(
-                        width: 32,
-                        height: 32,
+                        height: 40,
                         decoration: BoxDecoration(
-                          color: _qty > 1
-                              ? const Color(0xFF1E2A4A)
-                              : const Color(0xFF161E36),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: _qty > 1
-                                ? const Color(0xFF3A4A7A)
-                                : const Color(0xFF252D4A),
-                          ),
+                          color: AppTheme.primary,
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppTheme.primary.withValues(alpha: 0.35),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
-                        child: Icon(
-                          Icons.remove,
-                          size: 16,
-                          color: _qty > 1
-                              ? Colors.white
-                              : AppTheme.textSecondary,
-                        ),
-                      ),
-                    ),
-                    // Chiffre quantité
-                    SizedBox(
-                      width: 36,
-                      child: Text(
-                        '$_qty',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    // Bouton +
-                    GestureDetector(
-                      onTap: _increment,
-                      child: Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1E2A4A),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: const Color(0xFF3A4A7A),
-                          ),
-                        ),
-                        child: const Icon(
-                          Icons.add,
-                          size: 16,
-                          color: Colors.white,
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add_shopping_cart, size: 16, color: Colors.white),
+                            SizedBox(width: 6),
+                            Text('Ajouter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                          ],
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ],
-            ),
-          ],
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _CartItem extends StatelessWidget {
+// ── Bouton quantité réutilisable ─────────────────────────────────────────
+class _QtyButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool enabled;
+  final Color color;
+
+  const _QtyButton({
+    required this.icon,
+    required this.onTap,
+    required this.enabled,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: enabled
+              ? color.withValues(alpha: 0.15)
+              : const Color(0xFF161E36),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(
+            color: enabled
+                ? color.withValues(alpha: 0.5)
+                : const Color(0xFF252D4A),
+          ),
+        ),
+        child: Icon(
+          icon,
+          size: 17,
+          color: enabled ? color : AppTheme.textSecondary,
+        ),
+      ),
+    );
+  }
+}
+
+// =================== PANIER BOTTOM SHEET PLEIN ÉCRAN ===================
+class _CartBottomSheet extends StatefulWidget {
+  final List<OrderItem> cartItems;
+  final double cartTotal;
+  final bool isTakeaway;
+  final bool isUrgent;
+  final TextEditingController tableController;
+  final TextEditingController notesController;
+  final AppUser? selectedServer;
+  final List<AppUser> servers;
+  final ValueChanged<bool> onTakeawayChanged;
+  final ValueChanged<bool> onUrgentChanged;
+  final ValueChanged<AppUser?> onServerChanged;
+  final void Function(String id) onRemove;
+  final void Function(String id) onDecrease;
+  final void Function(String id) onIncrease;
+  final VoidCallback onSubmit;
+
+  const _CartBottomSheet({
+    required this.cartItems,
+    required this.cartTotal,
+    required this.isTakeaway,
+    required this.isUrgent,
+    required this.tableController,
+    required this.notesController,
+    required this.selectedServer,
+    required this.servers,
+    required this.onTakeawayChanged,
+    required this.onUrgentChanged,
+    required this.onServerChanged,
+    required this.onRemove,
+    required this.onDecrease,
+    required this.onIncrease,
+    required this.onSubmit,
+  });
+
+  @override
+  State<_CartBottomSheet> createState() => _CartBottomSheetState();
+}
+
+class _CartBottomSheetState extends State<_CartBottomSheet> {
+  bool _infoExpanded = false;
+
+  int get _totalQty => widget.cartItems.fold(0, (s, i) => s + i.quantity);
+
+  @override
+  Widget build(BuildContext context) {
+    final screenH = MediaQuery.of(context).size.height;
+
+    return Container(
+      height: screenH * 0.92,
+      decoration: const BoxDecoration(
+        color: Color(0xFF0F1629),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // ── Poignée ──────────────────────────────────────────────
+          Container(
+            margin: const EdgeInsets.only(top: 10, bottom: 6),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: const Color(0xFF3A4A7A),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          // ── En-tête ───────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 16, 10),
+            child: Row(
+              children: [
+                const Icon(Icons.shopping_cart, color: AppTheme.primary, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Panier (${ _totalQty} article${ _totalQty > 1 ? 's' : ''})',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 17),
+                  ),
+                ),
+                if (widget.isUrgent)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppTheme.error.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text('URGENT', style: TextStyle(color: AppTheme.error, fontSize: 10, fontWeight: FontWeight.w900)),
+                  ),
+                if (widget.isTakeaway) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE65100).withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text('À EMPORTER', style: TextStyle(color: Color(0xFFE65100), fontSize: 10, fontWeight: FontWeight.w900)),
+                  ),
+                ],
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.close, color: AppTheme.textSecondary),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+
+          const Divider(height: 1, color: Color(0xFF2A2A5A)),
+
+          // ── Liste articles ────────────────────────────────────────
+          Expanded(
+            child: widget.cartItems.isEmpty
+                ? const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.shopping_cart_outlined, size: 52, color: Color(0xFF3A4A7A)),
+                        SizedBox(height: 12),
+                        Text('Panier vide', style: TextStyle(color: AppTheme.textSecondary, fontSize: 15)),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    itemCount: widget.cartItems.length,
+                    itemBuilder: (context, i) {
+                      final item = widget.cartItems[i];
+                      return _CartSheetItem(
+                        item: item,
+                        onRemove: () => widget.onRemove(item.productId),
+                        onDecrease: () => widget.onDecrease(item.productId),
+                        onIncrease: () => widget.onIncrease(item.productId),
+                      );
+                    },
+                  ),
+          ),
+
+          // ── Panneau "Informations commande" ───────────────────────
+          Container(
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceLight,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF2A2A5A)),
+            ),
+            child: Column(
+              children: [
+                // Bouton toggle
+                GestureDetector(
+                  onTap: () => setState(() => _infoExpanded = !_infoExpanded),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.settings_outlined,
+                            color: _infoExpanded ? AppTheme.primary : AppTheme.textSecondary, size: 17),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Informations commande',
+                            style: TextStyle(
+                              color: _infoExpanded ? AppTheme.primary : AppTheme.textSecondary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        // Badges résumé quand replié
+                        if (!_infoExpanded) ...[
+                          if (widget.isTakeaway)
+                            _InfoBadge(label: 'À emporter', color: const Color(0xFFE65100)),
+                          if (widget.isUrgent)
+                            _InfoBadge(label: 'URGENT', color: AppTheme.error),
+                          if (!widget.isTakeaway && widget.tableController.text.isNotEmpty)
+                            _InfoBadge(label: 'Table ${widget.tableController.text}', color: AppTheme.primary),
+                        ],
+                        const SizedBox(width: 4),
+                        Icon(
+                          _infoExpanded ? Icons.expand_less : Icons.expand_more,
+                          color: AppTheme.textSecondary, size: 20,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Contenu dépliable
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeInOut,
+                  child: _infoExpanded
+                      ? Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                          child: Column(
+                            children: [
+                              const Divider(height: 1, color: Color(0xFF2A2A5A)),
+                              const SizedBox(height: 10),
+                              // Toggle à emporter
+                              _ToggleRow(
+                                icon: Icons.takeout_dining,
+                                label: 'Commande à emporter',
+                                value: widget.isTakeaway,
+                                activeColor: const Color(0xFFE65100),
+                                onChanged: (v) { widget.onTakeawayChanged(v); setState(() {}); },
+                              ),
+                              const SizedBox(height: 8),
+                              // Toggle urgent
+                              _ToggleRow(
+                                icon: Icons.flash_on,
+                                label: 'Commande urgente',
+                                value: widget.isUrgent,
+                                activeColor: AppTheme.error,
+                                onChanged: (v) { widget.onUrgentChanged(v); setState(() {}); },
+                              ),
+                              const SizedBox(height: 10),
+                              // Champ table
+                              if (!widget.isTakeaway) ...[
+                                TextField(
+                                  controller: widget.tableController,
+                                  keyboardType: TextInputType.number,
+                                  style: const TextStyle(color: Colors.white),
+                                  onChanged: (_) => setState(() {}),
+                                  decoration: const InputDecoration(
+                                    hintText: 'N° de table *',
+                                    prefixIcon: Icon(Icons.table_restaurant, color: AppTheme.primary, size: 18),
+                                    contentPadding: EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                              ],
+                              // Dropdown serveur
+                              DropdownButtonFormField<AppUser?>(
+                                value: widget.selectedServer,
+                                dropdownColor: AppTheme.surface,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  hintText: 'Responsable de table',
+                                  prefixIcon: Icon(Icons.person_outline, color: AppTheme.primary, size: 18),
+                                  contentPadding: EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                                  hintStyle: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                                ),
+                                style: const TextStyle(color: Colors.white, fontSize: 12),
+                                items: [
+                                  const DropdownMenuItem<AppUser?>(
+                                    value: null,
+                                    child: Text('— Aucun serveur —', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                                  ),
+                                  ...widget.servers.map((s) => DropdownMenuItem<AppUser?>(
+                                    value: s,
+                                    child: Text(s.name, style: const TextStyle(color: Colors.white, fontSize: 12), overflow: TextOverflow.ellipsis),
+                                  )),
+                                ],
+                                onChanged: (v) { widget.onServerChanged(v); setState(() {}); },
+                              ),
+                              const SizedBox(height: 8),
+                              // Notes
+                              TextField(
+                                controller: widget.notesController,
+                                style: const TextStyle(color: Colors.white, fontSize: 12),
+                                maxLines: 2,
+                                decoration: const InputDecoration(
+                                  hintText: 'Instructions spéciales...',
+                                  contentPadding: EdgeInsets.all(10),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Total + Bouton envoyer ────────────────────────────────
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+            decoration: const BoxDecoration(
+              color: Color(0xFF0F1629),
+              border: Border(top: BorderSide(color: Color(0xFF2A2A5A))),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                children: [
+                  // Résumé total
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceLight,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Total général', style: TextStyle(color: AppTheme.textSecondary, fontSize: 14, fontWeight: FontWeight.w600)),
+                        Text(
+                          '${widget.cartTotal.toStringAsFixed(0)} F CFA',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 20),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  // Bouton envoyer
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      onPressed: widget.cartItems.isEmpty ? null : widget.onSubmit,
+                      icon: const Icon(Icons.send, size: 18),
+                      label: const Text('Envoyer en Cuisine', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primary,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: const Color(0xFF2A2A5A),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                        elevation: 4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Item dans le panier bottom sheet ─────────────────────────────────────
+class _CartSheetItem extends StatelessWidget {
   final OrderItem item;
   final VoidCallback onRemove;
   final VoidCallback onDecrease;
   final VoidCallback onIncrease;
-  final VoidCallback onComment;
 
-  const _CartItem({required this.item, required this.onRemove, required this.onDecrease, required this.onIncrease, required this.onComment});
+  const _CartSheetItem({
+    required this.item,
+    required this.onRemove,
+    required this.onDecrease,
+    required this.onIncrease,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: AppTheme.surfaceLight,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFF2A2A5A)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
+          // Infos
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.productName,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14),
+                  softWrap: true,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${item.quantity} × ${item.unitPrice.toStringAsFixed(0)} F',
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Contrôles
           Row(
             children: [
-              Expanded(
-                child: Text(item.productName, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+              _QtyButton(icon: Icons.remove, onTap: onDecrease, enabled: item.quantity > 1, color: AppTheme.error),
+              SizedBox(
+                width: 34,
+                child: Text(
+                  '${item.quantity}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
+                ),
               ),
-              IconButton(onPressed: onRemove, icon: const Icon(Icons.close, color: AppTheme.error, size: 16), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+              _QtyButton(icon: Icons.add, onTap: onIncrease, enabled: true, color: AppTheme.primary),
             ],
           ),
-          if (item.specialComment != null) ...[
-            const SizedBox(height: 2),
-            Text(item.specialComment!, style: const TextStyle(color: AppTheme.warning, fontSize: 10, fontStyle: FontStyle.italic)),
-          ],
-          const SizedBox(height: 6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          const SizedBox(width: 12),
+          // Total ligne
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: onDecrease,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(6)),
-                      child: const Icon(Icons.remove, size: 14, color: AppTheme.error),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Text('${item.quantity}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                  ),
-                  GestureDetector(
-                    onTap: onIncrease,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(color: AppTheme.success.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(6)),
-                      child: const Icon(Icons.add, size: 14, color: AppTheme.success),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: onComment,
-                    child: const Icon(Icons.comment_outlined, size: 14, color: AppTheme.textSecondary),
-                  ),
-                ],
+              Text(
+                '${item.totalPrice.toStringAsFixed(0)} F',
+                style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 14),
               ),
-              Text('${item.totalPrice.toStringAsFixed(0)} F', style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 12)),
+              GestureDetector(
+                onTap: onRemove,
+                child: const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Icon(Icons.delete_outline, color: AppTheme.error, size: 18),
+                ),
+              ),
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+// =================== PANNEAU INFORMATIONS COMMANDE ===================
+// (accessible depuis le panier — non utilisé directement dans le build principal,
+//  mais utilisable comme widget autonome si besoin)
+class _OrderInfoPanel extends StatefulWidget {
+  final TextEditingController tableController;
+  final TextEditingController notesController;
+  final bool isTakeaway;
+  final bool isUrgent;
+  final AppUser? selectedServer;
+  final List<AppUser> servers;
+  final ValueChanged<bool> onTakeawayChanged;
+  final ValueChanged<bool> onUrgentChanged;
+  final ValueChanged<AppUser?> onServerChanged;
+
+  const _OrderInfoPanel({
+    required this.tableController,
+    required this.notesController,
+    required this.isTakeaway,
+    required this.isUrgent,
+    required this.selectedServer,
+    required this.servers,
+    required this.onTakeawayChanged,
+    required this.onUrgentChanged,
+    required this.onServerChanged,
+  });
+
+  @override
+  State<_OrderInfoPanel> createState() => _OrderInfoPanelState();
+}
+
+class _OrderInfoPanelState extends State<_OrderInfoPanel> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceLight,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2A2A5A)),
+      ),
+      child: Column(
+        children: [
+          // Bouton toggle
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+              child: Row(
+                children: [
+                  Icon(Icons.settings_outlined,
+                      color: _expanded ? AppTheme.primary : AppTheme.textSecondary, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Informations commande',
+                      style: TextStyle(
+                        color: _expanded ? AppTheme.primary : AppTheme.textSecondary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  // Badges résumé quand replié
+                  if (!_expanded) ...[
+                    if (widget.isTakeaway)
+                      _InfoBadge(label: 'À emporter', color: const Color(0xFFE65100)),
+                    if (widget.isUrgent)
+                      _InfoBadge(label: 'URGENT', color: AppTheme.error),
+                    if (!widget.isTakeaway && widget.tableController.text.isNotEmpty)
+                      _InfoBadge(label: 'Table ${widget.tableController.text}', color: AppTheme.primary),
+                  ],
+                  const SizedBox(width: 6),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    color: AppTheme.textSecondary, size: 20,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Contenu dépliable
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeInOut,
+            child: _expanded
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                    child: Column(
+                      children: [
+                        const Divider(height: 1, color: Color(0xFF2A2A5A)),
+                        const SizedBox(height: 12),
+                        // Toggle à emporter
+                        _ToggleRow(
+                          icon: Icons.takeout_dining,
+                          label: 'Commande à emporter',
+                          value: widget.isTakeaway,
+                          activeColor: const Color(0xFFE65100),
+                          onChanged: widget.onTakeawayChanged,
+                        ),
+                        const SizedBox(height: 8),
+                        // Toggle urgent
+                        _ToggleRow(
+                          icon: Icons.flash_on,
+                          label: 'Commande urgente',
+                          value: widget.isUrgent,
+                          activeColor: AppTheme.error,
+                          onChanged: widget.onUrgentChanged,
+                        ),
+                        const SizedBox(height: 10),
+                        // Champ table
+                        if (!widget.isTakeaway) ...[
+                          TextField(
+                            controller: widget.tableController,
+                            keyboardType: TextInputType.number,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: const InputDecoration(
+                              hintText: 'N° de table *',
+                              prefixIcon: Icon(Icons.table_restaurant, color: AppTheme.primary, size: 18),
+                              contentPadding: EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                        // Dropdown serveur
+                        DropdownButtonFormField<AppUser?>(
+                          value: widget.selectedServer,
+                          dropdownColor: AppTheme.surface,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            hintText: 'Responsable de table',
+                            prefixIcon: Icon(Icons.person_outline, color: AppTheme.primary, size: 18),
+                            contentPadding: EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                            hintStyle: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                          ),
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          items: [
+                            const DropdownMenuItem<AppUser?>(
+                              value: null,
+                              child: Text('— Aucun serveur —', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                            ),
+                            ...widget.servers.map((s) => DropdownMenuItem<AppUser?>(
+                              value: s,
+                              child: Text(s.name, style: const TextStyle(color: Colors.white, fontSize: 12), overflow: TextOverflow.ellipsis),
+                            )),
+                          ],
+                          onChanged: widget.onServerChanged,
+                        ),
+                        const SizedBox(height: 8),
+                        // Notes
+                        TextField(
+                          controller: widget.notesController,
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          maxLines: 2,
+                          decoration: const InputDecoration(
+                            hintText: 'Instructions spéciales...',
+                            contentPadding: EdgeInsets.all(10),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _InfoBadge({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+    );
+  }
+}
+
+class _ToggleRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool value;
+  final Color activeColor;
+  final ValueChanged<bool> onChanged;
+
+  const _ToggleRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.activeColor,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => onChanged(!value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: value ? activeColor.withValues(alpha: 0.12) : const Color(0xFF161E36),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: value ? activeColor.withValues(alpha: 0.5) : const Color(0xFF2A2A5A),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 17, color: value ? activeColor : AppTheme.textSecondary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: value ? activeColor : AppTheme.textSecondary,
+                  fontSize: 13,
+                  fontWeight: value ? FontWeight.w700 : FontWeight.normal,
+                ),
+              ),
+            ),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              activeColor: activeColor,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ],
+        ),
       ),
     );
   }
