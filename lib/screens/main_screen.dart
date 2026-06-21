@@ -1,6 +1,8 @@
+// ignore_for_file: use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
+import '../sandbox/sandbox_provider.dart';
 import '../utils/app_theme.dart';
 import '../models/models.dart';
 import '../widgets/common_widgets.dart';
@@ -21,6 +23,7 @@ import 'accounting/accounting_screen.dart';
 import 'notifications/notification_screen.dart';
 import '../services/notification_service.dart';
 import 'login_screen.dart';
+import 'client/client_main_screen.dart';
 
 // ── Constantes de build — identifiant de version visible dans le drawer ──
 /// Widget affiché quand un utilisateur tente d'accéder à un module interdit.
@@ -109,6 +112,210 @@ class _MainScreenState extends State<MainScreen> {
 
   void _onNotifChange() => setState(() {});
 
+  // ── Vérifier si l'utilisateur peut changer d'espace ──────────────────────
+  bool _canSwitchSpace(AppProvider provider) {
+    final role = provider.currentUser?.role;
+    return role == UserRole.admin || role == UserRole.manager;
+  }
+
+  // ── Switch vers l'espace client (sandbox) ─────────────────────────────────
+  Future<void> _switchToClientSpace(
+      BuildContext context, AppProvider provider) async {
+    final sbProvider = context.read<SandboxProvider>();
+    Navigator.pop(context); // ferme drawer/sheet
+    await Future.delayed(const Duration(milliseconds: 200));
+    if (!context.mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          color: Color(0xFF1E1E3F),
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Color(0xFF2196F3)),
+                SizedBox(height: 16),
+                Text('Chargement de l\'espace client…',
+                    style: TextStyle(color: Colors.white, fontSize: 13)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      await sbProvider.initSandbox();
+      if (!context.mounted) return;
+      Navigator.pop(context); // ferme le loader
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _AdminClientSwitchWrapper(
+            adminName: provider.currentUser?.name ?? 'Admin',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.pop(context); // ferme le loader
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erreur lors du chargement : $e'),
+          backgroundColor: AppTheme.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  // ── Dialog sélection d'espace ─────────────────────────────────────────────
+  void _showSpaceSwitcher(BuildContext context, AppProvider provider) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.cardBg,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const Row(
+              children: [
+                Icon(Icons.swap_horiz_rounded,
+                    color: Color(0xFF2196F3), size: 22),
+                SizedBox(width: 10),
+                Text('Changer d\'espace',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 17)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Basculez entre les interfaces sans vous déconnecter.',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+            // ── Espace Administration (actif) ──────────────────────────────
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color: AppTheme.primary.withValues(alpha: 0.5),
+                    width: 1.5),
+              ),
+              child: ListTile(
+                leading: Container(
+                  width: 42, height: 42,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.admin_panel_settings_rounded,
+                      color: AppTheme.primary, size: 22),
+                ),
+                title: const Text('Espace Administration',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14)),
+                subtitle: Text('Interface de gestion du restaurant',
+                    style: TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 11)),
+                trailing: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('ACTIF',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900)),
+                ),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                onTap: () => Navigator.pop(ctx),
+              ),
+            ),
+            // ── Espace Client ──────────────────────────────────────────────
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF4A148C).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color:
+                        const Color(0xFF7C3AED).withValues(alpha: 0.4)),
+              ),
+              child: ListTile(
+                leading: Container(
+                  width: 42, height: 42,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF7C3AED).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.storefront_rounded,
+                      color: Color(0xFF9D6EF5), size: 22),
+                ),
+                title: const Text('Espace Client',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14)),
+                subtitle: Text(
+                  'Simuler l\'expérience client (mode test)',
+                  style: TextStyle(
+                      color: AppTheme.textSecondary, fontSize: 11)),
+                trailing: const Icon(Icons.arrow_forward_ios,
+                    color: Color(0xFF7C3AED), size: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                onTap: () => _switchToClientSpace(ctx, provider),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Icon(Icons.info_outline,
+                    color: Color(0xFF7C3AED), size: 14),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'L\'espace client utilise des données de test. Votre session admin reste active.',
+                    style: TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 10),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Retourne les items de navigation autorisés selon les permissions Firestore
   List<_NavItem> _getNavItems(AppProvider provider) {
     final role = provider.currentUser?.role ?? UserRole.server;
@@ -189,26 +396,64 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              width: 30, height: 30,
-              decoration: BoxDecoration(color: AppTheme.primary, borderRadius: BorderRadius.circular(8)),
-              child: const Center(child: Text('S', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16))),
-            ),
-            const SizedBox(width: 8),
-            const Text('SANKADIOKRO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 2)),
-          ],
-        ),
         leading: IconButton(
           icon: const Icon(Icons.menu),
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
+        // Titre avec badge espace ADMIN (visible uniquement aux admins/managers)
+        title: Row(
+          children: [
+            Container(
+              width: 30, height: 30,
+              decoration: BoxDecoration(
+                  color: AppTheme.primary,
+                  borderRadius: BorderRadius.circular(8)),
+              child: const Center(
+                  child: Text('S',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16))),
+            ),
+            const SizedBox(width: 8),
+            const Text('SANKADIOKRO',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    letterSpacing: 2)),
+            if (_canSwitchSpace(provider)) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                      color: AppTheme.primary.withValues(alpha: 0.5)),
+                ),
+                child: const Text('ADMIN',
+                    style: TextStyle(
+                        color: AppTheme.primary,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1)),
+              ),
+            ],
+          ],
+        ),
         actions: [
+          // Bouton Changer d'espace (admin/manager uniquement)
+          if (_canSwitchSpace(provider))
+            IconButton(
+              icon: const Icon(Icons.swap_horiz_rounded, color: Colors.white70),
+              tooltip: 'Changer d\'espace',
+              onPressed: () => _showSpaceSwitcher(context, provider),
+            ),
           // Badge notifications sonores
           GestureDetector(
             onTap: () {
-              // Déverrouiller l'audio à chaque interaction
               _notifSvc.unlockAudio();
               _showNotificationsPanel(context, provider);
             },
@@ -220,7 +465,9 @@ class _MainScreenState extends State<MainScreen> {
                     _notifSvc.urgentActive
                         ? Icons.notifications_active
                         : Icons.notifications_outlined,
-                    color: _notifSvc.urgentActive ? AppTheme.error : Colors.white,
+                    color: _notifSvc.urgentActive
+                        ? AppTheme.error
+                        : Colors.white,
                   ),
                   onPressed: () {
                     _notifSvc.unlockAudio();
@@ -232,11 +479,18 @@ class _MainScreenState extends State<MainScreen> {
                     right: 6, top: 6,
                     child: Container(
                       padding: const EdgeInsets.all(3),
-                      decoration: const BoxDecoration(color: AppTheme.error, shape: BoxShape.circle),
-                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                      decoration: const BoxDecoration(
+                          color: AppTheme.error, shape: BoxShape.circle),
+                      constraints: const BoxConstraints(
+                          minWidth: 16, minHeight: 16),
                       child: Text(
-                        _notifSvc.unreadCount > 99 ? '99+' : '${_notifSvc.unreadCount}',
-                        style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900),
+                        _notifSvc.unreadCount > 99
+                            ? '99+'
+                            : '${_notifSvc.unreadCount}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900),
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -251,13 +505,20 @@ class _MainScreenState extends State<MainScreen> {
               child: Container(
                 width: 36, height: 36,
                 decoration: BoxDecoration(
-                  color: (provider.currentUser?.roleColor ?? AppTheme.primary).withValues(alpha: 0.2),
+                  color: (provider.currentUser?.roleColor ?? AppTheme.primary)
+                      .withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Center(
                   child: Text(
-                    provider.currentUser?.name.isNotEmpty == true ? provider.currentUser!.name[0].toUpperCase() : 'U',
-                    style: TextStyle(color: provider.currentUser?.roleColor ?? AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 16),
+                    provider.currentUser?.name.isNotEmpty == true
+                        ? provider.currentUser!.name[0].toUpperCase()
+                        : 'U',
+                    style: TextStyle(
+                        color: provider.currentUser?.roleColor ??
+                            AppTheme.primary,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16),
                   ),
                 ),
               ),
@@ -517,35 +778,126 @@ class _MainScreenState extends State<MainScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.cardBg,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (_) => Padding(
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
             Container(
               width: 60, height: 60,
               decoration: BoxDecoration(
-                color: (provider.currentUser?.roleColor ?? AppTheme.primary).withValues(alpha: 0.2),
+                color: (provider.currentUser?.roleColor ?? AppTheme.primary)
+                    .withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(18),
               ),
               child: Center(
                 child: Text(
-                  provider.currentUser?.name.isNotEmpty == true ? provider.currentUser!.name[0].toUpperCase() : 'U',
-                  style: TextStyle(color: provider.currentUser?.roleColor ?? AppTheme.primary, fontWeight: FontWeight.w900, fontSize: 28),
+                  provider.currentUser?.name.isNotEmpty == true
+                      ? provider.currentUser!.name[0].toUpperCase()
+                      : 'U',
+                  style: TextStyle(
+                      color: provider.currentUser?.roleColor ?? AppTheme.primary,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 28),
                 ),
               ),
             ),
             const SizedBox(height: 10),
-            Text(provider.currentUser?.name ?? '', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
-            Text(provider.currentUser?.roleLabel ?? '', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-            Text(provider.currentUser?.email ?? '', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+            Text(provider.currentUser?.name ?? '',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18)),
+            // Badge espace + rôle
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(provider.currentUser?.roleLabel ?? '',
+                    style: const TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 13)),
+                if (_canSwitchSpace(provider)) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                          color: AppTheme.primary.withValues(alpha: 0.5)),
+                    ),
+                    child: const Text('ADMINISTRATION',
+                        style: TextStyle(
+                            color: AppTheme.primary,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5)),
+                  ),
+                ],
+              ],
+            ),
+            Text(provider.currentUser?.email ?? '',
+                style: const TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 12)),
             const SizedBox(height: 20),
+            // ── Raccourci Changer d'espace (admin/manager uniquement) ──────
+            if (_canSwitchSpace(provider)) ...[
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF4A148C), Color(0xFF1565C0)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => _showSpaceSwitcher(ctx, provider),
+                    child: const Padding(
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.swap_horiz_rounded,
+                              color: Colors.white, size: 20),
+                          SizedBox(width: 10),
+                          Text('Changer d\'espace',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700)),
+                          SizedBox(width: 10),
+                          Icon(Icons.arrow_forward_ios,
+                              color: Colors.white70, size: 14),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () async {
-                  Navigator.pop(context);
+                  Navigator.pop(ctx);
                   await provider.logout();
                   if (!context.mounted) return;
                   Navigator.pushAndRemoveUntil(
@@ -556,7 +908,8 @@ class _MainScreenState extends State<MainScreen> {
                 },
                 icon: const Icon(Icons.logout),
                 label: const Text('Se déconnecter'),
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+                style:
+                    ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
               ),
             ),
           ],
@@ -602,6 +955,114 @@ class _NotifTile extends StatelessWidget {
           Expanded(child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 13))),
         ],
       ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN CLIENT SWITCH WRAPPER
+// Affiche ClientMainScreen (isSandbox=true) avec une bannière flottante
+// "Retour Administration" en haut de l'écran.
+// Uniquement accessible aux admins/managers depuis MainScreen.
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _AdminClientSwitchWrapper extends StatelessWidget {
+  final String adminName;
+  const _AdminClientSwitchWrapper({required this.adminName});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        // Espace client en mode sandbox
+        const ClientMainScreen(isSandbox: true),
+        // Bandeau flottant en haut
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF4A148C), Color(0xFF1565C0)],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.4),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.visibility_outlined,
+                          color: Colors.white70, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'MODE TEST — ESPACE CLIENT',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.8),
+                            ),
+                            Text(
+                              'Connecté en tant que : $adminName (Admin)',
+                              style: const TextStyle(
+                                  color: Colors.white60, fontSize: 9),
+                            ),
+                          ],
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.admin_panel_settings_rounded,
+                                  color: Colors.white, size: 14),
+                              SizedBox(width: 4),
+                              Text('Retour Admin',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
