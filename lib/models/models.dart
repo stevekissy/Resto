@@ -7,7 +7,7 @@ enum OrderStatus { pending, preparing, ready, served, cancelled }
 // awaiting_payment → facture d'encaissement générée, en attente de règlement
 // paid             → règlement définitif effectué
 enum CashStatus { pending_cashout, awaiting_payment, paid }
-enum UserRole { admin, manager, cashier, kitchen, server, stockManager }
+enum UserRole { admin, manager, cashier, kitchen, server, stockManager, client }
 enum StockAlertType { lowStock, outOfStock, expired }
 enum MessageType { text, image, file, call }
 enum AttendanceType { morning, evening }
@@ -53,6 +53,7 @@ class AppUser {
       case UserRole.kitchen: return 'Cuisine';
       case UserRole.server: return 'Serveur(se)';
       case UserRole.stockManager: return 'Gestionnaire de stock';
+      case UserRole.client: return 'Client';
     }
   }
 
@@ -64,6 +65,7 @@ class AppUser {
       case UserRole.kitchen: return const Color(0xFFE65100);
       case UserRole.server: return const Color(0xFF00838F);
       case UserRole.stockManager: return const Color(0xFF795548);
+      case UserRole.client: return const Color(0xFFE91E63);
     }
   }
 

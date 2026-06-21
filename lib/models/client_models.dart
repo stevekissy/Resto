@@ -215,6 +215,7 @@ class ClientUser {
     'phone': phone,
     'avatarUrl': avatarUrl,
     'isActive': isActive,
+    'active': isActive,
     'createdAt': createdAt.millisecondsSinceEpoch,
     'lastLoginAt': lastLoginAt?.millisecondsSinceEpoch,
     'loyaltyPoints': loyaltyPoints,
@@ -223,6 +224,8 @@ class ClientUser {
     'favoriteProductIds': favoriteProductIds,
     'fcmToken': fcmToken,
     'role': 'client',
+    'accountType': 'customer',
+    'canLogin': true,
   };
 
   factory ClientUser.fromMap(Map<String, dynamic> m) => ClientUser(

@@ -351,6 +351,12 @@ class AppProvider extends ChangeNotifier {
       // ──────────────────────────────────────────────────────────────
 
       if (firestoreUser != null) {
+        // Bloquer les clients de l'interface staff
+        if (firestoreUser.role == UserRole.client) {
+          debugPrint('[DIAG][app_provider.dart:239] ▶▶▶ signOut() — role=client → SESSION STAFF REFUSÉE');
+          await _firebase.signOut();
+          return false;
+        }
         // Vérification sécurité : active + canLogin obligatoires
         if (!firestoreUser.isActive || !firestoreUser.canLogin) {
           // ─── LOG DIAGNOSTIC ─────────────────────────────────────
@@ -456,6 +462,15 @@ class AppProvider extends ChangeNotifier {
       // ────────────────────────────────────────────────────────────────
 
       if (firestoreUser != null) {
+        // VÉRIFICATION SÉCURITÉ 0 : bloquer les clients de l'interface staff
+        if (firestoreUser.role == UserRole.client) {
+          debugPrint('[DIAG][app_provider.dart:303] ▶▶▶ signOut() — role=client → ACCÈS STAFF REFUSÉ');
+          await _firebase.signOut();
+          _errorMessage = 'Ce compte est un compte client. Utilisez l\'Espace Client pour vous connecter.';
+          _isLoading = false;
+          notifyListeners();
+          return false;
+        }
         // VÉRIFICATION SÉCURITÉ 1 : active = true obligatoire
         if (!firestoreUser.isActive) {
           // ─── LOG DIAGNOSTIC ─────────────────────────────────────────

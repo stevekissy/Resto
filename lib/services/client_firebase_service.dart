@@ -49,7 +49,25 @@ class ClientFirebaseService {
   // ── Profil client ──────────────────────────────────────────────────────
 
   Future<void> createClientProfile(ClientUser client) async {
+    // 1. Profil dans la collection dédiée `clients`
     await _db.collection('clients').doc(client.id).set(client.toMap());
+
+    // 2. Document dans `users` avec role=client (index 6) pour accès unifié
+    //    Permet à loginWithFirebase de détecter et bloquer l'accès staff.
+    await _db.collection('users').doc(client.id).set({
+      'id': client.id,
+      'name': client.name,
+      'email': client.email,
+      'phone': client.phone,
+      'role': 6, // UserRole.client.index
+      'accountType': 'customer',
+      'active': true,
+      'isActive': true,
+      'canLogin': true,
+      'hasAppAccess': false,  // pas d'accès à l'interface staff
+      'createdBy': 'self_registration',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<ClientUser?> getClientProfile(String uid) async {

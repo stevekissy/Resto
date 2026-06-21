@@ -1244,6 +1244,7 @@ class FirebaseService {
       case UserRole.kitchen:      return 'cuisine';
       case UserRole.server:       return 'serveur';
       case UserRole.stockManager: return 'gestionnaire_stock';
+      case UserRole.client:       return 'client'; // aucun doc de permissions
     }
   }
 
@@ -1291,6 +1292,14 @@ class FirebaseService {
           'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': true, 'productManagement': true, 'adminManagement': false,
           'reservations': false, 'accounting': false, 'notifications': true,
+        };
+      case UserRole.client:
+        // Les clients n'ont aucun accès à l'interface staff
+        return {
+          'dashboard': false, 'orders': false, 'kitchen': false, 'cashier': false,
+          'stock': false, 'personnel': false, 'messages': false, 'statistics': false,
+          'suppliers': false, 'productManagement': false, 'adminManagement': false,
+          'reservations': false, 'accounting': false, 'notifications': false,
         };
     }
   }

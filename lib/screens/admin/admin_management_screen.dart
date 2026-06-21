@@ -78,27 +78,144 @@ class _AdminManagementScreenState extends State<AdminManagementScreen>
 // =====================================================================
 // ONGLET UTILISATEURS
 // =====================================================================
-class _UsersTab extends StatelessWidget {
+class _UsersTab extends StatefulWidget {
+  @override
+  State<_UsersTab> createState() => _UsersTabState();
+}
+
+class _UsersTabState extends State<_UsersTab> {
+  // 0 = Personnel (staff), 1 = Clients
+  int _filterIndex = 0;
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    final users = provider.users;
+    final allUsers = provider.users;
 
-    if (users.isEmpty) {
-      return const EmptyState(
-        icon: Icons.people_outline,
-        title: 'Aucun utilisateur enregistré',
-        subtitle: 'Utilisez le bouton + pour créer un utilisateur',
-      );
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: users.length,
-      itemBuilder: (context, index) {
-        final user = users[index];
-        final isCurrentUser = provider.currentUser?.id == user.id;
-        return _UserCard(user: user, isCurrentUser: isCurrentUser);
-      },
+    // Séparer personnel et clients
+    final staff = allUsers.where((u) => u.role != UserRole.client).toList();
+    final clients = allUsers.where((u) => u.role == UserRole.client).toList();
+    final users = _filterIndex == 0 ? staff : clients;
+
+    return Column(
+      children: [
+        // ── Barre de filtre Personnel / Clients ──────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Row(
+            children: [
+              _FilterChip(
+                label: 'Personnel',
+                icon: Icons.badge_outlined,
+                count: staff.length,
+                selected: _filterIndex == 0,
+                onTap: () => setState(() => _filterIndex = 0),
+              ),
+              const SizedBox(width: 8),
+              _FilterChip(
+                label: 'Clients',
+                icon: Icons.person_outline,
+                count: clients.length,
+                selected: _filterIndex == 1,
+                onTap: () => setState(() => _filterIndex = 1),
+              ),
+            ],
+          ),
+        ),
+        // ── Liste ──────────────────────────────────────────────────────
+        Expanded(
+          child: users.isEmpty
+              ? EmptyState(
+                  icon: _filterIndex == 0 ? Icons.badge_outlined : Icons.people_outline,
+                  title: _filterIndex == 0
+                      ? 'Aucun membre du personnel'
+                      : 'Aucun client enregistré',
+                  subtitle: _filterIndex == 0
+                      ? 'Utilisez le bouton + pour créer un membre du personnel'
+                      : 'Les clients s\'inscrivent depuis l\'Espace Client',
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: users.length,
+                  itemBuilder: (context, index) {
+                    final user = users[index];
+                    final isCurrentUser = provider.currentUser?.id == user.id;
+                    return _UserCard(user: user, isCurrentUser: isCurrentUser);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Chip de filtre compact pour la barre Personnel/Clients
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.label,
+    required this.icon,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppTheme.primary : AppTheme.textSecondary;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppTheme.primary.withValues(alpha: 0.15)
+              : Colors.white.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected
+                ? AppTheme.primary.withValues(alpha: 0.5)
+                : Colors.white.withValues(alpha: 0.08),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 16),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -191,14 +308,18 @@ class _UserCard extends StatelessWidget {
                   ],
                 ),
               ),
-              // Actions
+              // Actions (menu différent pour clients et personnel)
               if (!isCurrentUser)
                 PopupMenuButton<String>(
                   color: AppTheme.surface,
                   icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary),
                   itemBuilder: (_) => [
-                    const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, color: AppTheme.primary, size: 18), SizedBox(width: 8), Text('Modifier', style: TextStyle(color: AppTheme.textPrimary))])),
-                    const PopupMenuItem(value: 'role', child: Row(children: [Icon(Icons.swap_horiz, color: AppTheme.warning, size: 18), SizedBox(width: 8), Text('Changer rôle', style: TextStyle(color: AppTheme.textPrimary))])),
+                    // "Modifier" uniquement pour le personnel (pas les clients)
+                    if (user.role != UserRole.client)
+                      const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, color: AppTheme.primary, size: 18), SizedBox(width: 8), Text('Modifier', style: TextStyle(color: AppTheme.textPrimary))])),
+                    // "Changer rôle" uniquement pour le personnel
+                    if (user.role != UserRole.client)
+                      const PopupMenuItem(value: 'role', child: Row(children: [Icon(Icons.swap_horiz, color: AppTheme.warning, size: 18), SizedBox(width: 8), Text('Changer rôle', style: TextStyle(color: AppTheme.textPrimary))])),
                     const PopupMenuItem(value: 'toggle', child: Row(children: [Icon(Icons.block, color: Colors.orange, size: 18), SizedBox(width: 8), Text('Activer/Désactiver', style: TextStyle(color: AppTheme.textPrimary))])),
                     const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, color: AppTheme.error, size: 18), SizedBox(width: 8), Text('Supprimer', style: TextStyle(color: AppTheme.error))])),
                   ],
@@ -307,7 +428,10 @@ class _UserCard extends StatelessWidget {
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: UserRole.values.map((role) {
+              // Exclure le rôle client — réservé à l'inscription via Espace Client
+              children: UserRole.values
+                  .where((r) => r != UserRole.client)
+                  .map((role) {
                 final tempUser = AppUser(id: '', name: '', email: '', phone: '', role: role);
                 return RadioListTile<UserRole>(
                   value: role,
@@ -384,7 +508,8 @@ class _PermissionsTab extends StatelessWidget {
             style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
           ),
         ),
-        ...UserRole.values.map((role) {
+        // Exclure UserRole.client des permissions configurables
+        ...UserRole.values.where((r) => r != UserRole.client).map((role) {
           final tempUser = AppUser(id: '', name: '', email: '', phone: '', role: role);
           return _RolePermissionCard(
             role: role,
@@ -549,7 +674,10 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       _nameCtrl.text  = widget.user!.name;
       _emailCtrl.text = widget.user!.email;
       _phoneCtrl.text = widget.user!.phone;
-      _selectedRole   = widget.user!.role;
+      // Si c'est un client, ne pas assigner UserRole.client dans le formulaire staff
+      _selectedRole = widget.user!.role == UserRole.client
+          ? UserRole.server
+          : widget.user!.role;
       _canLogin       = widget.user!.canLogin;
       _isActive       = widget.user!.isActive;
     }
@@ -630,7 +758,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                   dropdownColor: AppTheme.surface,
                   style: const TextStyle(color: AppTheme.textPrimary),
                   icon: const Icon(Icons.arrow_drop_down, color: AppTheme.primary),
-                  items: UserRole.values.map((role) {
+                  // Exclure UserRole.client — rôle réservé à l'inscription client
+                  items: UserRole.values.where((r) => r != UserRole.client).map((role) {
                     final tmp = AppUser(id: '', name: '', email: '', phone: '', role: role);
                     return DropdownMenuItem(
                       value: role,
