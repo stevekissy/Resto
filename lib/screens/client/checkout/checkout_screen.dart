@@ -11,7 +11,8 @@ import '../../../utils/app_theme.dart';
 // ═══════════════════════════════════════════════════════════════════════════
 
 class CheckoutScreen extends StatefulWidget {
-  const CheckoutScreen({super.key});
+  final VoidCallback? onGoHome;
+  const CheckoutScreen({super.key, this.onGoHome});
 
   @override
   State<CheckoutScreen> createState() => _CheckoutScreenState();
@@ -68,6 +69,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          if (widget.onGoHome != null)
+            IconButton(
+              icon: const Icon(Icons.home_outlined, color: Colors.white),
+              tooltip: 'Accueil',
+              onPressed: () {
+                Navigator.pop(context); // ferme checkout → retour au menu
+                widget.onGoHome!();     // switche vers l'onglet Accueil
+              },
+            ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
@@ -520,8 +532,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             child: ElevatedButton(
               onPressed: () {
                 Navigator.pop(context); // ferme dialog
-                Navigator.pop(context); // ferme checkout
-                Navigator.pop(context); // ferme menu
+                Navigator.pop(context); // ferme checkout → retour Menu (tab)
+                // Naviguer vers l'onglet Commandes via onGoHome puis sélection manuelle
+                // Ou simplement aller à Accueil
+                widget.onGoHome?.call();
               },
               child: const Text('Suivre ma commande'),
             ),

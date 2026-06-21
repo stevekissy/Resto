@@ -11,7 +11,8 @@ import '../../../utils/app_theme.dart';
 // ═══════════════════════════════════════════════════════════════════════════
 
 class ClientOrdersScreen extends StatefulWidget {
-  const ClientOrdersScreen({super.key});
+  final VoidCallback? onGoHome;
+  const ClientOrdersScreen({super.key, this.onGoHome});
 
   @override
   State<ClientOrdersScreen> createState() => _ClientOrdersScreenState();
@@ -49,6 +50,18 @@ class _ClientOrdersScreenState extends State<ClientOrdersScreen>
       appBar: AppBar(
         backgroundColor: AppTheme.surface,
         automaticallyImplyLeading: false,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+          tooltip: 'Retour à l\'accueil',
+          onPressed: widget.onGoHome,
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home_outlined, color: Colors.white),
+            tooltip: 'Accueil',
+            onPressed: widget.onGoHome,
+          ),
+        ],
         title: const Text('Mes Commandes',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
         bottom: TabBar(

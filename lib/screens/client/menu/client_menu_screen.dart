@@ -12,7 +12,8 @@ import '../checkout/checkout_screen.dart';
 // ═══════════════════════════════════════════════════════════════════════════
 
 class ClientMenuScreen extends StatefulWidget {
-  const ClientMenuScreen({super.key});
+  final VoidCallback? onGoHome;
+  const ClientMenuScreen({super.key, this.onGoHome});
 
   @override
   State<ClientMenuScreen> createState() => _ClientMenuScreenState();
@@ -59,6 +60,18 @@ class _ClientMenuScreenState extends State<ClientMenuScreen>
         backgroundColor: AppTheme.surface,
         title: const Text('Menu', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
         automaticallyImplyLeading: false,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+          tooltip: 'Retour à l\'accueil',
+          onPressed: widget.onGoHome,
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home_outlined, color: Colors.white),
+            tooltip: 'Accueil',
+            onPressed: widget.onGoHome,
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(100),
           child: Column(
@@ -208,7 +221,9 @@ class _ClientMenuScreenState extends State<ClientMenuScreen>
   }
 
   void _openCheckout(BuildContext context) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const CheckoutScreen()));
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => CheckoutScreen(onGoHome: widget.onGoHome),
+    ));
   }
 }
 

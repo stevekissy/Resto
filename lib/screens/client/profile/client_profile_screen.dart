@@ -13,7 +13,8 @@ import '../auth/client_auth_screen.dart';
 // ═══════════════════════════════════════════════════════════════════════════
 
 class ClientProfileScreen extends StatelessWidget {
-  const ClientProfileScreen({super.key});
+  final VoidCallback? onGoHome;
+  const ClientProfileScreen({super.key, this.onGoHome});
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +51,18 @@ class ClientProfileScreen extends StatelessWidget {
             pinned: true,
             automaticallyImplyLeading: false,
             backgroundColor: AppTheme.surface,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+              tooltip: 'Retour à l\'accueil',
+              onPressed: onGoHome,
+            ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.home_outlined, color: Colors.white),
+                tooltip: 'Accueil',
+                onPressed: onGoHome,
+              ),
+            ],
             flexibleSpace: FlexibleSpaceBar(
               background: Container(
                 decoration: const BoxDecoration(

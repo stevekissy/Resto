@@ -24,11 +24,13 @@ class ClientMainScreen extends StatefulWidget {
 class _ClientMainScreenState extends State<ClientMainScreen> {
   int _currentIndex = 0;
 
-  final List<Widget> _screens = const [
-    ClientHomeScreen(),
-    ClientMenuScreen(),
-    ClientOrdersScreen(),
-    ClientProfileScreen(),
+  void _goHome() => setState(() => _currentIndex = 0);
+
+  List<Widget> get _screens => [
+    const ClientHomeScreen(),
+    ClientMenuScreen(onGoHome: _goHome),
+    ClientOrdersScreen(onGoHome: _goHome),
+    ClientProfileScreen(onGoHome: _goHome),
   ];
 
   @override
