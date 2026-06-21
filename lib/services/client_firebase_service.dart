@@ -1,0 +1,414 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:uuid/uuid.dart';
+import '../models/client_models.dart';
+import '../models/models.dart';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLIENT FIREBASE SERVICE
+// Gère toutes les opérations Firestore liées à l'espace client
+// Collections :
+//   clients             → profils clients
+//   client_orders       → commandes en ligne
+//   client_addresses    → adresses livraison
+//   loyalty_transactions → historique points
+//   promotions          → offres promotionnelles
+//   online_settings     → configuration commandes en ligne (doc unique)
+// ═══════════════════════════════════════════════════════════════════════════
+
+class ClientFirebaseService {
+  static final ClientFirebaseService _instance = ClientFirebaseService._();
+  factory ClientFirebaseService() => _instance;
+  ClientFirebaseService._();
+
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final _uuid = const Uuid();
+
+  // ── Authentification ───────────────────────────────────────────────────
+
+  Future<UserCredential> registerWithEmail({
+    required String email,
+    required String password,
+  }) => _auth.createUserWithEmailAndPassword(email: email, password: password);
+
+  Future<UserCredential> loginWithEmail({
+    required String email,
+    required String password,
+  }) => _auth.signInWithEmailAndPassword(email: email, password: password);
+
+  Future<void> sendPasswordResetEmail(String email) =>
+      _auth.sendPasswordResetEmail(email: email);
+
+  Future<void> signOut() => _auth.signOut();
+
+  User? get currentAuthUser => _auth.currentUser;
+
+  // ── Profil client ──────────────────────────────────────────────────────
+
+  Future<void> createClientProfile(ClientUser client) async {
+    await _db.collection('clients').doc(client.id).set(client.toMap());
+  }
+
+  Future<ClientUser?> getClientProfile(String uid) async {
+    try {
+      final doc = await _db.collection('clients').doc(uid).get();
+      if (!doc.exists || doc.data() == null) return null;
+      return ClientUser.fromMap(doc.data()!);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Stream<ClientUser?> streamClientProfile(String uid) {
+    return _db.collection('clients').doc(uid).snapshots().map((snap) {
+      if (!snap.exists || snap.data() == null) return null;
+      return ClientUser.fromMap(snap.data()!);
+    });
+  }
+
+  Future<void> updateClientProfile(String uid, Map<String, dynamic> data) async {
+    await _db.collection('clients').doc(uid).update(data);
+  }
+
+  Future<void> updateLastLogin(String uid) async {
+    await _db.collection('clients').doc(uid).update({
+      'lastLoginAt': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  // ── Vérification si UID est un client ────────────────────────────────────
+
+  /// Vérifie par UID (doc Firestore `clients/{uid}`) — plus rapide et fiable.
+  Future<bool> isClientUser(String uid) async {
+    try {
+      final doc = await _db.collection('clients').doc(uid).get();
+      return doc.exists;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ── Vérification si email est déjà client ──────────────────────────────
+
+  Future<bool> isClientEmail(String email) async {
+    try {
+      final snap = await _db.collection('clients')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
+      return snap.docs.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ── Adresses de livraison ──────────────────────────────────────────────
+
+  Stream<List<DeliveryAddress>> streamAddresses(String clientId) {
+    return _db
+        .collection('client_addresses')
+        .where('clientId', isEqualTo: clientId)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => DeliveryAddress.fromMap(d.data()))
+            .toList()
+          ..sort((a, b) => b.isDefault ? 1 : -1));
+  }
+
+  Future<String> addAddress(String clientId, DeliveryAddress address) async {
+    final id = _uuid.v4();
+    final data = address.toMap();
+    data['id'] = id;
+    data['clientId'] = clientId;
+    // Si marquée par défaut, enlever le défaut des autres
+    if (address.isDefault) {
+      await _clearDefaultAddress(clientId);
+    }
+    await _db.collection('client_addresses').doc(id).set(data);
+    return id;
+  }
+
+  Future<void> updateAddress(DeliveryAddress address) async {
+    await _db.collection('client_addresses').doc(address.id).update(address.toMap());
+  }
+
+  Future<void> deleteAddress(String addressId) async {
+    await _db.collection('client_addresses').doc(addressId).delete();
+  }
+
+  Future<void> setDefaultAddress(String clientId, String addressId) async {
+    await _clearDefaultAddress(clientId);
+    await _db.collection('client_addresses').doc(addressId).update({'isDefault': true});
+  }
+
+  Future<void> _clearDefaultAddress(String clientId) async {
+    final snap = await _db.collection('client_addresses')
+        .where('clientId', isEqualTo: clientId)
+        .where('isDefault', isEqualTo: true)
+        .get();
+    for (final doc in snap.docs) {
+      await doc.reference.update({'isDefault': false});
+    }
+  }
+
+  // ── Commandes client ───────────────────────────────────────────────────
+
+  Stream<List<ClientOrder>> streamClientOrders(String clientId) {
+    return _db
+        .collection('client_orders')
+        .where('clientId', isEqualTo: clientId)
+        .snapshots()
+        .map((snap) {
+      final orders = snap.docs
+          .map((d) => ClientOrder.fromMap(d.data()))
+          .toList();
+      orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return orders;
+    });
+  }
+
+  Stream<List<ClientOrder>> streamAllOnlineOrders() {
+    return _db
+        .collection('client_orders')
+        .orderBy('createdAt', descending: true)
+        .limit(100)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => ClientOrder.fromMap(d.data()))
+            .toList());
+  }
+
+  Future<String> createOrder(ClientOrder order) async {
+    final id = _uuid.v4();
+    // Générer numéro de commande
+    final count = await _getNextOrderNumber();
+    final data = order.toMap();
+    data['id'] = id;
+    data['orderNumber'] = '#${count.toString().padLeft(4, '0')}';
+    await _db.collection('client_orders').doc(id).set(data);
+
+    // Créer aussi dans la collection 'orders' pour le tableau de bord cuisine
+    await _createInternalOrder(data, id);
+
+    // Mettre à jour les stats client
+    await _db.collection('clients').doc(order.clientId).update({
+      'totalOrders': FieldValue.increment(1),
+      'totalSpent': FieldValue.increment(order.grandTotal),
+    });
+
+    return id;
+  }
+
+  Future<int> _getNextOrderNumber() async {
+    final doc = await _db.collection('online_settings').doc('order_counter').get();
+    final current = (doc.data()?['counter'] as num?)?.toInt() ?? 1000;
+    await _db.collection('online_settings').doc('order_counter').set({
+      'counter': current + 1,
+    });
+    return current + 1;
+  }
+
+  /// Crée une commande miroir dans la collection interne 'orders' de l'app de gestion
+  Future<void> _createInternalOrder(Map<String, dynamic> clientOrderData, String clientOrderId) async {
+    try {
+      final items = (clientOrderData['items'] as List? ?? []).map((i) {
+        final m = i as Map<String, dynamic>;
+        return {
+          'productId': m['productId'],
+          'name': m['productName'],
+          'price': m['unitPrice'],
+          'quantity': m['quantity'],
+          'comment': m['comment'] ?? '',
+          'categoryName': m['categoryName'] ?? '',
+        };
+      }).toList();
+
+      final internalOrderId = _uuid.v4();
+      final totalAmount = (clientOrderData['totalAmount'] as num?)?.toDouble() ?? 0;
+      final deliveryFee = (clientOrderData['deliveryFee'] as num?)?.toDouble() ?? 0;
+
+      await _db.collection('orders').doc(internalOrderId).set({
+        'id': internalOrderId,
+        'clientOrderId': clientOrderId,         // lien retour
+        'orderNumber': clientOrderData['orderNumber'],
+        'tableNumber': clientOrderData['orderType'] == 0 ? 'Livraison' : 'Emporter',
+        'serverName': clientOrderData['clientName'] ?? '',
+        'items': items,
+        'status': 'pending',
+        'totalAmount': totalAmount + deliveryFee,
+        'discount': 0.0,
+        'cashStatus': 'pending_cashout',
+        'notes': clientOrderData['notes'] ?? '',
+        'createdAt': clientOrderData['createdAt'],
+        'source': 'online',
+        'clientName': clientOrderData['clientName'],
+        'clientPhone': clientOrderData['clientPhone'],
+      });
+
+      // Mettre à jour clientOrderData avec l'id interne
+      await _db.collection('client_orders').doc(clientOrderId).update({
+        'internalOrderId': internalOrderId,
+      });
+    } catch (e) {
+      // Non bloquant — la commande client a déjà été créée
+      debugPrintOrder('Erreur création commande interne: $e');
+    }
+  }
+
+  // ignore: avoid_print
+  void debugPrintOrder(String msg) {}
+
+  Future<void> updateOrderStatus(String orderId, ClientOrderStatus status) async {
+    await _db.collection('client_orders').doc(orderId).update({
+      'status': status.index,
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  Future<void> cancelOrder(String orderId) async {
+    await _db.collection('client_orders').doc(orderId).update({
+      'status': ClientOrderStatus.cancelled.index,
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  // ── Paramètres commandes en ligne ──────────────────────────────────────
+
+  Stream<OnlineOrderSettings> streamOnlineSettings() {
+    return _db
+        .collection('online_settings')
+        .doc('config')
+        .snapshots()
+        .map((snap) {
+      if (!snap.exists || snap.data() == null) return OnlineOrderSettings.defaults;
+      return OnlineOrderSettings.fromMap(snap.data()!);
+    });
+  }
+
+  Future<OnlineOrderSettings> getOnlineSettings() async {
+    final doc = await _db.collection('online_settings').doc('config').get();
+    if (!doc.exists || doc.data() == null) return OnlineOrderSettings.defaults;
+    return OnlineOrderSettings.fromMap(doc.data()!);
+  }
+
+  Future<void> saveOnlineSettings(OnlineOrderSettings settings) async {
+    await _db.collection('online_settings').doc('config').set(settings.toMap());
+  }
+
+  // ── Promotions ─────────────────────────────────────────────────────────
+
+  Stream<List<Promotion>> streamActivePromotions() {
+    return _db
+        .collection('promotions')
+        .where('isActive', isEqualTo: true)
+        .snapshots()
+        .map((snap) {
+      final now = DateTime.now();
+      return snap.docs
+          .map((d) => Promotion.fromMap(d.data()))
+          .where((p) => p.validUntil == null || p.validUntil!.isAfter(now))
+          .toList();
+    });
+  }
+
+  Stream<List<Promotion>> streamAllPromotions() {
+    return _db.collection('promotions').snapshots().map((snap) =>
+        snap.docs.map((d) => Promotion.fromMap(d.data())).toList());
+  }
+
+  Future<String> addPromotion(Promotion promo) async {
+    final id = _uuid.v4();
+    final data = promo.toMap();
+    data['id'] = id;
+    await _db.collection('promotions').doc(id).set(data);
+    return id;
+  }
+
+  Future<void> updatePromotion(Promotion promo) async {
+    await _db.collection('promotions').doc(promo.id).update(promo.toMap());
+  }
+
+  Future<void> deletePromotion(String promoId) async {
+    await _db.collection('promotions').doc(promoId).delete();
+  }
+
+  // ── Programme fidélité ─────────────────────────────────────────────────
+
+  Stream<List<LoyaltyTransaction>> streamLoyaltyHistory(String clientId) {
+    return _db
+        .collection('loyalty_transactions')
+        .where('clientId', isEqualTo: clientId)
+        .snapshots()
+        .map((snap) {
+      final txs = snap.docs
+          .map((d) => LoyaltyTransaction.fromMap(d.data()))
+          .toList();
+      txs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return txs;
+    });
+  }
+
+  Future<void> addLoyaltyTransaction(LoyaltyTransaction tx) async {
+    final id = _uuid.v4();
+    final data = tx.toMap();
+    data['id'] = id;
+    await _db.collection('loyalty_transactions').doc(id).set(data);
+    // Mettre à jour le solde points du client
+    final delta = tx.type == LoyaltyType.redeem ? -tx.points : tx.points;
+    await _db.collection('clients').doc(tx.clientId).update({
+      'loyaltyPoints': FieldValue.increment(delta),
+    });
+  }
+
+  // ── Menu produits (lecture seule — collection partagée) ────────────────
+
+  Stream<List<Product>> streamAvailableProducts() {
+    return _db.collection('products').snapshots().map((snap) => snap.docs
+        .map((d) {
+          final data = d.data();
+          data['id'] = d.id;
+          return Product.fromMap(data);
+        })
+        .where((p) => p.isAvailable && p.stockQuantity > 0)
+        .toList());
+  }
+
+  Stream<List<String>> streamCategories() {
+    return _db.collection('products').snapshots().map((snap) {
+      final cats = snap.docs
+          .map((d) => d.data()['category'] as String? ?? '')
+          .where((c) => c.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+      return cats;
+    });
+  }
+
+  // ── Gestion clients (admin) ────────────────────────────────────────────
+
+  Stream<List<ClientUser>> streamAllClients() {
+    return _db.collection('clients').snapshots().map((snap) {
+      final clients = snap.docs
+          .map((d) => ClientUser.fromMap(d.data()))
+          .toList();
+      clients.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return clients;
+    });
+  }
+
+  Future<void> toggleClientActive(String clientId, bool isActive) async {
+    await _db.collection('clients').doc(clientId).update({'isActive': isActive});
+  }
+
+  /// Retourne tous les clients sous forme de Map (pour l'admin)
+  Future<List<Map<String, dynamic>>> getAllClientsRaw() async {
+    try {
+      final snap = await _db.collection('clients').get();
+      return snap.docs.map((d) => d.data()).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+}

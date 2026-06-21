@@ -11,10 +11,15 @@ import 'widgets/common_widgets.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'firebase_options.dart';
 import 'providers/app_provider.dart';
+import 'providers/client_provider.dart';
 import 'utils/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
+import 'screens/client/client_main_screen.dart';
+// ignore: unused_import
+import 'screens/client/auth/client_auth_screen.dart';
 import 'services/firebase_service.dart';
+import 'services/client_firebase_service.dart';
 
 // ══════════════════════════════════════════════════════════════════════
 //  POINT D'ENTRÉE — ordre strict et garanti :
@@ -152,8 +157,11 @@ class SankadiokroApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider.value(
-      value: provider,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: provider),
+        ChangeNotifierProvider<ClientProvider>(create: (_) => ClientProvider()),
+      ],
       child: MaterialApp(
         title: 'Sankadio Manager',
         debugShowCheckedModeBanner: false,
@@ -202,6 +210,8 @@ class _AuthGateState extends State<_AuthGate> {
   // true = connecté, false = déconnecté
   late bool? _authenticated;
   StreamSubscription<User?>? _authSub;
+
+
 
   @override
   void initState() {
@@ -272,12 +282,97 @@ class _AuthGateState extends State<_AuthGate> {
     }
 
     if (_authenticated == true) {
-      // Session restaurée → aller directement au dashboard
-      return const MainScreen();
+      // Session restaurée → détecter le rôle (client vs staff)
+      return _RoleRouter(
+        firebaseError: widget.firebaseError,
+        onRoleResolved: (role) {
+
+        },
+      );
     }
 
     // Pas de session → formulaire de connexion
+    // Proposer les deux portails : staff et client
     return LoginScreen(firebaseInitError: widget.firebaseError);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  ROLE ROUTER — Détecte si l'utilisateur connecté est un client ou un
+//  membre du staff, puis route vers ClientMainScreen ou MainScreen.
+//
+//  Logique :
+//  • Vérifie si l'UID existe dans la collection Firestore `clients`
+//  • Si oui → ClientMainScreen (avec initialisation du ClientProvider)
+//  • Si non → MainScreen (interface de gestion)
+//
+//  Non bloquant : si la détection échoue (réseau KO), route vers staff.
+// ══════════════════════════════════════════════════════════════════════
+class _RoleRouter extends StatefulWidget {
+  final String? firebaseError;
+  final void Function(String role)? onRoleResolved;
+  const _RoleRouter({this.firebaseError, this.onRoleResolved});
+
+  @override
+  State<_RoleRouter> createState() => _RoleRouterState();
+}
+
+class _RoleRouterState extends State<_RoleRouter> {
+  // null = en cours de détection
+  String? _role;
+  bool _clientInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _detectRole();
+  }
+
+  Future<void> _detectRole() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) {
+        if (mounted) setState(() => _role = 'staff');
+        return;
+      }
+      final isClient = await ClientFirebaseService().isClientUser(uid);
+      if (mounted) {
+        setState(() => _role = isClient ? 'client' : 'staff');
+        widget.onRoleResolved?.call(_role!);
+        if (isClient) {
+          _initClient(uid);
+        }
+      }
+    } catch (e) {
+      debugPrint('[RoleRouter] Erreur détection rôle: $e → fallback staff');
+      if (mounted) setState(() => _role = 'staff');
+    }
+  }
+
+  Future<void> _initClient(String uid) async {
+    try {
+      await context.read<ClientProvider>().init(uid);
+      if (mounted) setState(() => _clientInitialized = true);
+    } catch (e) {
+      debugPrint('[RoleRouter] Erreur init ClientProvider: $e');
+      if (mounted) setState(() => _clientInitialized = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_role == null) {
+      // Détection en cours
+      return const _SplashScreen();
+    }
+    if (_role == 'client') {
+      if (!_clientInitialized) {
+        return const _SplashScreen();
+      }
+      return const ClientMainScreen();
+    }
+    // Staff
+    return const MainScreen();
   }
 }
 

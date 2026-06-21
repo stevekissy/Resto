@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../utils/app_theme.dart';
 import 'main_screen.dart';
+import 'client/auth/client_auth_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   /// Message d'erreur Firebase passé depuis main() si initializeApp() a échoué.
@@ -436,7 +437,39 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                       ),
                     ),
 
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 20),
+
+                    // ── LIEN ESPACE CLIENT ──
+                    GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ClientAuthScreen()),
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.storefront_outlined, color: Colors.white.withValues(alpha: 0.8), size: 18),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Vous êtes client ? Commander en ligne',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.8),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
 
                     // ── PIED DE PAGE ──
                     Text(

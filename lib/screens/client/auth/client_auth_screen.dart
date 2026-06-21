@@ -1,0 +1,491 @@
+// ignore_for_file: use_build_context_synchronously
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../../../models/client_models.dart';
+import '../../../providers/client_provider.dart';
+import '../../../services/client_firebase_service.dart';
+import '../../../utils/app_theme.dart';
+import '../client_main_screen.dart';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ÉCRAN AUTH CLIENT — Inscription, Connexion, Mot de passe oublié
+// ═══════════════════════════════════════════════════════════════════════════
+
+class ClientAuthScreen extends StatefulWidget {
+  const ClientAuthScreen({super.key});
+
+  @override
+  State<ClientAuthScreen> createState() => _ClientAuthScreenState();
+}
+
+enum _AuthMode { login, register, forgotPassword }
+
+class _ClientAuthScreenState extends State<ClientAuthScreen>
+    with TickerProviderStateMixin {
+  _AuthMode _mode = _AuthMode.login;
+  final _formKey = GlobalKey<FormState>();
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirm = true;
+
+  final _nameCtrl    = TextEditingController();
+  final _emailCtrl   = TextEditingController();
+  final _phoneCtrl   = TextEditingController();
+  final _passCtrl    = TextEditingController();
+  final _confirmCtrl = TextEditingController();
+
+  late AnimationController _animCtrl;
+  late Animation<double> _fadeAnim;
+  late Animation<Offset> _slideAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _animCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
+    _fadeAnim  = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut));
+    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.12), end: Offset.zero).animate(CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut));
+    _animCtrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _phoneCtrl.dispose();
+    _passCtrl.dispose();
+    _confirmCtrl.dispose();
+    super.dispose();
+  }
+
+  void _switchMode(_AuthMode mode) {
+    setState(() => _mode = mode);
+    _animCtrl.reset();
+    _animCtrl.forward();
+  }
+
+  // ── Connexion ─────────────────────────────────────────────────────────────
+  Future<void> _login() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _isLoading = true);
+    try {
+      final svc = ClientFirebaseService();
+      final cred = await svc.loginWithEmail(
+        email: _emailCtrl.text.trim(),
+        password: _passCtrl.text,
+      );
+      final uid = cred.user!.uid;
+      // Vérifier que c'est bien un client (pas un staff)
+      final clientProfile = await svc.getClientProfile(uid);
+      if (clientProfile == null) {
+        await svc.signOut();
+        _showError('Aucun compte client trouvé pour cet email.\nSi vous êtes un employé, utilisez l\'application de gestion.');
+        return;
+      }
+      if (!clientProfile.isActive) {
+        await svc.signOut();
+        _showError('Votre compte a été désactivé. Contactez le restaurant.');
+        return;
+      }
+      // Charger le provider
+      if (mounted) {
+        final provider = context.read<ClientProvider>();
+        await provider.init(uid);
+        if (mounted) {
+          Navigator.pushReplacement(context,
+              MaterialPageRoute(builder: (_) => const ClientMainScreen()));
+        }
+      }
+    } on FirebaseAuthException catch (e) {
+      _showError(_authError(e.code));
+    } catch (e) {
+      _showError('Erreur de connexion. Réessayez.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ── Inscription ──────────────────────────────────────────────────────────
+  Future<void> _register() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _isLoading = true);
+    try {
+      final svc = ClientFirebaseService();
+      final cred = await svc.registerWithEmail(
+        email: _emailCtrl.text.trim(),
+        password: _passCtrl.text,
+      );
+      final uid = cred.user!.uid;
+      // Créer le profil client dans Firestore
+      final client = ClientUser(
+        id: uid,
+        name: _nameCtrl.text.trim(),
+        email: _emailCtrl.text.trim(),
+        phone: _phoneCtrl.text.trim(),
+      );
+      await svc.createClientProfile(client);
+      if (mounted) {
+        final provider = context.read<ClientProvider>();
+        await provider.init(uid);
+        if (mounted) {
+          Navigator.pushReplacement(context,
+              MaterialPageRoute(builder: (_) => const ClientMainScreen()));
+        }
+      }
+    } on FirebaseAuthException catch (e) {
+      _showError(_authError(e.code));
+    } catch (e) {
+      _showError('Erreur lors de l\'inscription. Réessayez.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ── Mot de passe oublié ──────────────────────────────────────────────────
+  Future<void> _resetPassword() async {
+    if (_emailCtrl.text.trim().isEmpty) {
+      _showError('Entrez votre email.');
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      await ClientFirebaseService().sendPasswordResetEmail(_emailCtrl.text.trim());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Email de réinitialisation envoyé !'),
+            backgroundColor: Color(0xFF4CAF50),
+          ),
+        );
+        _switchMode(_AuthMode.login);
+      }
+    } catch (_) {
+      _showError('Impossible d\'envoyer l\'email. Vérifiez votre adresse.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: AppTheme.error, duration: const Duration(seconds: 4)),
+    );
+  }
+
+  String _authError(String code) {
+    switch (code) {
+      case 'user-not-found':       return 'Aucun compte avec cet email.';
+      case 'wrong-password':       return 'Mot de passe incorrect.';
+      case 'email-already-in-use': return 'Cet email est déjà utilisé.';
+      case 'weak-password':        return 'Mot de passe trop faible (6 caractères min).';
+      case 'invalid-email':        return 'Adresse email invalide.';
+      case 'too-many-requests':    return 'Trop de tentatives. Attendez un moment.';
+      case 'invalid-credential':   return 'Email ou mot de passe incorrect.';
+      default:                     return 'Erreur d\'authentification. Réessayez.';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF0D47A1), Color(0xFF0A0A0A), Color(0xFF0A0A0A)],
+            stops: [0.0, 0.45, 1.0],
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: FadeTransition(
+              opacity: _fadeAnim,
+              child: SlideTransition(
+                position: _slideAnim,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const SizedBox(height: 32),
+                    // Logo
+                    _buildLogo(),
+                    const SizedBox(height: 40),
+                    // Card formulaire
+                    Container(
+                      padding: const EdgeInsets.all(28),
+                      decoration: BoxDecoration(
+                        color: AppTheme.cardBg,
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.4),
+                            blurRadius: 30,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _buildTitle(),
+                            const SizedBox(height: 24),
+                            _buildFields(),
+                            const SizedBox(height: 24),
+                            _buildSubmitButton(),
+                            const SizedBox(height: 16),
+                            _buildLinks(),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogo() {
+    return Column(
+      children: [
+        Container(
+          width: 80, height: 80,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1565C0), Color(0xFF2196F3)],
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [BoxShadow(color: AppTheme.primary.withValues(alpha: 0.4), blurRadius: 20, spreadRadius: 2)],
+          ),
+          child: const Center(
+            child: Text('S', style: TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.w900)),
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text('SANKADIOKRO', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 4)),
+        const SizedBox(height: 4),
+        Text(
+          _mode == _AuthMode.register ? 'Créez votre compte' : 'Commander en ligne',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTitle() {
+    final titles = {
+      _AuthMode.login: ('Connexion', Icons.login),
+      _AuthMode.register: ('Inscription', Icons.person_add),
+      _AuthMode.forgotPassword: ('Mot de passe oublié', Icons.lock_reset),
+    };
+    final (title, icon) = titles[_mode]!;
+    return Row(
+      children: [
+        Icon(icon, color: AppTheme.primary, size: 22),
+        const SizedBox(width: 10),
+        Text(title, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+      ],
+    );
+  }
+
+  Widget _buildFields() {
+    return Column(
+      children: [
+        if (_mode == _AuthMode.register) ...[
+          _ClientTextField(
+            controller: _nameCtrl,
+            label: 'Nom complet *',
+            icon: Icons.person_outline,
+            validator: (v) => (v == null || v.trim().isEmpty) ? 'Entrez votre nom' : null,
+          ),
+          const SizedBox(height: 14),
+          _ClientTextField(
+            controller: _phoneCtrl,
+            label: 'Téléphone *',
+            icon: Icons.phone_outlined,
+            keyboardType: TextInputType.phone,
+            validator: (v) => (v == null || v.trim().isEmpty) ? 'Entrez votre numéro' : null,
+          ),
+          const SizedBox(height: 14),
+        ],
+        _ClientTextField(
+          controller: _emailCtrl,
+          label: 'Email *',
+          icon: Icons.email_outlined,
+          keyboardType: TextInputType.emailAddress,
+          validator: (v) {
+            if (v == null || v.trim().isEmpty) return 'Entrez votre email';
+            if (!v.contains('@')) return 'Email invalide';
+            return null;
+          },
+        ),
+        if (_mode != _AuthMode.forgotPassword) ...[
+          const SizedBox(height: 14),
+          _ClientTextField(
+            controller: _passCtrl,
+            label: 'Mot de passe *',
+            icon: Icons.lock_outline,
+            obscureText: _obscurePassword,
+            suffixIcon: IconButton(
+              icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility, color: AppTheme.textSecondary, size: 20),
+              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+            ),
+            validator: (v) => (v == null || v.length < 6) ? '6 caractères minimum' : null,
+          ),
+        ],
+        if (_mode == _AuthMode.register) ...[
+          const SizedBox(height: 14),
+          _ClientTextField(
+            controller: _confirmCtrl,
+            label: 'Confirmer le mot de passe *',
+            icon: Icons.lock_outline,
+            obscureText: _obscureConfirm,
+            suffixIcon: IconButton(
+              icon: Icon(_obscureConfirm ? Icons.visibility_off : Icons.visibility, color: AppTheme.textSecondary, size: 20),
+              onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
+            ),
+            validator: (v) => v != _passCtrl.text ? 'Les mots de passe ne correspondent pas' : null,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSubmitButton() {
+    final labels = {
+      _AuthMode.login: 'Se connecter',
+      _AuthMode.register: 'Créer mon compte',
+      _AuthMode.forgotPassword: 'Envoyer le lien',
+    };
+    final actions = {
+      _AuthMode.login: _login,
+      _AuthMode.register: _register,
+      _AuthMode.forgotPassword: _resetPassword,
+    };
+    return SizedBox(
+      height: 52,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.primary,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        onPressed: _isLoading ? null : actions[_mode],
+        child: _isLoading
+            ? const SizedBox(width: 22, height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+            : Text(labels[_mode]!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
+      ),
+    );
+  }
+
+  Widget _buildLinks() {
+    return Column(
+      children: [
+        if (_mode == _AuthMode.login) ...[
+          TextButton(
+            onPressed: () => _switchMode(_AuthMode.forgotPassword),
+            child: const Text('Mot de passe oublié ?', style: TextStyle(color: AppTheme.primary, fontSize: 13)),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('Pas encore de compte ?', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+              TextButton(
+                onPressed: () => _switchMode(_AuthMode.register),
+                child: const Text('S\'inscrire', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 13)),
+              ),
+            ],
+          ),
+        ] else if (_mode == _AuthMode.register) ...[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('Déjà un compte ?', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+              TextButton(
+                onPressed: () => _switchMode(_AuthMode.login),
+                child: const Text('Se connecter', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 13)),
+              ),
+            ],
+          ),
+        ] else ...[
+          TextButton(
+            onPressed: () => _switchMode(_AuthMode.login),
+            child: const Text('← Retour à la connexion', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ── Widget champ texte client ────────────────────────────────────────────────
+
+class _ClientTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final IconData icon;
+  final bool obscureText;
+  final TextInputType? keyboardType;
+  final String? Function(String?)? validator;
+  final Widget? suffixIcon;
+
+  const _ClientTextField({
+    required this.controller,
+    required this.label,
+    required this.icon,
+    this.obscureText = false,
+    this.keyboardType,
+    this.validator,
+    this.suffixIcon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      obscureText: obscureText,
+      keyboardType: keyboardType,
+      style: const TextStyle(color: Colors.white, fontSize: 14),
+      validator: validator,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, color: AppTheme.primary, size: 20),
+        suffixIcon: suffixIcon,
+        filled: true,
+        fillColor: AppTheme.surfaceLight,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFF2A2A5A)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppTheme.primary, width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppTheme.error),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppTheme.error, width: 2),
+        ),
+        labelStyle: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        isDense: true,
+      ),
+    );
+  }
+}

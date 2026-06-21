@@ -1,0 +1,662 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLIENT MODELS — Espace client SANKADIOKRO
+// Collections Firestore : clients, client_orders, client_addresses,
+//                         loyalty_transactions, online_settings, promotions
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Enums ──────────────────────────────────────────────────────────────────
+
+enum ClientOrderStatus {
+  pending,      // Commande reçue, en attente de validation
+  confirmed,    // Validée par le restaurant
+  preparing,    // En préparation en cuisine
+  ready,        // Prête
+  delivering,   // En livraison
+  delivered,    // Livrée
+  cancelled,    // Annulée
+}
+
+extension ClientOrderStatusExt on ClientOrderStatus {
+  String get label {
+    switch (this) {
+      case ClientOrderStatus.pending:    return 'Reçue';
+      case ClientOrderStatus.confirmed:  return 'Validée';
+      case ClientOrderStatus.preparing:  return 'En préparation';
+      case ClientOrderStatus.ready:      return 'Prête';
+      case ClientOrderStatus.delivering: return 'En livraison';
+      case ClientOrderStatus.delivered:  return 'Livrée';
+      case ClientOrderStatus.cancelled:  return 'Annulée';
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case ClientOrderStatus.pending:    return const Color(0xFFFFC107);
+      case ClientOrderStatus.confirmed:  return const Color(0xFF2196F3);
+      case ClientOrderStatus.preparing:  return const Color(0xFFFF9800);
+      case ClientOrderStatus.ready:      return const Color(0xFF4CAF50);
+      case ClientOrderStatus.delivering: return const Color(0xFF9C27B0);
+      case ClientOrderStatus.delivered:  return const Color(0xFF4CAF50);
+      case ClientOrderStatus.cancelled:  return const Color(0xFFF44336);
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case ClientOrderStatus.pending:    return Icons.hourglass_empty;
+      case ClientOrderStatus.confirmed:  return Icons.check_circle_outline;
+      case ClientOrderStatus.preparing:  return Icons.restaurant;
+      case ClientOrderStatus.ready:      return Icons.done_all;
+      case ClientOrderStatus.delivering: return Icons.delivery_dining;
+      case ClientOrderStatus.delivered:  return Icons.home;
+      case ClientOrderStatus.cancelled:  return Icons.cancel;
+    }
+  }
+
+  int get step {
+    switch (this) {
+      case ClientOrderStatus.pending:    return 0;
+      case ClientOrderStatus.confirmed:  return 1;
+      case ClientOrderStatus.preparing:  return 2;
+      case ClientOrderStatus.ready:      return 3;
+      case ClientOrderStatus.delivering: return 4;
+      case ClientOrderStatus.delivered:  return 5;
+      case ClientOrderStatus.cancelled:  return -1;
+    }
+  }
+}
+
+enum OrderType { delivery, takeaway }
+
+extension OrderTypeExt on OrderType {
+  String get label => this == OrderType.delivery ? 'Livraison' : 'À emporter';
+  IconData get icon => this == OrderType.delivery ? Icons.delivery_dining : Icons.shopping_bag_outlined;
+}
+
+enum ClientPaymentMethod { cashOnDelivery, orangeMoney, mtnMoney, moovMoney, wave, card }
+
+extension ClientPaymentMethodExt on ClientPaymentMethod {
+  String get label {
+    switch (this) {
+      case ClientPaymentMethod.cashOnDelivery: return 'Paiement à la livraison';
+      case ClientPaymentMethod.orangeMoney:    return 'Orange Money';
+      case ClientPaymentMethod.mtnMoney:       return 'MTN Money';
+      case ClientPaymentMethod.moovMoney:      return 'Moov Money';
+      case ClientPaymentMethod.wave:           return 'Wave';
+      case ClientPaymentMethod.card:           return 'Carte bancaire';
+    }
+  }
+
+  String get icon {
+    switch (this) {
+      case ClientPaymentMethod.cashOnDelivery: return '💵';
+      case ClientPaymentMethod.orangeMoney:    return '🟠';
+      case ClientPaymentMethod.mtnMoney:       return '🟡';
+      case ClientPaymentMethod.moovMoney:      return '🔵';
+      case ClientPaymentMethod.wave:           return '🌊';
+      case ClientPaymentMethod.card:           return '💳';
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case ClientPaymentMethod.cashOnDelivery: return const Color(0xFF4CAF50);
+      case ClientPaymentMethod.orangeMoney:    return const Color(0xFFFF5722);
+      case ClientPaymentMethod.mtnMoney:       return const Color(0xFFFFB300);
+      case ClientPaymentMethod.moovMoney:      return const Color(0xFF2196F3);
+      case ClientPaymentMethod.wave:           return const Color(0xFF00BCD4);
+      case ClientPaymentMethod.card:           return const Color(0xFF9C27B0);
+    }
+  }
+}
+
+enum ClientPaymentStatus { pending, depositPaid, fullyPaid }
+
+extension ClientPaymentStatusExt on ClientPaymentStatus {
+  String get label {
+    switch (this) {
+      case ClientPaymentStatus.pending:     return 'En attente';
+      case ClientPaymentStatus.depositPaid: return 'Acompte payé';
+      case ClientPaymentStatus.fullyPaid:   return 'Payé';
+    }
+  }
+  Color get color {
+    switch (this) {
+      case ClientPaymentStatus.pending:     return const Color(0xFFFFC107);
+      case ClientPaymentStatus.depositPaid: return const Color(0xFFFF9800);
+      case ClientPaymentStatus.fullyPaid:   return const Color(0xFF4CAF50);
+    }
+  }
+}
+
+// ── ClientUser ─────────────────────────────────────────────────────────────
+
+class ClientUser {
+  final String id;         // Firebase Auth UID
+  String name;
+  String email;
+  String phone;
+  String? avatarUrl;
+  bool isActive;
+  DateTime createdAt;
+  DateTime? lastLoginAt;
+  int loyaltyPoints;
+  int totalOrders;
+  double totalSpent;
+  List<String> favoriteProductIds;
+  String? fcmToken;        // pour notifications push
+
+  ClientUser({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.phone,
+    this.avatarUrl,
+    this.isActive = true,
+    DateTime? createdAt,
+    this.lastLoginAt,
+    this.loyaltyPoints = 0,
+    this.totalOrders = 0,
+    this.totalSpent = 0,
+    this.favoriteProductIds = const [],
+    this.fcmToken,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  String get initials {
+    final parts = name.trim().split(' ');
+    if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    return name.isNotEmpty ? name[0].toUpperCase() : '?';
+  }
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'name': name,
+    'email': email,
+    'phone': phone,
+    'avatarUrl': avatarUrl,
+    'isActive': isActive,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'lastLoginAt': lastLoginAt?.millisecondsSinceEpoch,
+    'loyaltyPoints': loyaltyPoints,
+    'totalOrders': totalOrders,
+    'totalSpent': totalSpent,
+    'favoriteProductIds': favoriteProductIds,
+    'fcmToken': fcmToken,
+    'role': 'client',
+  };
+
+  factory ClientUser.fromMap(Map<String, dynamic> m) => ClientUser(
+    id: m['id'] as String? ?? '',
+    name: m['name'] as String? ?? 'Client',
+    email: m['email'] as String? ?? '',
+    phone: m['phone'] as String? ?? '',
+    avatarUrl: m['avatarUrl'] as String?,
+    isActive: m['isActive'] as bool? ?? true,
+    createdAt: m['createdAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['createdAt'] as int)
+        : DateTime.now(),
+    lastLoginAt: m['lastLoginAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['lastLoginAt'] as int)
+        : null,
+    loyaltyPoints: (m['loyaltyPoints'] as num?)?.toInt() ?? 0,
+    totalOrders: (m['totalOrders'] as num?)?.toInt() ?? 0,
+    totalSpent: (m['totalSpent'] as num?)?.toDouble() ?? 0,
+    favoriteProductIds: (m['favoriteProductIds'] as List?)?.cast<String>() ?? [],
+    fcmToken: m['fcmToken'] as String?,
+  );
+}
+
+// ── DeliveryAddress ────────────────────────────────────────────────────────
+
+class DeliveryAddress {
+  final String id;
+  String label;       // 'Maison', 'Bureau', 'Autre'
+  String address;     // adresse textuelle complète
+  String? details;    // informations complémentaires
+  double? latitude;
+  double? longitude;
+  bool isDefault;
+  DateTime createdAt;
+
+  DeliveryAddress({
+    required this.id,
+    required this.label,
+    required this.address,
+    this.details,
+    this.latitude,
+    this.longitude,
+    this.isDefault = false,
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  IconData get icon {
+    switch (label.toLowerCase()) {
+      case 'maison': return Icons.home_outlined;
+      case 'bureau': return Icons.business_outlined;
+      default: return Icons.location_on_outlined;
+    }
+  }
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'label': label,
+    'address': address,
+    'details': details,
+    'latitude': latitude,
+    'longitude': longitude,
+    'isDefault': isDefault,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+  };
+
+  factory DeliveryAddress.fromMap(Map<String, dynamic> m) => DeliveryAddress(
+    id: m['id'] as String? ?? '',
+    label: m['label'] as String? ?? 'Adresse',
+    address: m['address'] as String? ?? '',
+    details: m['details'] as String?,
+    latitude: (m['latitude'] as num?)?.toDouble(),
+    longitude: (m['longitude'] as num?)?.toDouble(),
+    isDefault: m['isDefault'] as bool? ?? false,
+    createdAt: m['createdAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['createdAt'] as int)
+        : DateTime.now(),
+  );
+}
+
+// ── CartItem ───────────────────────────────────────────────────────────────
+
+class CartItem {
+  final String productId;
+  final String productName;
+  final String? categoryName;
+  final double unitPrice;
+  int quantity;
+  String? comment;
+  String? imageUrl;
+
+  CartItem({
+    required this.productId,
+    required this.productName,
+    this.categoryName,
+    required this.unitPrice,
+    this.quantity = 1,
+    this.comment,
+    this.imageUrl,
+  });
+
+  double get totalPrice => unitPrice * quantity;
+
+  Map<String, dynamic> toMap() => {
+    'productId': productId,
+    'productName': productName,
+    'categoryName': categoryName,
+    'unitPrice': unitPrice,
+    'quantity': quantity,
+    'comment': comment,
+    'imageUrl': imageUrl,
+  };
+
+  factory CartItem.fromMap(Map<String, dynamic> m) => CartItem(
+    productId: m['productId'] as String? ?? '',
+    productName: m['productName'] as String? ?? '',
+    categoryName: m['categoryName'] as String?,
+    unitPrice: (m['unitPrice'] as num?)?.toDouble() ?? 0,
+    quantity: (m['quantity'] as num?)?.toInt() ?? 1,
+    comment: m['comment'] as String?,
+    imageUrl: m['imageUrl'] as String?,
+  );
+
+  CartItem copyWith({int? quantity, String? comment}) => CartItem(
+    productId: productId,
+    productName: productName,
+    categoryName: categoryName,
+    unitPrice: unitPrice,
+    quantity: quantity ?? this.quantity,
+    comment: comment ?? this.comment,
+    imageUrl: imageUrl,
+  );
+}
+
+// ── ClientOrder ────────────────────────────────────────────────────────────
+
+class ClientOrder {
+  final String id;
+  final String clientId;
+  final String clientName;
+  final String clientPhone;
+  final List<CartItem> items;
+  ClientOrderStatus status;
+  OrderType orderType;
+  DeliveryAddress? deliveryAddress;
+  ClientPaymentMethod paymentMethod;
+  ClientPaymentStatus paymentStatus;
+  double totalAmount;
+  double deliveryFee;
+  double depositAmount;    // acompte payé
+  double remainingAmount;  // reste à payer
+  String? notes;           // commentaire global
+  DateTime createdAt;
+  DateTime? updatedAt;
+  DateTime? estimatedDeliveryTime;
+  String? deliveryPersonName;
+  String? deliveryPersonPhone;
+  double? deliveryLat;
+  double? deliveryLng;
+  int loyaltyPointsEarned;
+  // Réf interne (lien avec commande cuisine dans collection orders)
+  String? internalOrderId;
+  String? orderNumber;     // numéro lisible ex: #1042
+
+  ClientOrder({
+    required this.id,
+    required this.clientId,
+    required this.clientName,
+    required this.clientPhone,
+    required this.items,
+    this.status = ClientOrderStatus.pending,
+    this.orderType = OrderType.delivery,
+    this.deliveryAddress,
+    this.paymentMethod = ClientPaymentMethod.cashOnDelivery,
+    this.paymentStatus = ClientPaymentStatus.pending,
+    required this.totalAmount,
+    this.deliveryFee = 0,
+    this.depositAmount = 0,
+    this.remainingAmount = 0,
+    this.notes,
+    DateTime? createdAt,
+    this.updatedAt,
+    this.estimatedDeliveryTime,
+    this.deliveryPersonName,
+    this.deliveryPersonPhone,
+    this.deliveryLat,
+    this.deliveryLng,
+    this.loyaltyPointsEarned = 0,
+    this.internalOrderId,
+    this.orderNumber,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  double get grandTotal => totalAmount + deliveryFee;
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'clientId': clientId,
+    'clientName': clientName,
+    'clientPhone': clientPhone,
+    'items': items.map((i) => i.toMap()).toList(),
+    'status': status.index,
+    'orderType': orderType.index,
+    'deliveryAddress': deliveryAddress?.toMap(),
+    'paymentMethod': paymentMethod.index,
+    'paymentStatus': paymentStatus.index,
+    'totalAmount': totalAmount,
+    'deliveryFee': deliveryFee,
+    'depositAmount': depositAmount,
+    'remainingAmount': remainingAmount,
+    'notes': notes,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'updatedAt': updatedAt?.millisecondsSinceEpoch,
+    'estimatedDeliveryTime': estimatedDeliveryTime?.millisecondsSinceEpoch,
+    'deliveryPersonName': deliveryPersonName,
+    'deliveryPersonPhone': deliveryPersonPhone,
+    'deliveryLat': deliveryLat,
+    'deliveryLng': deliveryLng,
+    'loyaltyPointsEarned': loyaltyPointsEarned,
+    'internalOrderId': internalOrderId,
+    'orderNumber': orderNumber,
+    'source': 'online',   // tag pour distinguer dans le tableau de bord
+  };
+
+  factory ClientOrder.fromMap(Map<String, dynamic> m) => ClientOrder(
+    id: m['id'] as String? ?? '',
+    clientId: m['clientId'] as String? ?? '',
+    clientName: m['clientName'] as String? ?? '',
+    clientPhone: m['clientPhone'] as String? ?? '',
+    items: (m['items'] as List?)
+        ?.map((i) => CartItem.fromMap(i as Map<String, dynamic>))
+        .toList() ?? [],
+    status: ClientOrderStatus.values[(m['status'] as num?)?.toInt() ?? 0],
+    orderType: OrderType.values[(m['orderType'] as num?)?.toInt() ?? 0],
+    deliveryAddress: m['deliveryAddress'] != null
+        ? DeliveryAddress.fromMap(m['deliveryAddress'] as Map<String, dynamic>)
+        : null,
+    paymentMethod: ClientPaymentMethod.values[(m['paymentMethod'] as num?)?.toInt() ?? 0],
+    paymentStatus: ClientPaymentStatus.values[(m['paymentStatus'] as num?)?.toInt() ?? 0],
+    totalAmount: (m['totalAmount'] as num?)?.toDouble() ?? 0,
+    deliveryFee: (m['deliveryFee'] as num?)?.toDouble() ?? 0,
+    depositAmount: (m['depositAmount'] as num?)?.toDouble() ?? 0,
+    remainingAmount: (m['remainingAmount'] as num?)?.toDouble() ?? 0,
+    notes: m['notes'] as String?,
+    createdAt: m['createdAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['createdAt'] as int)
+        : (m['createdAt'] is Timestamp
+            ? (m['createdAt'] as Timestamp).toDate()
+            : DateTime.now()),
+    updatedAt: m['updatedAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['updatedAt'] as int)
+        : null,
+    estimatedDeliveryTime: m['estimatedDeliveryTime'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['estimatedDeliveryTime'] as int)
+        : null,
+    deliveryPersonName: m['deliveryPersonName'] as String?,
+    deliveryPersonPhone: m['deliveryPersonPhone'] as String?,
+    deliveryLat: (m['deliveryLat'] as num?)?.toDouble(),
+    deliveryLng: (m['deliveryLng'] as num?)?.toDouble(),
+    loyaltyPointsEarned: (m['loyaltyPointsEarned'] as num?)?.toInt() ?? 0,
+    internalOrderId: m['internalOrderId'] as String?,
+    orderNumber: m['orderNumber'] as String?,
+  );
+}
+
+// ── LoyaltyTransaction ─────────────────────────────────────────────────────
+
+enum LoyaltyType { earn, redeem, bonus, expiry }
+
+class LoyaltyTransaction {
+  final String id;
+  final String clientId;
+  final LoyaltyType type;
+  final int points;
+  final String description;
+  final DateTime createdAt;
+  final String? orderId;
+
+  LoyaltyTransaction({
+    required this.id,
+    required this.clientId,
+    required this.type,
+    required this.points,
+    required this.description,
+    DateTime? createdAt,
+    this.orderId,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'clientId': clientId,
+    'type': type.index,
+    'points': points,
+    'description': description,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'orderId': orderId,
+  };
+
+  factory LoyaltyTransaction.fromMap(Map<String, dynamic> m) => LoyaltyTransaction(
+    id: m['id'] as String? ?? '',
+    clientId: m['clientId'] as String? ?? '',
+    type: LoyaltyType.values[(m['type'] as num?)?.toInt() ?? 0],
+    points: (m['points'] as num?)?.toInt() ?? 0,
+    description: m['description'] as String? ?? '',
+    createdAt: m['createdAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['createdAt'] as int)
+        : DateTime.now(),
+    orderId: m['orderId'] as String?,
+  );
+}
+
+// ── Promotion ──────────────────────────────────────────────────────────────
+
+enum PromotionType { percentage, fixedAmount, freeDelivery }
+
+class Promotion {
+  final String id;
+  String title;
+  String description;
+  String? imageUrl;
+  PromotionType type;
+  double value;        // % ou montant fixe
+  double? minOrder;    // commande minimum
+  DateTime? validUntil;
+  bool isActive;
+  String? code;        // code promo optionnel
+  List<String> applicableProductIds; // vide = applicable à tout
+
+  Promotion({
+    required this.id,
+    required this.title,
+    required this.description,
+    this.imageUrl,
+    required this.type,
+    required this.value,
+    this.minOrder,
+    this.validUntil,
+    this.isActive = true,
+    this.code,
+    this.applicableProductIds = const [],
+  });
+
+  bool get isExpired => validUntil != null && DateTime.now().isAfter(validUntil!);
+  bool get isValid => isActive && !isExpired;
+
+  String get valueLabel {
+    switch (type) {
+      case PromotionType.percentage:  return '-${value.toStringAsFixed(0)}%';
+      case PromotionType.fixedAmount: return '-${value.toStringAsFixed(0)} F';
+      case PromotionType.freeDelivery: return 'Livraison offerte';
+    }
+  }
+
+  double computeDiscount(double orderTotal) {
+    switch (type) {
+      case PromotionType.percentage:   return orderTotal * value / 100;
+      case PromotionType.fixedAmount:  return value;
+      case PromotionType.freeDelivery: return 0; // géré séparément
+    }
+  }
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'title': title,
+    'description': description,
+    'imageUrl': imageUrl,
+    'type': type.index,
+    'value': value,
+    'minOrder': minOrder,
+    'validUntil': validUntil?.millisecondsSinceEpoch,
+    'isActive': isActive,
+    'code': code,
+    'applicableProductIds': applicableProductIds,
+  };
+
+  factory Promotion.fromMap(Map<String, dynamic> m) => Promotion(
+    id: m['id'] as String? ?? '',
+    title: m['title'] as String? ?? '',
+    description: m['description'] as String? ?? '',
+    imageUrl: m['imageUrl'] as String?,
+    type: PromotionType.values[(m['type'] as num?)?.toInt() ?? 0],
+    value: (m['value'] as num?)?.toDouble() ?? 0,
+    minOrder: (m['minOrder'] as num?)?.toDouble(),
+    validUntil: m['validUntil'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['validUntil'] as int)
+        : null,
+    isActive: m['isActive'] as bool? ?? true,
+    code: m['code'] as String?,
+    applicableProductIds: (m['applicableProductIds'] as List?)?.cast<String>() ?? [],
+  );
+}
+
+// ── OnlineOrderSettings ────────────────────────────────────────────────────
+
+class OnlineOrderSettings {
+  bool isOnlineOrderEnabled;
+  double depositPercentage;     // 0-100
+  double? depositFixedAmount;   // si non null, prioritaire sur %
+  double deliveryFeeBase;       // frais de livraison de base
+  double? deliveryFeePerKm;     // frais par km supplémentaire
+  double maxDeliveryRadiusKm;   // rayon max livraison
+  double? restaurantLat;
+  double? restaurantLng;
+  double minimumOrderAmount;
+  int estimatedDeliveryMinutes;
+  int estimatedTakeawayMinutes;
+  int loyaltyPointsPerFCFA;     // 1 point pour X FCFA
+  int loyaltyPointValue;        // 1 point = X FCFA de réduction
+  String restaurantPhone;
+  String restaurantAddress;
+  List<String> deliveryZones;   // quartiers/zones desservis
+
+  OnlineOrderSettings({
+    this.isOnlineOrderEnabled = true,
+    this.depositPercentage = 30,
+    this.depositFixedAmount,
+    this.deliveryFeeBase = 1000,
+    this.deliveryFeePerKm,
+    this.maxDeliveryRadiusKm = 10,
+    this.restaurantLat,
+    this.restaurantLng,
+    this.minimumOrderAmount = 2000,
+    this.estimatedDeliveryMinutes = 45,
+    this.estimatedTakeawayMinutes = 20,
+    this.loyaltyPointsPerFCFA = 100,   // 1 point / 100 FCFA
+    this.loyaltyPointValue = 5,         // 1 point = 5 FCFA
+    this.restaurantPhone = '',
+    this.restaurantAddress = 'Yopougon Millionnaire',
+    this.deliveryZones = const [],
+  });
+
+  double computeDeposit(double total) {
+    if (depositFixedAmount != null) return depositFixedAmount!;
+    return total * depositPercentage / 100;
+  }
+
+  Map<String, dynamic> toMap() => {
+    'isOnlineOrderEnabled': isOnlineOrderEnabled,
+    'depositPercentage': depositPercentage,
+    'depositFixedAmount': depositFixedAmount,
+    'deliveryFeeBase': deliveryFeeBase,
+    'deliveryFeePerKm': deliveryFeePerKm,
+    'maxDeliveryRadiusKm': maxDeliveryRadiusKm,
+    'restaurantLat': restaurantLat,
+    'restaurantLng': restaurantLng,
+    'minimumOrderAmount': minimumOrderAmount,
+    'estimatedDeliveryMinutes': estimatedDeliveryMinutes,
+    'estimatedTakeawayMinutes': estimatedTakeawayMinutes,
+    'loyaltyPointsPerFCFA': loyaltyPointsPerFCFA,
+    'loyaltyPointValue': loyaltyPointValue,
+    'restaurantPhone': restaurantPhone,
+    'restaurantAddress': restaurantAddress,
+    'deliveryZones': deliveryZones,
+  };
+
+  factory OnlineOrderSettings.fromMap(Map<String, dynamic> m) => OnlineOrderSettings(
+    isOnlineOrderEnabled: m['isOnlineOrderEnabled'] as bool? ?? true,
+    depositPercentage: (m['depositPercentage'] as num?)?.toDouble() ?? 30,
+    depositFixedAmount: (m['depositFixedAmount'] as num?)?.toDouble(),
+    deliveryFeeBase: (m['deliveryFeeBase'] as num?)?.toDouble() ?? 1000,
+    deliveryFeePerKm: (m['deliveryFeePerKm'] as num?)?.toDouble(),
+    maxDeliveryRadiusKm: (m['maxDeliveryRadiusKm'] as num?)?.toDouble() ?? 10,
+    restaurantLat: (m['restaurantLat'] as num?)?.toDouble(),
+    restaurantLng: (m['restaurantLng'] as num?)?.toDouble(),
+    minimumOrderAmount: (m['minimumOrderAmount'] as num?)?.toDouble() ?? 2000,
+    estimatedDeliveryMinutes: (m['estimatedDeliveryMinutes'] as num?)?.toInt() ?? 45,
+    estimatedTakeawayMinutes: (m['estimatedTakeawayMinutes'] as num?)?.toInt() ?? 20,
+    loyaltyPointsPerFCFA: (m['loyaltyPointsPerFCFA'] as num?)?.toInt() ?? 100,
+    loyaltyPointValue: (m['loyaltyPointValue'] as num?)?.toInt() ?? 5,
+    restaurantPhone: m['restaurantPhone'] as String? ?? '',
+    restaurantAddress: m['restaurantAddress'] as String? ?? 'Yopougon Millionnaire',
+    deliveryZones: (m['deliveryZones'] as List?)?.cast<String>() ?? [],
+  );
+
+  static OnlineOrderSettings get defaults => OnlineOrderSettings();
+}

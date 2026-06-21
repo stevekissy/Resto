@@ -15,6 +15,7 @@ import 'stats/stats_screen.dart';
 import 'suppliers/supplier_screen.dart';
 import 'admin/products_admin_screen.dart';
 import 'admin/admin_management_screen.dart';
+import 'admin/online_orders_admin_screen.dart';
 import 'reservations/reservation_screen.dart';
 import 'accounting/accounting_screen.dart';
 import 'notifications/notification_screen.dart';
@@ -169,6 +170,10 @@ class _MainScreenState extends State<MainScreen> {
       _NavItem(
         icon: Icons.admin_panel_settings, label: 'Gestion Admins',
         screen: const AdminManagementScreen(), permissionKey: 'adminManagement',
+      ),
+      _NavItem(
+        icon: Icons.storefront_outlined, label: 'Commandes en ligne',
+        screen: const OnlineOrdersAdminScreen(), permissionKey: 'adminManagement',
       ),
     ];
 
