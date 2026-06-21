@@ -17,6 +17,8 @@ import 'admin/products_admin_screen.dart';
 import 'admin/admin_management_screen.dart';
 import 'reservations/reservation_screen.dart';
 import 'accounting/accounting_screen.dart';
+import 'notifications/notification_screen.dart';
+import '../services/notification_service.dart';
 import 'login_screen.dart';
 
 // ── Constantes de build — identifiant de version visible dans le drawer ──
@@ -82,6 +84,29 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final NotificationService _notifSvc = NotificationService();
+
+  @override
+  void initState() {
+    super.initState();
+    _notifSvc.addListener(_onNotifChange);
+    // Initialiser le service (charge les préférences persistées)
+    _notifSvc.init();
+    // Déverrouiller l'audio au premier geste utilisateur
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_notifSvc.isAudioUnlocked) {
+        _notifSvc.unlockAudio();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _notifSvc.removeListener(_onNotifChange);
+    super.dispose();
+  }
+
+  void _onNotifChange() => setState(() {});
 
   /// Retourne les items de navigation autorisés selon les permissions Firestore
   List<_NavItem> _getNavItems(AppProvider provider) {
@@ -138,6 +163,10 @@ class _MainScreenState extends State<MainScreen> {
         screen: const AccountingScreen(), permissionKey: 'accounting',
       ),
       _NavItem(
+        icon: Icons.notifications, label: 'Notifications',
+        screen: const NotificationScreen(), permissionKey: 'notifications',
+      ),
+      _NavItem(
         icon: Icons.admin_panel_settings, label: 'Gestion Admins',
         screen: const AdminManagementScreen(), permissionKey: 'adminManagement',
       ),
@@ -171,22 +200,44 @@ class _MainScreenState extends State<MainScreen> {
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
         actions: [
-          // Order counter badges
-          Stack(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.notifications_outlined),
-                onPressed: () => _showNotificationsPanel(context, provider),
-              ),
-              if (provider.pendingOrders.isNotEmpty || provider.lowStockItems.isNotEmpty)
-                Positioned(
-                  right: 8, top: 8,
-                  child: Container(
-                    width: 8, height: 8,
-                    decoration: const BoxDecoration(color: AppTheme.error, shape: BoxShape.circle),
+          // Badge notifications sonores
+          GestureDetector(
+            onTap: () {
+              // Déverrouiller l'audio à chaque interaction
+              _notifSvc.unlockAudio();
+              _showNotificationsPanel(context, provider);
+            },
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                IconButton(
+                  icon: Icon(
+                    _notifSvc.urgentActive
+                        ? Icons.notifications_active
+                        : Icons.notifications_outlined,
+                    color: _notifSvc.urgentActive ? AppTheme.error : Colors.white,
                   ),
+                  onPressed: () {
+                    _notifSvc.unlockAudio();
+                    _showNotificationsPanel(context, provider);
+                  },
                 ),
-            ],
+                if (_notifSvc.unreadCount > 0)
+                  Positioned(
+                    right: 6, top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: const BoxDecoration(color: AppTheme.error, shape: BoxShape.circle),
+                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                      child: Text(
+                        _notifSvc.unreadCount > 99 ? '99+' : '${_notifSvc.unreadCount}',
+                        style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
@@ -359,32 +410,102 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _showNotificationsPanel(BuildContext context, AppProvider provider) {
+    // Arrêter la boucle urgente si active
+    if (_notifSvc.urgentActive) _notifSvc.acknowledgeUrgent();
+
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.cardBg,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Notifications', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
-            const SizedBox(height: 16),
-            if (provider.pendingOrders.isNotEmpty)
-              _NotifTile(icon: Icons.hourglass_empty, title: '${provider.pendingOrders.length} commande(s) en attente', color: AppTheme.warning),
-            if (provider.outOfStockItems.isNotEmpty)
-              _NotifTile(icon: Icons.cancel, title: '${provider.outOfStockItems.length} produit(s) en rupture', color: AppTheme.error),
-            if (provider.lowStockItems.isNotEmpty)
-              _NotifTile(icon: Icons.warning, title: '${provider.lowStockItems.length} produit(s) à stock faible', color: AppTheme.warning),
-            if (provider.readyOrders.isNotEmpty)
-              _NotifTile(icon: Icons.check_circle, title: '${provider.readyOrders.length} commande(s) prête(s) à servir', color: AppTheme.success),
-            if (provider.pendingOrders.isEmpty && provider.outOfStockItems.isEmpty && provider.lowStockItems.isEmpty && provider.readyOrders.isEmpty)
-              const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('Aucune notification', style: TextStyle(color: AppTheme.textSecondary)))),
-          ],
-        ),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          final unread = _notifSvc.unreadNotifications;
+          return DraggableScrollableSheet(
+            initialChildSize: 0.55,
+            minChildSize: 0.3,
+            maxChildSize: 0.85,
+            expand: false,
+            builder: (_, scrollCtrl) => Column(
+              children: [
+                // Handle
+                Container(margin: const EdgeInsets.only(top: 12), width: 40, height: 4,
+                  decoration: BoxDecoration(color: const Color(0xFF2A2A5A), borderRadius: BorderRadius.circular(2))),
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Row(children: [
+                    const Icon(Icons.notifications, color: AppTheme.primary, size: 22),
+                    const SizedBox(width: 10),
+                    const Expanded(child: Text('Notifications', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18))),
+                    if (unread.isNotEmpty)
+                      TextButton(
+                        onPressed: () { _notifSvc.markAllRead(); setModalState(() {}); },
+                        child: const Text('Tout lire', style: TextStyle(color: AppTheme.success, fontSize: 12)),
+                      ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: AppTheme.error, borderRadius: BorderRadius.circular(10)),
+                      child: Text('${_notifSvc.unreadCount}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900)),
+                    ),
+                  ]),
+                ),
+                // État des alertes système
+                if (provider.pendingOrders.isNotEmpty || provider.outOfStockItems.isNotEmpty || provider.lowStockItems.isNotEmpty || provider.readyOrders.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    child: Column(children: [
+                      if (provider.pendingOrders.isNotEmpty)
+                        _NotifTile(icon: Icons.hourglass_empty, title: '${provider.pendingOrders.length} commande(s) en attente', color: AppTheme.warning),
+                      if (provider.outOfStockItems.isNotEmpty)
+                        _NotifTile(icon: Icons.cancel, title: '${provider.outOfStockItems.length} produit(s) en rupture', color: AppTheme.error),
+                      if (provider.lowStockItems.isNotEmpty)
+                        _NotifTile(icon: Icons.warning, title: '${provider.lowStockItems.length} produit(s) à stock faible', color: AppTheme.warning),
+                      if (provider.readyOrders.isNotEmpty)
+                        _NotifTile(icon: Icons.check_circle, title: '${provider.readyOrders.length} commande(s) prête(s) à servir', color: AppTheme.success),
+                      const Divider(color: Color(0xFF2A2A5A)),
+                    ]),
+                  ),
+                // Liste notifications récentes
+                Expanded(
+                  child: unread.isEmpty
+                      ? const Center(child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text('Aucune nouvelle notification', style: TextStyle(color: AppTheme.textSecondary)),
+                        ))
+                      : ListView.builder(
+                          controller: scrollCtrl,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          itemCount: unread.take(20).length,
+                          itemBuilder: (_, i) {
+                            final n = unread[i];
+                            return ListTile(
+                              leading: Text(n.event.icon, style: const TextStyle(fontSize: 20)),
+                              title: Text(n.message, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                              subtitle: Text(_timeAgo(n.dateTime), style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.check, color: AppTheme.success, size: 18),
+                                onPressed: () { _notifSvc.markRead(n.id); setModalState(() {}); },
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
+  }
+
+  String _timeAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 60)  return 'À l\'instant';
+    if (diff.inMinutes < 60)  return 'Il y a ${diff.inMinutes} min';
+    if (diff.inHours < 24)    return 'Il y a ${diff.inHours} h';
+    return '${dt.day.toString().padLeft(2,'0')}/${dt.month.toString().padLeft(2,'0')} ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
   }
 
   void _showProfileMenu(BuildContext context, AppProvider provider) {

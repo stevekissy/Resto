@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
 import '../services/print_service.dart';
+import '../services/notification_service.dart';
 
 class AppProvider extends ChangeNotifier {
   final _uuid = const Uuid();
@@ -618,13 +619,64 @@ class AppProvider extends ChangeNotifier {
       onError: (e) { debugPrint('[stream.products] ERREUR: $e'); },
       cancelOnError: false,
     );
+    // IDs des commandes déjà connues — pour ne déclencher le son que sur les nouvelles
+    final Set<String> _knownOrderIds = {};
     _subOrders = _firebase.streamOrders().listen(
-      (list) { _orders = List<Order>.from(list); notifyListeners(); },
+      (list) {
+        final newOrders = list.where((o) => !_knownOrderIds.contains(o.id)).toList();
+        for (final o in newOrders) {
+          _knownOrderIds.add(o.id);
+          // Ne pas sonner au premier chargement (liste déjà existante au démarrage)
+          if (_knownOrderIds.length > list.length - newOrders.length) {
+            if (o.isUrgent) {
+              NotificationService().trigger(
+                NotifEvent.commandeUrgente,
+                message: '🚨 Commande urgente #${o.orderNumber} — Table ${o.tableNumber}',
+              );
+            } else {
+              NotificationService().trigger(
+                NotifEvent.nouvelleCommande,
+                message: '🍽️ Nouvelle commande #${o.orderNumber} — Table ${o.tableNumber}',
+              );
+            }
+          }
+        }
+        // Commandes prêtes — sonner quand statut passe à ready
+        for (final o in list) {
+          final wasReady = _orders.any((old) => old.id == o.id && old.status == OrderStatus.ready);
+          if (!wasReady && o.status == OrderStatus.ready) {
+            NotificationService().trigger(
+              NotifEvent.commandePrete,
+              message: '✅ Commande #${o.orderNumber} prête à servir — Table ${o.tableNumber}',
+            );
+          }
+        }
+        _orders = List<Order>.from(list);
+        notifyListeners();
+      },
       onError: (e) { debugPrint('[stream.orders] ERREUR: $e'); },
       cancelOnError: false,
     );
     _subStock = _firebase.streamStock().listen(
-      (list) { _stockItems = list; notifyListeners(); },
+      (list) {
+        // Détecter les nouveaux articles en rupture ou stock faible
+        for (final item in list) {
+          final prev = _stockItems.firstWhere((s) => s.id == item.id, orElse: () => item);
+          if (!prev.isOut && item.isOut) {
+            NotificationService().trigger(
+              NotifEvent.ruptureStock,
+              message: '🚫 Rupture de stock : ${item.name}',
+            );
+          } else if (!prev.isLow && item.isLow && !item.isOut) {
+            NotificationService().trigger(
+              NotifEvent.stockFaible,
+              message: '⚠️ Stock faible : ${item.name} (${item.currentQuantity.toStringAsFixed(0)} ${item.unit})',
+            );
+          }
+        }
+        _stockItems = list;
+        notifyListeners();
+      },
       onError: (e) { debugPrint('[stream.stock] ERREUR: $e'); },
       cancelOnError: false,
     );
@@ -698,7 +750,19 @@ class AppProvider extends ChangeNotifier {
     );
 
     _subContracts = _firebase.streamContracts().listen(
-      (list) { _contracts = list; _refreshContractAlerts(); notifyListeners(); },
+      (list) {
+        // Détecter nouveaux contrats proches expiration
+        for (final c in list) {
+          final alreadyKnown = _contracts.any((old) => old.id == c.id);
+          if (!alreadyKnown && c.computedStatus == ContractStatus.bientotExpire) {
+            NotificationService().trigger(
+              NotifEvent.contratExpiration,
+              message: '📋 Contrat proche expiration : ${c.employeeName}',
+            );
+          }
+        }
+        _contracts = list; _refreshContractAlerts(); notifyListeners();
+      },
       onError: (e) { debugPrint('[stream.contracts] ERREUR: $e'); },
       cancelOnError: false,
     );
@@ -710,7 +774,20 @@ class AppProvider extends ChangeNotifier {
     );
 
     _subSalaries = _firebase.streamSalaries().listen(
-      (list) { _salaries = list; notifyListeners(); },
+      (list) {
+        // Détecter nouveaux salaires impayés
+        for (final sal in list) {
+          final alreadyKnown = _salaries.any((s) => s.id == sal.id);
+          if (!alreadyKnown && sal.paymentStatus == PaymentStatus.nonPaye) {
+            NotificationService().trigger(
+              NotifEvent.salaireAPayer,
+              message: '👥 Salaire à payer : ${sal.employeeName} — ${sal.netAPayer.toStringAsFixed(0)} F CFA',
+            );
+          }
+        }
+        _salaries = list;
+        notifyListeners();
+      },
       onError: (e) { debugPrint('[stream.salaries] ERREUR: $e'); },
       cancelOnError: false,
     );
@@ -723,6 +800,28 @@ class AppProvider extends ChangeNotifier {
 
     _subReservations = _firebase.streamReservations().listen(
       (list) {
+        // Détecter nouvelles réservations aujourd'hui / demain
+        final today = DateTime.now();
+        for (final r in list) {
+          final alreadyKnown = _reservations.any((old) => old.id == r.id);
+          if (!alreadyKnown) {
+            final d = r.dateEvenement;
+            if (d.year == today.year && d.month == today.month && d.day == today.day) {
+              NotificationService().trigger(
+                NotifEvent.reservationAujourdhui,
+                message: '📆 Réservation aujourd\'hui : ${r.nomClient} — ${r.heureDebut}',
+              );
+            } else {
+              final tomorrow = today.add(const Duration(days: 1));
+              if (d.year == tomorrow.year && d.month == tomorrow.month && d.day == tomorrow.day) {
+                NotificationService().trigger(
+                  NotifEvent.reservationDemain,
+                  message: '🗓️ Réservation demain : ${r.nomClient} — ${r.typeEvenement.label}',
+                );
+              }
+            }
+          }
+        }
         _reservations = list;
         notifyListeners();
         _generateReservationAlerts();
@@ -1072,6 +1171,11 @@ class AppProvider extends ChangeNotifier {
       tableNumber: order.tableNumber,
       items: order.items.map((i) => i.toMap()).toList(),
       serverName: order.serverName,
+    );
+    // Son paiement enregistré
+    NotificationService().trigger(
+      NotifEvent.paiementEnregistre,
+      message: '💰 Paiement enregistré : ${amountDue.toStringAsFixed(0)} F CFA — Commande #${order.orderNumber} ($paymentMethod)',
     );
     // Le stream Firestore met _orders à jour automatiquement
   }
@@ -1783,8 +1887,13 @@ class AppProvider extends ChangeNotifier {
   // ── RÉSERVATIONS CRUD ────────────────────────────────────────────────────
 
   Future<void> addReservation(Reservation r) async {
-    try { await _firebase.addReservation(r); }
-    catch (e) { debugPrint('[addReservation] $e'); rethrow; }
+    try {
+      await _firebase.addReservation(r);
+      NotificationService().trigger(
+        NotifEvent.nouvelleReservation,
+        message: '📅 Nouvelle réservation : ${r.nomClient} — ${r.typeEvenement.label} le ${r.dateEvenement.day}/${r.dateEvenement.month}/${r.dateEvenement.year}',
+      );
+    } catch (e) { debugPrint('[addReservation] $e'); rethrow; }
   }
 
   Future<void> updateReservation(Reservation r) async {
@@ -1800,8 +1909,13 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> addReservationPayment(ReservationPayment p) async {
-    try { await _firebase.addReservationPayment(p); }
-    catch (e) { debugPrint('[addReservationPayment] $e'); rethrow; }
+    try {
+      await _firebase.addReservationPayment(p);
+      NotificationService().trigger(
+        NotifEvent.paiementEnregistre,
+        message: '💰 Paiement réservation : ${p.montant.toStringAsFixed(0)} F CFA — ${p.nomClient}',
+      );
+    } catch (e) { debugPrint('[addReservationPayment] $e'); rethrow; }
   }
 
   Future<void> markReservationAlertRead(String id) async {
