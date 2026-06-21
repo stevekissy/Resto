@@ -1840,6 +1840,74 @@ class FirebaseService {
       await _db.collection('contract_alerts').doc(id).set({...alert.toMap(), 'id': id});
     }
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  GESTION SALAIRES — employee_salaries / salary_payments / payroll_reports
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Stream<List<EmployeeSalary>> streamSalaries() =>
+      _db.collection('employee_salaries')
+          .orderBy('annee', descending: true)
+          .snapshots()
+          .map((s) => s.docs.map((d) => EmployeeSalary.fromMap(d.data(), d.id)).toList());
+
+  Stream<List<EmployeeSalary>> streamSalariesByPeriod(int annee, int mois) =>
+      _db.collection('employee_salaries')
+          .where('annee', isEqualTo: annee)
+          .where('mois', isEqualTo: mois)
+          .snapshots()
+          .map((s) => s.docs.map((d) => EmployeeSalary.fromMap(d.data(), d.id)).toList());
+
+  Future<void> addSalary(EmployeeSalary s) async {
+    final id = _db.collection('employee_salaries').doc().id;
+    await _db.collection('employee_salaries').doc(id).set({...s.toMap(), 'id': id});
+  }
+
+  Future<void> updateSalary(EmployeeSalary s) =>
+      _db.collection('employee_salaries').doc(s.id).update(s.toMap());
+
+  Future<void> deleteSalary(String id) =>
+      _db.collection('employee_salaries').doc(id).delete();
+
+  // ── Paiements ────────────────────────────────────────────────────────────
+  Stream<List<SalaryPayment>> streamSalaryPayments(String salaryId) =>
+      _db.collection('salary_payments')
+          .where('salaryId', isEqualTo: salaryId)
+          .snapshots()
+          .map((s) => s.docs.map((d) => SalaryPayment.fromMap(d.data(), d.id)).toList());
+
+  Stream<List<SalaryPayment>> streamAllPayments() =>
+      _db.collection('salary_payments')
+          .orderBy('date', descending: true)
+          .snapshots()
+          .map((s) => s.docs.map((d) => SalaryPayment.fromMap(d.data(), d.id)).toList());
+
+  Future<void> addSalaryPayment(SalaryPayment p) async {
+    final id = _db.collection('salary_payments').doc().id;
+    await _db.collection('salary_payments').doc(id).set({...p.toMap(), 'id': id});
+  }
+
+  // ── Rapports de paie ─────────────────────────────────────────────────────
+  Future<void> savePayrollReport(PayrollReport r) async {
+    // Upsert par période (annee+mois)
+    final existing = await _db.collection('payroll_reports')
+        .where('annee', isEqualTo: r.annee)
+        .where('mois', isEqualTo: r.mois)
+        .get();
+    if (existing.docs.isNotEmpty) {
+      await _db.collection('payroll_reports').doc(existing.docs.first.id)
+          .update(r.toMap());
+    } else {
+      final id = _db.collection('payroll_reports').doc().id;
+      await _db.collection('payroll_reports').doc(id).set({...r.toMap(), 'id': id});
+    }
+  }
+
+  Stream<List<PayrollReport>> streamPayrollReports() =>
+      _db.collection('payroll_reports')
+          .orderBy('annee', descending: true)
+          .snapshots()
+          .map((s) => s.docs.map((d) => PayrollReport.fromMap(d.data(), d.id)).toList());
 }
 
 // ── Helpers privés pour les transactions stock ─────────────────────────────

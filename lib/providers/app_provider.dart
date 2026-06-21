@@ -36,6 +36,8 @@ class AppProvider extends ChangeNotifier {
   StreamSubscription? _subIncomingCall;
   StreamSubscription? _subContracts;
   StreamSubscription? _subContractAlerts;
+  StreamSubscription? _subSalaries;
+  StreamSubscription? _subSalaryPayments;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
@@ -153,6 +155,21 @@ class AppProvider extends ChangeNotifier {
   List<ContractAlert> _contractAlerts = [];
   List<ContractAlert> get contractAlerts => _contractAlerts;
   int get unreadContractAlertsCount => _contractAlerts.where((a) => !a.isRead).length;
+
+  // ── Salaires ─────────────────────────────────────────────────────────
+  List<EmployeeSalary> _salaries = [];
+  List<EmployeeSalary> get salaries => _salaries;
+  List<SalaryPayment>  _salaryPayments = [];
+  List<SalaryPayment>  get salaryPayments => _salaryPayments;
+
+  List<EmployeeSalary> salariesForPeriod(int annee, int mois) =>
+      _salaries.where((s) => s.annee == annee && s.mois == mois).toList();
+
+  List<EmployeeSalary> salariesForEmployee(String employeeId) =>
+      _salaries.where((s) => s.employeeId == employeeId).toList();
+
+  List<SalaryPayment> paymentsForSalary(String salaryId) =>
+      _salaryPayments.where((p) => p.salaryId == salaryId).toList();
 
   // ── Appel entrant ────────────────────────────────────────────────────
   CallSession? _incomingCall;
@@ -650,6 +667,18 @@ class AppProvider extends ChangeNotifier {
       cancelOnError: false,
     );
 
+    _subSalaries = _firebase.streamSalaries().listen(
+      (list) { _salaries = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.salaries] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
+    _subSalaryPayments = _firebase.streamAllPayments().listen(
+      (list) { _salaryPayments = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.salaryPayments] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
     // Stream appels entrants (pour l'utilisateur connecté)
     final uid = _currentUser?.id;
     if (uid != null) {
@@ -681,6 +710,8 @@ class AppProvider extends ChangeNotifier {
     _subIncomingCall?.cancel();
     _subContracts?.cancel();
     _subContractAlerts?.cancel();
+    _subSalaries?.cancel();
+    _subSalaryPayments?.cancel();
   }
 
   /// Déconnexion complète : signOut Firebase + nettoyage local.
@@ -1617,6 +1648,69 @@ class AppProvider extends ChangeNotifier {
         _firebase.upsertContractAlert(alert).catchError((_) {});
       }
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  SALAIRES — CRUD + PAIEMENT
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Future<void> addSalary(EmployeeSalary s) => _firebase.addSalary(s);
+
+  Future<void> updateSalary(EmployeeSalary s) => _firebase.updateSalary(s);
+
+  Future<void> deleteSalary(String id) => _firebase.deleteSalary(id);
+
+  /// Enregistre un paiement (total ou partiel) et met à jour la fiche salaire.
+  Future<void> paySalary({
+    required EmployeeSalary salary,
+    required double montant,
+    required PaymentMode mode,
+    String note = '',
+  }) async {
+    final payment = SalaryPayment(
+      id: '',
+      salaryId: salary.id,
+      employeeId: salary.employeeId,
+      employeeName: salary.employeeName,
+      periode: salary.periode,
+      montant: montant,
+      mode: mode,
+      date: DateTime.now(),
+      responsable: currentUser?.name ?? 'Inconnu',
+      note: note,
+    );
+    await _firebase.addSalaryPayment(payment);
+
+    final totalPaye = salary.montantPaye + montant;
+    salary.montantPaye = totalPaye;
+    salary.modePaiement = mode;
+    salary.datePaiement = DateTime.now();
+    if (totalPaye >= salary.netAPayer) {
+      salary.paymentStatus = PaymentStatus.paye;
+    } else if (totalPaye > 0) {
+      salary.paymentStatus = PaymentStatus.partiel;
+    }
+    await _firebase.updateSalary(salary);
+  }
+
+  /// Génère (ou met à jour) le rapport de paie pour un mois donné.
+  Future<void> generatePayrollReport(int annee, int mois) async {
+    final list = salariesForPeriod(annee, mois);
+    if (list.isEmpty) return;
+    final periodeStr = list.first.periode;
+    final report = PayrollReport(
+      id: '',
+      periode: periodeStr,
+      annee: annee,
+      mois: mois,
+      totalEmployes: list.length,
+      totalBrut: list.fold(0, (s, e) => s + e.brut),
+      totalPrimes: list.fold(0, (s, e) => s + e.primes),
+      totalRetenues: list.fold(0, (s, e) => s + e.totalRetenues),
+      totalNet: list.fold(0, (s, e) => s + e.netAPayer),
+      totalPaye: list.fold(0, (s, e) => s + e.montantPaye),
+    );
+    await _firebase.savePayrollReport(report);
   }
 
   @override

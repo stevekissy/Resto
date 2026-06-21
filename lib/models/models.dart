@@ -1401,3 +1401,291 @@ class ContractAlert {
         createdAt:    DateTime.tryParse(m['createdAt'] as String? ?? '') ?? DateTime.now(),
       );
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  GESTION SALAIRES
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Statut de paiement ────────────────────────────────────────────────────────
+enum PaymentStatus { nonPaye, partiel, paye }
+
+extension PaymentStatusX on PaymentStatus {
+  String get label {
+    switch (this) {
+      case PaymentStatus.nonPaye:  return 'Non payé';
+      case PaymentStatus.partiel:  return 'Partiel';
+      case PaymentStatus.paye:     return 'Payé';
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case PaymentStatus.nonPaye:  return const Color(0xFFB71C1C);
+      case PaymentStatus.partiel:  return const Color(0xFFE65100);
+      case PaymentStatus.paye:     return const Color(0xFF2E7D32);
+    }
+  }
+
+  static PaymentStatus fromString(String s) {
+    switch (s) {
+      case 'partiel': return PaymentStatus.partiel;
+      case 'paye':    return PaymentStatus.paye;
+      default:        return PaymentStatus.nonPaye;
+    }
+  }
+}
+
+// ── Mode de paiement ─────────────────────────────────────────────────────────
+enum PaymentMode { especes, mobile, virement, cheque }
+
+extension PaymentModeX on PaymentMode {
+  String get label {
+    switch (this) {
+      case PaymentMode.especes:  return 'Espèces';
+      case PaymentMode.mobile:   return 'Mobile Money';
+      case PaymentMode.virement: return 'Virement';
+      case PaymentMode.cheque:   return 'Chèque';
+    }
+  }
+
+  static PaymentMode fromString(String s) {
+    switch (s) {
+      case 'mobile':   return PaymentMode.mobile;
+      case 'virement': return PaymentMode.virement;
+      case 'cheque':   return PaymentMode.cheque;
+      default:         return PaymentMode.especes;
+    }
+  }
+}
+
+// ── Fiche de salaire mensuelle ────────────────────────────────────────────────
+class EmployeeSalary {
+  final String id;
+  final String employeeId;
+  final String employeeName;
+  final String poste;
+  final String matricule;
+  // Période (ex: "Juin 2025")
+  final String periode;
+  final int annee;
+  final int mois;
+  // Éléments de salaire
+  double salaryBase;
+  double heuresSup;       // Montant heures supplémentaires
+  double primes;
+  double indemnites;
+  // Retenues
+  double cnps;
+  double its;
+  double autresRetenues;
+  double avances;
+  // Paiement
+  PaymentStatus paymentStatus;
+  double montantPaye;
+  DateTime? datePaiement;
+  PaymentMode modePaiement;
+  String commentaire;
+  DateTime createdAt;
+  String createdBy;
+
+  EmployeeSalary({
+    required this.id,
+    required this.employeeId,
+    required this.employeeName,
+    required this.poste,
+    this.matricule = '',
+    required this.periode,
+    required this.annee,
+    required this.mois,
+    required this.salaryBase,
+    this.heuresSup = 0,
+    this.primes = 0,
+    this.indemnites = 0,
+    this.cnps = 0,
+    this.its = 0,
+    this.autresRetenues = 0,
+    this.avances = 0,
+    this.paymentStatus = PaymentStatus.nonPaye,
+    this.montantPaye = 0,
+    this.datePaiement,
+    this.modePaiement = PaymentMode.especes,
+    this.commentaire = '',
+    DateTime? createdAt,
+    this.createdBy = '',
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  // ── Calculs ─────────────────────────────────────────────────────────────────
+  double get brut => salaryBase + heuresSup + primes + indemnites;
+  double get totalRetenues => cnps + its + autresRetenues + avances;
+  double get netAPayer => brut - totalRetenues;
+  double get resteAPayer => netAPayer - montantPaye;
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'employeeId': employeeId,
+    'employeeName': employeeName,
+    'poste': poste,
+    'matricule': matricule,
+    'periode': periode,
+    'annee': annee,
+    'mois': mois,
+    'salaryBase': salaryBase,
+    'heuresSup': heuresSup,
+    'primes': primes,
+    'indemnites': indemnites,
+    'cnps': cnps,
+    'its': its,
+    'autresRetenues': autresRetenues,
+    'avances': avances,
+    'paymentStatus': paymentStatus.name,
+    'montantPaye': montantPaye,
+    'datePaiement': datePaiement?.toIso8601String(),
+    'modePaiement': modePaiement.name,
+    'commentaire': commentaire,
+    'createdAt': createdAt.toIso8601String(),
+    'createdBy': createdBy,
+  };
+
+  factory EmployeeSalary.fromMap(Map<String, dynamic> m, String docId) =>
+      EmployeeSalary(
+        id:            docId,
+        employeeId:    m['employeeId']    as String? ?? '',
+        employeeName:  m['employeeName']  as String? ?? '',
+        poste:         m['poste']         as String? ?? '',
+        matricule:     m['matricule']     as String? ?? '',
+        periode:       m['periode']       as String? ?? '',
+        annee:         (m['annee']        as num?)?.toInt() ?? DateTime.now().year,
+        mois:          (m['mois']         as num?)?.toInt() ?? DateTime.now().month,
+        salaryBase:    (m['salaryBase']   as num?)?.toDouble() ?? 0,
+        heuresSup:     (m['heuresSup']    as num?)?.toDouble() ?? 0,
+        primes:        (m['primes']       as num?)?.toDouble() ?? 0,
+        indemnites:    (m['indemnites']   as num?)?.toDouble() ?? 0,
+        cnps:          (m['cnps']         as num?)?.toDouble() ?? 0,
+        its:           (m['its']          as num?)?.toDouble() ?? 0,
+        autresRetenues:(m['autresRetenues'] as num?)?.toDouble() ?? 0,
+        avances:       (m['avances']      as num?)?.toDouble() ?? 0,
+        paymentStatus: PaymentStatusX.fromString(m['paymentStatus'] as String? ?? 'nonPaye'),
+        montantPaye:   (m['montantPaye']  as num?)?.toDouble() ?? 0,
+        datePaiement:  m['datePaiement'] != null
+            ? DateTime.tryParse(m['datePaiement'] as String)
+            : null,
+        modePaiement:  PaymentModeX.fromString(m['modePaiement'] as String? ?? 'especes'),
+        commentaire:   m['commentaire']   as String? ?? '',
+        createdAt:     DateTime.tryParse(m['createdAt'] as String? ?? '') ?? DateTime.now(),
+        createdBy:     m['createdBy']     as String? ?? '',
+      );
+}
+
+// ── Paiement salaire (historique) ─────────────────────────────────────────────
+class SalaryPayment {
+  final String id;
+  final String salaryId;
+  final String employeeId;
+  final String employeeName;
+  final String periode;
+  final double montant;
+  final PaymentMode mode;
+  final DateTime date;
+  final String responsable;
+  final String note;
+
+  SalaryPayment({
+    required this.id,
+    required this.salaryId,
+    required this.employeeId,
+    required this.employeeName,
+    required this.periode,
+    required this.montant,
+    required this.mode,
+    required this.date,
+    this.responsable = '',
+    this.note = '',
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'salaryId': salaryId,
+    'employeeId': employeeId,
+    'employeeName': employeeName,
+    'periode': periode,
+    'montant': montant,
+    'mode': mode.name,
+    'date': date.toIso8601String(),
+    'responsable': responsable,
+    'note': note,
+  };
+
+  factory SalaryPayment.fromMap(Map<String, dynamic> m, String docId) =>
+      SalaryPayment(
+        id:           docId,
+        salaryId:     m['salaryId']     as String? ?? '',
+        employeeId:   m['employeeId']   as String? ?? '',
+        employeeName: m['employeeName'] as String? ?? '',
+        periode:      m['periode']      as String? ?? '',
+        montant:      (m['montant']     as num?)?.toDouble() ?? 0,
+        mode:         PaymentModeX.fromString(m['mode'] as String? ?? 'especes'),
+        date:         DateTime.tryParse(m['date'] as String? ?? '') ?? DateTime.now(),
+        responsable:  m['responsable']  as String? ?? '',
+        note:         m['note']         as String? ?? '',
+      );
+}
+
+// ── Rapport de paie mensuel ───────────────────────────────────────────────────
+class PayrollReport {
+  final String id;
+  final String periode;
+  final int annee;
+  final int mois;
+  final int totalEmployes;
+  final double totalBrut;
+  final double totalPrimes;
+  final double totalRetenues;
+  final double totalNet;
+  final double totalPaye;
+  final DateTime generatedAt;
+
+  PayrollReport({
+    required this.id,
+    required this.periode,
+    required this.annee,
+    required this.mois,
+    required this.totalEmployes,
+    required this.totalBrut,
+    required this.totalPrimes,
+    required this.totalRetenues,
+    required this.totalNet,
+    required this.totalPaye,
+    DateTime? generatedAt,
+  }) : generatedAt = generatedAt ?? DateTime.now();
+
+  double get resteAPayer => totalNet - totalPaye;
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'periode': periode,
+    'annee': annee,
+    'mois': mois,
+    'totalEmployes': totalEmployes,
+    'totalBrut': totalBrut,
+    'totalPrimes': totalPrimes,
+    'totalRetenues': totalRetenues,
+    'totalNet': totalNet,
+    'totalPaye': totalPaye,
+    'generatedAt': generatedAt.toIso8601String(),
+  };
+
+  factory PayrollReport.fromMap(Map<String, dynamic> m, String docId) =>
+      PayrollReport(
+        id:            docId,
+        periode:       m['periode']       as String? ?? '',
+        annee:         (m['annee']        as num?)?.toInt() ?? DateTime.now().year,
+        mois:          (m['mois']         as num?)?.toInt() ?? DateTime.now().month,
+        totalEmployes: (m['totalEmployes'] as num?)?.toInt() ?? 0,
+        totalBrut:     (m['totalBrut']    as num?)?.toDouble() ?? 0,
+        totalPrimes:   (m['totalPrimes']  as num?)?.toDouble() ?? 0,
+        totalRetenues: (m['totalRetenues'] as num?)?.toDouble() ?? 0,
+        totalNet:      (m['totalNet']     as num?)?.toDouble() ?? 0,
+        totalPaye:     (m['totalPaye']    as num?)?.toDouble() ?? 0,
+        generatedAt:   DateTime.tryParse(m['generatedAt'] as String? ?? '') ?? DateTime.now(),
+      );
+}

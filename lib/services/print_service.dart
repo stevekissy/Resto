@@ -1006,6 +1006,325 @@ $prtBtn
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  //  FICHE DE PAIE — PDF A4 identique au modèle Restaurant Sankadiokro
+  //  Appelé depuis salary_screen.dart via PrintService().printPayslip(salary: s)
+  // ─────────────────────────────────────────────────────────────────────
+  void printPayslip({required EmployeeSalary salary}) {
+    final html = _buildPayslipHtml(salary: salary);
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    } else {
+      if (kDebugMode) debugPrint('[PrintService] Mobile: fiche de paie ${salary.employeeName} ${salary.periode}');
+    }
+  }
+
+  /// Construit le HTML A4 de la fiche de paie.
+  String _buildPayslipHtml({required EmployeeSalary salary}) {
+    final logo     = _logoBase64();
+    final fmt      = NumberFormat('#,###', 'fr_FR');
+    final dateFmt  = DateFormat('dd/MM/yyyy');
+    final now      = DateTime.now();
+    final printedAt = DateFormat('dd/MM/yyyy HH:mm').format(now);
+
+    final name    = _escape(salary.employeeName);
+    final poste   = _escape(salary.poste.isNotEmpty  ? salary.poste   : '—');
+    final matricule = _escape(salary.matricule.isNotEmpty ? salary.matricule : '—');
+    final periode = _escape(salary.periode);
+
+    // ── Lignes gains ─────────────────────────────────────────────────────
+    String gainsRows = '';
+    void addGainRow(String label, double base, double taux, double montant) {
+      if (montant <= 0) return;
+      gainsRows += '''
+        <tr>
+          <td class="col-desig">${_escape(label)}</td>
+          <td class="col-base">${fmt.format(base)}</td>
+          <td class="col-taux">${taux > 0 ? '${taux.toStringAsFixed(1)}%' : '—'}</td>
+          <td class="col-mont">${fmt.format(montant)}</td>
+        </tr>''';
+    }
+    addGainRow('Salaire de base',        salary.salaryBase, 100.0, salary.salaryBase);
+    addGainRow('Heures supplémentaires', salary.heuresSup,  0,     salary.heuresSup);
+    addGainRow('Primes',                 salary.primes,     0,     salary.primes);
+    addGainRow('Indemnités',             salary.indemnites, 0,     salary.indemnites);
+
+    // ── Lignes retenues ─────────────────────────────────────────────────
+    String retenuesRows = '';
+    void addRetenueRow(String label, double taux, double montant) {
+      if (montant <= 0) return;
+      retenuesRows += '''
+        <tr>
+          <td class="col-desig">${_escape(label)}</td>
+          <td class="col-base">—</td>
+          <td class="col-taux">${taux > 0 ? '${taux.toStringAsFixed(2)}%' : '—'}</td>
+          <td class="col-mont ret-neg">${fmt.format(montant)}</td>
+        </tr>''';
+    }
+    addRetenueRow('CNPS (Cotisation sociale)',    3.2,  salary.cnps);
+    addRetenueRow('ITS (Impôt sur traitement)',   0,    salary.its);
+    addRetenueRow('Autres retenues',              0,    salary.autresRetenues);
+    addRetenueRow('Avances sur salaire',          0,    salary.avances);
+
+    // ── Statut paiement ──────────────────────────────────────────────────
+    final stHex  = _payStatusHex(salary.paymentStatus);
+    final stLabel = salary.paymentStatus.label.toUpperCase();
+    final datePaie = salary.datePaiement != null
+        ? dateFmt.format(salary.datePaiement!)
+        : '—';
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<title>Fiche de Paie — $name — $periode</title>
+<style>
+  @page { size: A4; margin: 14mm 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; background: #fff; }
+  .page { width: 100%; }
+
+  /* ── EN-TÊTE ── */
+  .header-wrap {
+    display: flex; align-items: flex-start;
+    border-bottom: 3px double #111; padding-bottom: 10px; margin-bottom: 12px;
+  }
+  .logo-wrap { flex-shrink: 0; margin-right: 12px; }
+  .logo-img  { width: 62px; height: 62px; object-fit: contain; }
+  .company   { flex: 1; }
+  .co-name   { font-size: 17px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #0D47A1; }
+  .co-sub    { font-size: 9.5px; color: #555; font-style: italic; margin-top: 2px; }
+  .co-addr   { font-size: 9px; color: #333; margin-top: 4px; line-height: 1.6; }
+  .doc-title-wrap { text-align: right; }
+  .doc-title {
+    font-size: 14px; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 1.5px; color: #0D47A1;
+    border: 2px solid #0D47A1; padding: 5px 16px; border-radius: 4px;
+    display: inline-block;
+  }
+  .doc-periode { font-size: 10px; color: #555; margin-top: 5px; font-weight: bold; }
+  .doc-printed { font-size: 8.5px; color: #999; margin-top: 3px; }
+
+  /* ── INFOS EMPLOYÉ ── */
+  .emp-box {
+    background: #F4F6FB; border: 1px solid #dde2f0;
+    border-radius: 6px; padding: 9px 14px; margin-bottom: 12px;
+    display: flex; gap: 24px; flex-wrap: wrap;
+  }
+  .emp-col { flex: 1; min-width: 140px; }
+  .emp-label { font-size: 8.5px; color: #666; text-transform: uppercase; letter-spacing: 0.8px; }
+  .emp-value { font-size: 11.5px; font-weight: bold; color: #111; margin-top: 1px; }
+
+  /* ── TABLEAU SALAIRE ── */
+  .sal-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+  .sal-table thead tr { background: #0D47A1; color: #fff; }
+  .sal-table thead th { padding: 6px 8px; font-size: 10px; font-weight: bold; text-align: left; text-transform: uppercase; letter-spacing: 0.5px; }
+  .sal-table tbody tr:nth-child(even) { background: #F8F9FF; }
+  .sal-table tbody td { padding: 5px 8px; font-size: 10.5px; border-bottom: 1px solid #e8ecf5; }
+  .col-desig { width: 44%; }
+  .col-base  { width: 18%; text-align: right; }
+  .col-taux  { width: 14%; text-align: center; }
+  .col-mont  { width: 24%; text-align: right; font-weight: bold; }
+  .ret-neg   { color: #B71C1C; }
+  .section-hdr td {
+    background: #E8EAF6; font-size: 9px; font-weight: bold;
+    letter-spacing: 1.1px; color: #3949AB;
+    text-transform: uppercase; padding: 4px 8px;
+  }
+  .total-row td { background: #fff3e0; font-weight: bold; font-size: 11px; padding: 5px 8px; }
+  .total-row .col-mont { color: #E65100; }
+
+  /* ── NET À PAYER ── */
+  .net-box {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #0D47A1; color: #fff;
+    padding: 10px 16px; border-radius: 6px; margin: 10px 0;
+  }
+  .net-label { font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
+  .net-amount { font-size: 20px; font-weight: bold; letter-spacing: 0.5px; }
+
+  /* ── PAIEMENT ── */
+  .pay-row {
+    display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .pay-chip {
+    flex: 1; min-width: 100px;
+    background: #F4F6FB; border: 1px solid #dde2f0;
+    border-radius: 6px; padding: 7px 12px; text-align: center;
+  }
+  .pay-chip-label { font-size: 8.5px; color: #666; text-transform: uppercase; letter-spacing: 0.7px; }
+  .pay-chip-value { font-size: 12px; font-weight: bold; color: #111; margin-top: 2px; }
+  .status-badge {
+    display: inline-block; padding: 3px 14px; border-radius: 12px;
+    font-size: 10px; font-weight: bold; letter-spacing: 1px; color: #fff;
+    background: $stHex;
+  }
+
+  /* ── SIGNATURES ── */
+  .sig-section { margin-top: 24px; border-top: 1px dashed #bbb; padding-top: 14px; }
+  .sig-row { display: flex; gap: 24px; }
+  .sig-block { flex: 1; text-align: center; }
+  .sig-title { font-size: 9.5px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #333; margin-bottom: 48px; }
+  .sig-line  { border-top: 1px solid #111; padding-top: 4px; font-size: 9px; color: #555; }
+
+  /* ── PIED DE PAGE ── */
+  .footer { text-align: center; margin-top: 18px; font-size: 8px; color: #999; border-top: 1px solid #eee; padding-top: 6px; }
+
+  /* ── BOUTON ── */
+  .print-btn { text-align: center; margin-top: 16px; }
+
+  @media screen {
+    body { background: #ECEFF1; display: flex; justify-content: center; padding: 24px; }
+    .page { background: #fff; max-width: 210mm; box-shadow: 0 4px 24px rgba(0,0,0,0.15); padding: 20px 24px; }
+  }
+  @media print {
+    body { background: #fff; }
+    .print-btn { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- EN-TÊTE -->
+  <div class="header-wrap">
+    <div class="logo-wrap">
+      <img src="$logo" alt="Logo" class="logo-img" onerror="this.style.display='none'" />
+    </div>
+    <div class="company">
+      <div class="co-name">Restaurant Sankadiokro</div>
+      <div class="co-sub">Cuisine Africaine &amp; Ivoirienne</div>
+      <div class="co-addr">
+        &#128205; Yopougon Millionnaire, Abidjan<br/>
+        &#9993; restaurantsankadiokro@gmail.com &nbsp;|&nbsp; &#128222; 07 07 04 29 47
+      </div>
+    </div>
+    <div class="doc-title-wrap">
+      <div class="doc-title">Fiche de Paie</div>
+      <div class="doc-periode">Période : $periode</div>
+      <div class="doc-printed">Imprimé le $printedAt</div>
+    </div>
+  </div>
+
+  <!-- INFOS EMPLOYÉ -->
+  <div class="emp-box">
+    <div class="emp-col">
+      <div class="emp-label">Nom &amp; Prénoms</div>
+      <div class="emp-value">$name</div>
+    </div>
+    <div class="emp-col">
+      <div class="emp-label">Poste</div>
+      <div class="emp-value">$poste</div>
+    </div>
+    <div class="emp-col">
+      <div class="emp-label">Matricule</div>
+      <div class="emp-value">$matricule</div>
+    </div>
+    <div class="emp-col">
+      <div class="emp-label">Période</div>
+      <div class="emp-value">$periode</div>
+    </div>
+  </div>
+
+  <!-- TABLEAU DÉSIGNATION / BASE / TAUX / MONTANT -->
+  <table class="sal-table">
+    <thead>
+      <tr>
+        <th class="col-desig">Désignation</th>
+        <th class="col-base">Base (F CFA)</th>
+        <th class="col-taux">Taux</th>
+        <th class="col-mont">Montant (F CFA)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="section-hdr"><td colspan="4">GAINS</td></tr>
+      $gainsRows
+      <tr class="total-row">
+        <td colspan="3">SALAIRE BRUT</td>
+        <td class="col-mont">${fmt.format(salary.brut)}</td>
+      </tr>
+      <tr class="section-hdr"><td colspan="4">RETENUES</td></tr>
+      $retenuesRows
+      <tr class="total-row">
+        <td colspan="3">TOTAL RETENUES</td>
+        <td class="col-mont">${fmt.format(salary.totalRetenues)}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- NET À PAYER -->
+  <div class="net-box">
+    <span class="net-label">Net à payer</span>
+    <span class="net-amount">${fmt.format(salary.netAPayer)} F CFA</span>
+  </div>
+
+  <!-- PAIEMENT -->
+  <div class="pay-row">
+    <div class="pay-chip">
+      <div class="pay-chip-label">Statut</div>
+      <div class="pay-chip-value"><span class="status-badge">$stLabel</span></div>
+    </div>
+    <div class="pay-chip">
+      <div class="pay-chip-label">Montant payé</div>
+      <div class="pay-chip-value">${fmt.format(salary.montantPaye)} F</div>
+    </div>
+    <div class="pay-chip">
+      <div class="pay-chip-label">Reste à payer</div>
+      <div class="pay-chip-value">${fmt.format(salary.resteAPayer)} F</div>
+    </div>
+    <div class="pay-chip">
+      <div class="pay-chip-label">Date paiement</div>
+      <div class="pay-chip-value">$datePaie</div>
+    </div>
+    <div class="pay-chip">
+      <div class="pay-chip-label">Mode paiement</div>
+      <div class="pay-chip-value">${salary.modePaiement.label}</div>
+    </div>
+  </div>
+
+  <!-- SIGNATURES -->
+  <div class="sig-section">
+    <div class="sig-row">
+      <div class="sig-block">
+        <div class="sig-title">Signature du Salarié</div>
+        <div class="sig-line">Lu et approuvé</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-title">Date &amp; Cachet Direction</div>
+        <div class="sig-line">Le Directeur / Gérant</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PIED DE PAGE -->
+  <div class="footer">
+    Restaurant Sankadiokro &nbsp;|&nbsp; Yopougon Millionnaire, Abidjan &nbsp;|&nbsp;
+    Ce document est confidentiel — usage interne uniquement
+  </div>
+
+  <!-- BOUTON -->
+  <div class="print-btn">
+    <button onclick="window.print()"
+      style="padding:8px 24px;background:#0D47A1;color:#fff;border:none;border-radius:6px;
+             cursor:pointer;font-size:12px;font-weight:bold;letter-spacing:0.5px;">
+      &#128424; Imprimer / Enregistrer PDF
+    </button>
+  </div>
+
+</div>
+</body>
+</html>''';
+  }
+
+  /// Couleur hex pour le badge de statut de paiement
+  String _payStatusHex(PaymentStatus s) {
+    switch (s) {
+      case PaymentStatus.nonPaye: return '#B71C1C';
+      case PaymentStatus.partiel: return '#E65100';
+      case PaymentStatus.paye:    return '#2E7D32';
+    }
+  }
+
   /// Retourne l'URL du logo pour inclusion dans les tickets HTML
   /// Sur Web Flutter, les assets sont accessibles via chemin relatif depuis la racine
   String _logoBase64() {
