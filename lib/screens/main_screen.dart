@@ -20,10 +20,6 @@ import 'accounting/accounting_screen.dart';
 import 'login_screen.dart';
 
 // ── Constantes de build — identifiant de version visible dans le drawer ──
-const String _kBuildCommit = 'accounting';
-const String _kBuildDate   = '23 Jun 2026';
-const String _kBuildFeatures = 'TTS v2 · Salaires · Réservations · Comptabilité IA';
-
 /// Widget affiché quand un utilisateur tente d'accéder à un module interdit.
 class _AccessDeniedScreen extends StatelessWidget {
   final String moduleName;
@@ -338,43 +334,6 @@ class _MainScreenState extends State<MainScreen> {
               },
             ),
           ),
-          // ── Badge BUILD VERSION ──
-          Container(
-            margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0D47A1).withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF2196F3).withValues(alpha: 0.35)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.verified_rounded, color: Color(0xFF64B5F6), size: 12),
-                    const SizedBox(width: 4),
-                    Text(
-                      'BUILD $_kBuildCommit',
-                      style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.5),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _kBuildDate,
-                  style: const TextStyle(color: Color(0xFF90CAF9), fontSize: 9.5),
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  _kBuildFeatures,
-                  style: const TextStyle(color: Color(0xFF78909C), fontSize: 8.5),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          const Divider(color: Color(0xFF2A2A5A)),
           ListTile(
             leading: Container(
               padding: const EdgeInsets.all(8),
