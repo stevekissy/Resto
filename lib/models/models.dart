@@ -356,6 +356,12 @@ class Order {
   String orderType;          // 'dine_in' | 'takeaway'
   bool get isTakeaway => orderType == 'takeaway';
 
+  // ── Source commande (pos / online) ──────────────────────────────────
+  String source;             // 'pos' | 'online'
+  bool get isOnlineOrder => source == 'online';
+  String? clientId;          // UID client (si commande en ligne)
+  String? clientPhone;       // Téléphone client (si commande en ligne)
+
   // ── Cycle de vie modification / annulation ──────────────────────────
   DateTime? updatedAt;
   DateTime? cancelledAt;
@@ -400,6 +406,9 @@ class Order {
     this.paymentStatus,
     this.settlementStatus,
     this.orderType = 'dine_in',
+    this.source = 'pos',
+    this.clientId,
+    this.clientPhone,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.totalPrice);
@@ -470,6 +479,9 @@ class Order {
     'paymentStatus': paymentStatus,
     'settlementStatus': settlementStatus,
     'orderType': orderType,
+    'source': source,
+    'clientId': clientId,
+    'clientPhone': clientPhone,
   };
 
   factory Order.fromMap(Map<String, dynamic> map) => Order(
@@ -513,6 +525,9 @@ class Order {
     paymentStatus: map['paymentStatus'] as String?,
     settlementStatus: map['settlementStatus'] as String?,
     orderType: map['orderType'] as String? ?? 'dine_in',
+    source: map['source'] as String? ?? 'pos',
+    clientId: map['clientId'] as String?,
+    clientPhone: map['clientPhone'] as String?,
   );
 }
 

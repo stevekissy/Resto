@@ -281,11 +281,7 @@ class SandboxProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  double get deliveryFee {
-    if (_orderType == OrderType.takeaway) return 0;
-    if (_selectedPromotion?.type == PromotionType.freeDelivery) return 0;
-    return _settings.deliveryFeeBase;
-  }
+  double get deliveryFee => 0; // Yango gère les frais — toujours 0
 
   double get discountAmount {
     if (_selectedPromotion == null) return 0;
@@ -293,11 +289,15 @@ class SandboxProvider extends ChangeNotifier {
     return _selectedPromotion!.computeDiscount(cartTotal);
   }
 
-  double get finalTotal => cartTotal - discountAmount + deliveryFee;
+  double get finalTotal => cartTotal - discountAmount;
   double get depositAmount => _settings.computeDeposit(finalTotal);
   double get remainingAmount => finalTotal - depositAmount;
   int get loyaltyPointsToEarn =>
       (finalTotal / _settings.loyaltyPointsPerFCFA).floor();
+
+  /// Réduction fidélité : X points → Y FCFA
+  double loyaltyDiscount(int pointsUsed) =>
+      pointsUsed * _settings.loyaltyPointValue.toDouble();
 
   // ── Passage de commande ─────────────────────────────────────────────────
 
@@ -306,6 +306,8 @@ class SandboxProvider extends ChangeNotifier {
     required DeliveryAddress? deliveryAddress,
     String? notes,
     bool payDepositNow = false,
+    int loyaltyPointsUsed = 0,
+    String? deliveryNote,
   }) async {
     if (_client == null || _cart.isEmpty) return null;
 
@@ -313,8 +315,9 @@ class SandboxProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      final total = cartTotal - discountAmount;
-      final deposit = payDepositNow ? depositAmount : 0.0;
+      final loyaltyDisc = loyaltyDiscount(loyaltyPointsUsed);
+      final total = cartTotal - discountAmount - loyaltyDisc;
+      final deposit = payDepositNow ? _settings.computeDeposit(total) : 0.0;
 
       final order = ClientOrder(
         id: '',
@@ -330,11 +333,20 @@ class SandboxProvider extends ChangeNotifier {
             ? ClientPaymentStatus.depositPaid
             : ClientPaymentStatus.pending,
         totalAmount: total,
-        deliveryFee: deliveryFee,
+        deliveryFee: 0,
         depositAmount: deposit,
-        remainingAmount: total + deliveryFee - deposit,
+        remainingAmount: total - deposit,
         notes: notes,
         loyaltyPointsEarned: loyaltyPointsToEarn,
+        orderSource: 'online',
+        depositRequired: _settings.depositRequired,
+        depositPaid: payDepositNow,
+        loyaltyPointsUsed: loyaltyPointsUsed,
+        loyaltyDiscountAmount: loyaltyDisc,
+        deliveryPartner: _orderType == OrderType.delivery ? 'Yango' : '',
+        deliveryFeePaidTo: _orderType == OrderType.delivery ? 'driver' : '',
+        deliveryFeeIncluded: false,
+        deliveryNote: deliveryNote,
       );
 
       final orderId = await _svc.createOrder(order);
@@ -365,6 +377,16 @@ class SandboxProvider extends ChangeNotifier {
 
   Future<void> cancelOrder(String orderId) async {
     await _svc.cancelOrder(orderId);
+  }
+
+  /// Mise à jour du statut Yango (sandbox — ne fait rien réellement)
+  Future<void> updateYangoStatus(String orderId, YangoDeliveryStatus yangoStatus) async {
+    // En mode sandbox, mettre à jour localement
+    final idx = _orders.indexWhere((o) => o.id == orderId);
+    if (idx >= 0) {
+      _orders[idx] = _orders[idx].copyWith(yangoStatus: yangoStatus);
+      notifyListeners();
+    }
   }
 
   // ── Adresses ────────────────────────────────────────────────────────────

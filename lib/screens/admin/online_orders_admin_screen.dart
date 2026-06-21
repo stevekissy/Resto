@@ -186,125 +186,279 @@ class _OrdersTab extends StatelessWidget {
   }
 }
 
-class _AdminOrderCard extends StatelessWidget {
+class _AdminOrderCard extends StatefulWidget {
   final ClientOrder order;
   const _AdminOrderCard({required this.order});
+
+  @override
+  State<_AdminOrderCard> createState() => _AdminOrderCardState();
+}
+
+class _AdminOrderCardState extends State<_AdminOrderCard> {
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
     final fmt = NumberFormat('#,###', 'fr_FR');
     final fmtDate = DateFormat('dd/MM HH:mm', 'fr_FR');
-    final status = order.status;
+    final status = widget.order.status;
+    final order = widget.order;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppTheme.cardBg,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: status.color.withValues(alpha: 0.4)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // En-tête
-          Row(
-            children: [
-              Container(
-                width: 36, height: 36,
-                decoration: BoxDecoration(
-                  color: status.color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(status.icon, color: status.color, size: 18),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(order.orderNumber ?? order.id.substring(0, 8),
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: status.color.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(status.label,
-                              style: TextStyle(color: status.color, fontSize: 11, fontWeight: FontWeight.w700)),
-                        ),
-                      ],
-                    ),
-                    Text('${order.clientName} • ${order.clientPhone}',
-                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+          // ── En-tête ───────────────────────────────────────────────────
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('${fmt.format(order.grandTotal)} F',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
-                  Text(fmtDate.format(order.createdAt),
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                  Row(
+                    children: [
+                      Container(
+                        width: 36, height: 36,
+                        decoration: BoxDecoration(
+                          color: status.color.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(status.icon, color: status.color, size: 18),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(order.orderNumber ?? order.id.substring(0, 8),
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+                                const SizedBox(width: 6),
+                                // Badge source EN LIGNE
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primary.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Text('EN LIGNE',
+                                      style: TextStyle(color: AppTheme.primary, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+                                ),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: status.color.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(status.label,
+                                      style: TextStyle(color: status.color, fontSize: 10, fontWeight: FontWeight.w700)),
+                                ),
+                              ],
+                            ),
+                            Text('${order.clientName} • ${order.clientPhone}',
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text('${fmt.format(order.totalAmount)} F',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+                          Text(fmtDate.format(order.createdAt),
+                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                          Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                              color: AppTheme.textSecondary, size: 16),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    order.items.map((i) => '${i.quantity}× ${i.productName}').join(' • '),
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                    maxLines: _expanded ? null : 1,
+                    overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+                  ),
                 ],
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          // Articles
-          Text(
-            order.items.map((i) => '${i.quantity}× ${i.productName}').join(' • '),
-            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-            maxLines: 2, overflow: TextOverflow.ellipsis,
-          ),
-          if (order.orderType == OrderType.delivery && order.deliveryAddress != null) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                const Icon(Icons.location_on_outlined, color: AppTheme.primary, size: 14),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(order.deliveryAddress!.address,
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                ),
-              ],
             ),
+          ),
+
+          // ── Détails expandés ──────────────────────────────────────────
+          if (_expanded) ...[
+            const Divider(height: 1, color: Color(0xFF2A2A5A)),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Adresse livraison Yango
+                  if (order.orderType == OrderType.delivery) ...[
+                    _InfoRow(
+                      icon: Icons.location_on_outlined,
+                      label: 'Adresse',
+                      value: order.deliveryAddress?.address ?? 'Non renseignée',
+                    ),
+                    if (order.deliveryNote != null && order.deliveryNote!.isNotEmpty)
+                      _InfoRow(
+                        icon: Icons.note_alt_outlined,
+                        label: 'Note livreur',
+                        value: order.deliveryNote!,
+                      ),
+                    // Bloc Yango
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF57C00).withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFF57C00).withValues(alpha: 0.4)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text('🚗', style: TextStyle(fontSize: 14)),
+                              const SizedBox(width: 6),
+                              const Text('Livraison : Yango',
+                                  style: TextStyle(color: Color(0xFFF57C00), fontWeight: FontWeight.w800, fontSize: 12)),
+                              const Spacer(),
+                              Text('Frais : payés au livreur',
+                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 10)),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          // Statut livraison Yango
+                          Row(
+                            children: [
+                              const Text('Statut livraison :',
+                                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: order.yangoStatus.color.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(order.yangoStatus.icon, color: order.yangoStatus.color, size: 12),
+                                    const SizedBox(width: 4),
+                                    Text(order.yangoStatus.label,
+                                        style: TextStyle(color: order.yangoStatus.color, fontSize: 10, fontWeight: FontWeight.w700)),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // Boutons mise à jour statut Yango
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: YangoDeliveryStatus.values.map((ys) {
+                              final isActive = order.yangoStatus == ys;
+                              return GestureDetector(
+                                onTap: () => _updateYangoStatus(context, order, ys),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: isActive ? ys.color.withValues(alpha: 0.25) : AppTheme.cardBg,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: isActive ? ys.color : const Color(0xFF2A2A5A),
+                                      width: isActive ? 1.5 : 1,
+                                    ),
+                                  ),
+                                  child: Text(ys.label,
+                                      style: TextStyle(
+                                        color: isActive ? ys.color : AppTheme.textSecondary,
+                                        fontSize: 11,
+                                        fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+                                      )),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
+                  // Acompte
+                  _InfoRow(
+                    icon: Icons.account_balance_wallet_outlined,
+                    label: 'Acompte',
+                    value: order.depositPaid
+                        ? '${fmt.format(order.depositAmount)} F — Payé ✓'
+                        : (order.depositRequired ? '${fmt.format(order.depositAmount)} F — EN ATTENTE ⚠️' : 'Non requis'),
+                    valueColor: order.depositPaid
+                        ? AppTheme.success
+                        : (order.depositRequired ? AppTheme.warning : AppTheme.textSecondary),
+                  ),
+
+                  // Fidélité
+                  if (order.loyaltyPointsUsed > 0)
+                    _InfoRow(
+                      icon: Icons.stars_rounded,
+                      label: 'Points utilisés',
+                      value: '${order.loyaltyPointsUsed} pts → -${fmt.format(order.loyaltyDiscountAmount)} F',
+                      valueColor: Colors.amber,
+                    ),
+
+                  if (order.notes != null && order.notes!.isNotEmpty)
+                    _InfoRow(icon: Icons.note_outlined, label: 'Note', value: order.notes!),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A2A5A)),
           ],
-          const SizedBox(height: 10),
-          // Boutons de changement de statut
+
+          // ── Boutons de statut ─────────────────────────────────────────
           if (order.status != ClientOrderStatus.delivered &&
               order.status != ClientOrderStatus.cancelled)
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: _nextStatuses(order.status).map((s) {
-                return GestureDetector(
-                  onTap: () => _updateStatus(context, order, s),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: s.color.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: s.color.withValues(alpha: 0.4)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: _nextStatuses(order.status).map((s) {
+                  return GestureDetector(
+                    onTap: () => _updateStatus(context, order, s),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: s.color.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: s.color.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(s.icon, color: s.color, size: 14),
+                          const SizedBox(width: 4),
+                          Text(s.label, style: TextStyle(color: s.color, fontSize: 12, fontWeight: FontWeight.w700)),
+                        ],
+                      ),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(s.icon, color: s.color, size: 14),
-                        const SizedBox(width: 4),
-                        Text(s.label, style: TextStyle(color: s.color, fontSize: 12, fontWeight: FontWeight.w700)),
-                      ],
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
+                  );
+                }).toList(),
+              ),
+            )
+          else
+            const SizedBox(height: 14),
         ],
       ),
     );
@@ -338,6 +492,49 @@ class _AdminOrderCard extends StatelessWidget {
       ),
     );
   }
+
+  void _updateYangoStatus(BuildContext context, ClientOrder order, YangoDeliveryStatus yangoStatus) {
+    context.read<ClientProvider>().updateYangoStatus(order.id, yangoStatus);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Livraison Yango : ${yangoStatus.label}'),
+        backgroundColor: yangoStatus.color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color? valueColor;
+  const _InfoRow({required this.icon, required this.label, required this.value, this.valueColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppTheme.primary, size: 14),
+          const SizedBox(width: 6),
+          Text('$label : ', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+          Expanded(
+            child: Text(value,
+                style: TextStyle(
+                  color: valueColor ?? Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                )),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ── Onglet Configuration ──────────────────────────────────────────────────────
@@ -351,22 +548,38 @@ class _ConfigTab extends StatefulWidget {
 }
 
 class _ConfigTabState extends State<_ConfigTab> {
+  late bool _depositRequired;
+  late DepositType _depositType;
   late double _depositPct;
-  late double _deliveryFee;
+  late double _depositFixed;
   late double _minOrder;
   late int _estDelivery;
   late int _estTakeaway;
-  late bool _freeDelivery;
+  late int _loyaltyPointValue;
+  late int _loyaltyPointsPerFCFA;
+  late int _minLoyaltyPoints;
+  final _depositFixedCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _depositPct = widget.settings.depositPercentage;
-    _deliveryFee = widget.settings.deliveryFeeBase;
-    _minOrder = widget.settings.minimumOrderAmount;
-    _estDelivery = widget.settings.estimatedDeliveryMinutes;
-    _estTakeaway = widget.settings.estimatedTakeawayMinutes;
-    _freeDelivery = widget.settings.deliveryFeeBase == 0;
+    _depositRequired     = widget.settings.depositRequired;
+    _depositType         = widget.settings.depositType;
+    _depositPct          = widget.settings.depositPercentage;
+    _depositFixed        = widget.settings.depositFixedAmount ?? 5000;
+    _minOrder            = widget.settings.minimumOrderAmount;
+    _estDelivery         = widget.settings.estimatedDeliveryMinutes;
+    _estTakeaway         = widget.settings.estimatedTakeawayMinutes;
+    _loyaltyPointValue   = widget.settings.loyaltyPointValue;
+    _loyaltyPointsPerFCFA = widget.settings.loyaltyPointsPerFCFA;
+    _minLoyaltyPoints    = widget.settings.minLoyaltyPointsToUse;
+    _depositFixedCtrl.text = _depositFixed.toStringAsFixed(0);
+  }
+
+  @override
+  void dispose() {
+    _depositFixedCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -376,72 +589,214 @@ class _ConfigTabState extends State<_ConfigTab> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
       children: [
-        // Acompte
+
+        // ── Acompte obligatoire ───────────────────────────────────────
         _ConfigCard(
           icon: Icons.account_balance_wallet_outlined,
-          title: 'Acompte requis',
+          title: 'Acompte avant commande',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${_depositPct.toInt()}% du montant total',
-                  style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 16)),
-              Slider(
-                value: _depositPct,
-                min: 0, max: 100,
-                divisions: 20,
-                activeColor: AppTheme.primary,
-                onChanged: (v) => setState(() => _depositPct = v),
-              ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('0% (aucun acompte)', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-                  const Text('100% (prépaiement total)', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-
-        // Livraison
-        _ConfigCard(
-          icon: Icons.delivery_dining,
-          title: 'Frais de livraison',
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Livraison gratuite', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  const Text('Acompte obligatoire', style: TextStyle(color: Colors.white, fontSize: 13)),
                   Switch(
-                    value: _freeDelivery,
-                    onChanged: (v) => setState(() {
-                      _freeDelivery = v;
-                      if (v) _deliveryFee = 0;
-                    }),
-                    activeColor: AppTheme.success,
+                    value: _depositRequired,
+                    onChanged: (v) => setState(() => _depositRequired = v),
+                    activeColor: AppTheme.warning,
                   ),
                 ],
               ),
-              if (!_freeDelivery) ...[
+              if (_depositRequired) ...[
+                const SizedBox(height: 12),
+                const Text('Type d\'acompte :', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
                 const SizedBox(height: 8),
-                Text('${fmt.format(_deliveryFee)} F',
-                    style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 16)),
-                Slider(
-                  value: _deliveryFee,
-                  min: 0, max: 5000,
-                  divisions: 50,
-                  activeColor: AppTheme.primary,
-                  onChanged: (v) => setState(() => _deliveryFee = v),
+                Row(
+                  children: DepositType.values.map((t) {
+                    final isSelected = _depositType == t;
+                    return Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _depositType = t),
+                        child: Container(
+                          margin: EdgeInsets.only(right: t == DepositType.percentage ? 8 : 0),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          decoration: BoxDecoration(
+                            color: isSelected ? AppTheme.warning.withValues(alpha: 0.2) : AppTheme.cardBg,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isSelected ? AppTheme.warning : const Color(0xFF2A2A5A),
+                              width: isSelected ? 2 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(
+                                t == DepositType.percentage ? Icons.percent : Icons.attach_money,
+                                color: isSelected ? AppTheme.warning : AppTheme.textSecondary, size: 18,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(t.label,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: isSelected ? AppTheme.warning : AppTheme.textSecondary,
+                                    fontSize: 11, fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
+                                  )),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 ),
+                const SizedBox(height: 12),
+                if (_depositType == DepositType.percentage) ...[
+                  Text('${_depositPct.toInt()}% du montant total',
+                      style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w700, fontSize: 16)),
+                  Slider(
+                    value: _depositPct,
+                    min: 5, max: 100,
+                    divisions: 19,
+                    activeColor: AppTheme.warning,
+                    onChanged: (v) => setState(() => _depositPct = v),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('5%', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                      const Text('100% (prépaiement)', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                    ],
+                  ),
+                ] else ...[
+                  TextField(
+                    controller: _depositFixedCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                    onChanged: (v) => _depositFixed = double.tryParse(v) ?? _depositFixed,
+                    decoration: const InputDecoration(
+                      labelText: 'Montant fixe (FCFA)',
+                      prefixText: 'FCFA ',
+                      prefixStyle: TextStyle(color: AppTheme.textSecondary),
+                    ),
+                  ),
+                ],
               ],
             ],
           ),
         ),
         const SizedBox(height: 14),
 
-        // Commande minimum
+        // ── Livraison Yango ───────────────────────────────────────────
+        _ConfigCard(
+          icon: Icons.delivery_dining,
+          title: 'Livraison — Partenaire Yango',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF57C00).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFF57C00).withValues(alpha: 0.4)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Text('🚗', style: TextStyle(fontSize: 16)),
+                        SizedBox(width: 8),
+                        Text('Livraison gérée par Yango',
+                            style: TextStyle(color: Color(0xFFF57C00), fontWeight: FontWeight.w800, fontSize: 13)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '• Les frais de livraison sont définis par Yango\n'
+                      '• Le client paie directement le livreur\n'
+                      '• Le restaurant encaisse uniquement la commande + acompte',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 11, height: 1.5),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+
+        // ── Programme fidélité ────────────────────────────────────────
+        _ConfigCard(
+          icon: Icons.stars_rounded,
+          title: 'Programme fidélité',
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Valeur d\'1 point', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                  Text('$_loyaltyPointValue FCFA',
+                      style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.w700, fontSize: 14)),
+                ],
+              ),
+              Slider(
+                value: _loyaltyPointValue.toDouble(),
+                min: 1, max: 50,
+                divisions: 49,
+                activeColor: Colors.amber,
+                onChanged: (v) => setState(() => _loyaltyPointValue = v.toInt()),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Points gagnés / 100 FCFA', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                  Text('${(100 / _loyaltyPointsPerFCFA).toStringAsFixed(1)} pt',
+                      style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.w700, fontSize: 14)),
+                ],
+              ),
+              Slider(
+                value: _loyaltyPointsPerFCFA.toDouble(),
+                min: 10, max: 1000,
+                divisions: 99,
+                activeColor: Colors.amber,
+                onChanged: (v) => setState(() => _loyaltyPointsPerFCFA = v.toInt()),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Minimum points utilisables', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                  Text('$_minLoyaltyPoints pts',
+                      style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.w700, fontSize: 14)),
+                ],
+              ),
+              Slider(
+                value: _minLoyaltyPoints.toDouble(),
+                min: 1, max: 100,
+                divisions: 99,
+                activeColor: Colors.amber,
+                onChanged: (v) => setState(() => _minLoyaltyPoints = v.toInt()),
+              ),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '1 pt = $_loyaltyPointValue FCFA • ${(100 / _loyaltyPointsPerFCFA).toStringAsFixed(1)} pt / 100 FCFA',
+                  style: const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.w600),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+
+        // ── Commande minimum ──────────────────────────────────────────
         _ConfigCard(
           icon: Icons.shopping_cart_outlined,
           title: 'Montant minimum de commande',
@@ -462,7 +817,7 @@ class _ConfigTabState extends State<_ConfigTab> {
         ),
         const SizedBox(height: 14),
 
-        // Temps estimés
+        // ── Temps estimés ─────────────────────────────────────────────
         _ConfigCard(
           icon: Icons.timer_outlined,
           title: 'Temps de préparation estimé',
@@ -521,13 +876,17 @@ class _ConfigTabState extends State<_ConfigTab> {
     final current = widget.settings;
     final updated = OnlineOrderSettings(
       isOnlineOrderEnabled: current.isOnlineOrderEnabled,
+      depositRequired: _depositRequired,
+      depositType: _depositType,
       depositPercentage: _depositPct,
-      deliveryFeeBase: _freeDelivery ? 0 : _deliveryFee,
+      depositFixedAmount: _depositType == DepositType.fixedAmount ? _depositFixed : null,
+      deliveryFeeBase: 0,  // Yango gère les frais
       minimumOrderAmount: _minOrder,
       estimatedDeliveryMinutes: _estDelivery,
       estimatedTakeawayMinutes: _estTakeaway,
-      loyaltyPointsPerFCFA: current.loyaltyPointsPerFCFA,
-      loyaltyPointValue: current.loyaltyPointValue,
+      loyaltyPointsPerFCFA: _loyaltyPointsPerFCFA,
+      loyaltyPointValue: _loyaltyPointValue,
+      minLoyaltyPointsToUse: _minLoyaltyPoints,
       restaurantPhone: current.restaurantPhone,
       restaurantAddress: current.restaurantAddress,
       deliveryZones: current.deliveryZones,

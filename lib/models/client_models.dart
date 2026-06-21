@@ -115,6 +115,43 @@ extension ClientPaymentMethodExt on ClientPaymentMethod {
 
 enum ClientPaymentStatus { pending, depositPaid, fullyPaid }
 
+// Type d'acompte configuré par l'admin
+enum DepositType { percentage, fixedAmount }
+
+extension DepositTypeExt on DepositType {
+  String get label => this == DepositType.percentage ? 'Pourcentage' : 'Montant fixe';
+}
+
+// Statut de livraison Yango
+enum YangoDeliveryStatus { waiting, called, delivering, delivered }
+
+extension YangoDeliveryStatusExt on YangoDeliveryStatus {
+  String get label {
+    switch (this) {
+      case YangoDeliveryStatus.waiting:    return 'En attente';
+      case YangoDeliveryStatus.called:     return 'Yango appelé';
+      case YangoDeliveryStatus.delivering: return 'En livraison';
+      case YangoDeliveryStatus.delivered:  return 'Livré';
+    }
+  }
+  Color get color {
+    switch (this) {
+      case YangoDeliveryStatus.waiting:    return const Color(0xFFFFC107);
+      case YangoDeliveryStatus.called:     return const Color(0xFFFF9800);
+      case YangoDeliveryStatus.delivering: return const Color(0xFF9C27B0);
+      case YangoDeliveryStatus.delivered:  return const Color(0xFF4CAF50);
+    }
+  }
+  IconData get icon {
+    switch (this) {
+      case YangoDeliveryStatus.waiting:    return Icons.hourglass_empty;
+      case YangoDeliveryStatus.called:     return Icons.phone_in_talk_outlined;
+      case YangoDeliveryStatus.delivering: return Icons.delivery_dining;
+      case YangoDeliveryStatus.delivered:  return Icons.home;
+    }
+  }
+}
+
 extension ClientPaymentStatusExt on ClientPaymentStatus {
   String get label {
     switch (this) {
@@ -345,6 +382,19 @@ class ClientOrder {
   double? deliveryLat;
   double? deliveryLng;
   int loyaltyPointsEarned;
+  // Champs commandes en ligne
+  String orderSource;          // 'online' | 'pos'
+  bool depositRequired;
+  bool depositPaid;
+  int loyaltyPointsUsed;       // points fidélité utilisés
+  double loyaltyDiscountAmount; // réduction calculée
+  // Yango delivery
+  String deliveryPartner;      // 'Yango' | 'self' | ''
+  String deliveryFeePaidTo;    // 'driver' | 'restaurant' | ''
+  bool deliveryFeeIncluded;    // false = frais non inclus dans total
+  String? deliveryNote;        // note livraison Yango
+  String? geoLocation;         // 'lat,lng' formaté
+  YangoDeliveryStatus yangoStatus;
   // Réf interne (lien avec commande cuisine dans collection orders)
   String? internalOrderId;
   String? orderNumber;     // numéro lisible ex: #1042
@@ -373,11 +423,70 @@ class ClientOrder {
     this.deliveryLat,
     this.deliveryLng,
     this.loyaltyPointsEarned = 0,
+    this.orderSource = 'online',
+    this.depositRequired = false,
+    this.depositPaid = false,
+    this.loyaltyPointsUsed = 0,
+    this.loyaltyDiscountAmount = 0,
+    this.deliveryPartner = 'Yango',
+    this.deliveryFeePaidTo = 'driver',
+    this.deliveryFeeIncluded = false,
+    this.deliveryNote,
+    this.geoLocation,
+    this.yangoStatus = YangoDeliveryStatus.waiting,
     this.internalOrderId,
     this.orderNumber,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get grandTotal => totalAmount + deliveryFee;
+
+  ClientOrder copyWith({
+    String? id,
+    ClientOrderStatus? status,
+    YangoDeliveryStatus? yangoStatus,
+    bool? depositPaid,
+    String? internalOrderId,
+    String? orderNumber,
+    DateTime? updatedAt,
+    ClientPaymentStatus? paymentStatus,
+  }) => ClientOrder(
+    id: id ?? this.id,
+    clientId: clientId,
+    clientName: clientName,
+    clientPhone: clientPhone,
+    items: items,
+    status: status ?? this.status,
+    orderType: orderType,
+    deliveryAddress: deliveryAddress,
+    paymentMethod: paymentMethod,
+    paymentStatus: paymentStatus ?? this.paymentStatus,
+    totalAmount: totalAmount,
+    deliveryFee: deliveryFee,
+    depositAmount: depositAmount,
+    remainingAmount: remainingAmount,
+    notes: notes,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    estimatedDeliveryTime: estimatedDeliveryTime,
+    deliveryPersonName: deliveryPersonName,
+    deliveryPersonPhone: deliveryPersonPhone,
+    deliveryLat: deliveryLat,
+    deliveryLng: deliveryLng,
+    loyaltyPointsEarned: loyaltyPointsEarned,
+    orderSource: orderSource,
+    depositRequired: depositRequired,
+    depositPaid: depositPaid ?? this.depositPaid,
+    loyaltyPointsUsed: loyaltyPointsUsed,
+    loyaltyDiscountAmount: loyaltyDiscountAmount,
+    deliveryPartner: deliveryPartner,
+    deliveryFeePaidTo: deliveryFeePaidTo,
+    deliveryFeeIncluded: deliveryFeeIncluded,
+    deliveryNote: deliveryNote,
+    geoLocation: geoLocation,
+    yangoStatus: yangoStatus ?? this.yangoStatus,
+    internalOrderId: internalOrderId ?? this.internalOrderId,
+    orderNumber: orderNumber ?? this.orderNumber,
+  );
 
   Map<String, dynamic> toMap() => {
     'id': id,
@@ -403,9 +512,20 @@ class ClientOrder {
     'deliveryLat': deliveryLat,
     'deliveryLng': deliveryLng,
     'loyaltyPointsEarned': loyaltyPointsEarned,
+    'orderSource': orderSource,
+    'depositRequired': depositRequired,
+    'depositPaid': depositPaid,
+    'loyaltyPointsUsed': loyaltyPointsUsed,
+    'loyaltyDiscountAmount': loyaltyDiscountAmount,
+    'deliveryPartner': deliveryPartner,
+    'deliveryFeePaidTo': deliveryFeePaidTo,
+    'deliveryFeeIncluded': deliveryFeeIncluded,
+    'deliveryNote': deliveryNote,
+    'geoLocation': geoLocation,
+    'yangoStatus': yangoStatus.index,
     'internalOrderId': internalOrderId,
     'orderNumber': orderNumber,
-    'source': 'online',   // tag pour distinguer dans le tableau de bord
+    'source': 'online',
   };
 
   factory ClientOrder.fromMap(Map<String, dynamic> m) => ClientOrder(
@@ -444,6 +564,17 @@ class ClientOrder {
     deliveryLat: (m['deliveryLat'] as num?)?.toDouble(),
     deliveryLng: (m['deliveryLng'] as num?)?.toDouble(),
     loyaltyPointsEarned: (m['loyaltyPointsEarned'] as num?)?.toInt() ?? 0,
+    orderSource: m['orderSource'] as String? ?? 'online',
+    depositRequired: m['depositRequired'] as bool? ?? false,
+    depositPaid: m['depositPaid'] as bool? ?? false,
+    loyaltyPointsUsed: (m['loyaltyPointsUsed'] as num?)?.toInt() ?? 0,
+    loyaltyDiscountAmount: (m['loyaltyDiscountAmount'] as num?)?.toDouble() ?? 0,
+    deliveryPartner: m['deliveryPartner'] as String? ?? 'Yango',
+    deliveryFeePaidTo: m['deliveryFeePaidTo'] as String? ?? 'driver',
+    deliveryFeeIncluded: m['deliveryFeeIncluded'] as bool? ?? false,
+    deliveryNote: m['deliveryNote'] as String?,
+    geoLocation: m['geoLocation'] as String?,
+    yangoStatus: YangoDeliveryStatus.values[(m['yangoStatus'] as num?)?.toInt() ?? 0],
     internalOrderId: m['internalOrderId'] as String?,
     orderNumber: m['orderNumber'] as String?,
   );
@@ -580,27 +711,32 @@ class Promotion {
 
 class OnlineOrderSettings {
   bool isOnlineOrderEnabled;
-  double depositPercentage;     // 0-100
-  double? depositFixedAmount;   // si non null, prioritaire sur %
-  double deliveryFeeBase;       // frais de livraison de base
-  double? deliveryFeePerKm;     // frais par km supplémentaire
-  double maxDeliveryRadiusKm;   // rayon max livraison
+  bool depositRequired;         // acompte obligatoire oui/non
+  DepositType depositType;      // percentage | fixedAmount
+  double depositPercentage;     // 0-100 si type=percentage
+  double? depositFixedAmount;   // montant fixe si type=fixedAmount
+  double deliveryFeeBase;       // non utilisé (Yango gère les frais)
+  double? deliveryFeePerKm;
+  double maxDeliveryRadiusKm;
   double? restaurantLat;
   double? restaurantLng;
   double minimumOrderAmount;
   int estimatedDeliveryMinutes;
   int estimatedTakeawayMinutes;
-  int loyaltyPointsPerFCFA;     // 1 point pour X FCFA
+  int loyaltyPointsPerFCFA;     // 1 point pour X FCFA dépensé
   int loyaltyPointValue;        // 1 point = X FCFA de réduction
+  int minLoyaltyPointsToUse;    // minimum de points utilisables
   String restaurantPhone;
   String restaurantAddress;
-  List<String> deliveryZones;   // quartiers/zones desservis
+  List<String> deliveryZones;
 
   OnlineOrderSettings({
     this.isOnlineOrderEnabled = true,
+    this.depositRequired = true,
+    this.depositType = DepositType.percentage,
     this.depositPercentage = 30,
     this.depositFixedAmount,
-    this.deliveryFeeBase = 1000,
+    this.deliveryFeeBase = 0,        // Yango gère les frais
     this.deliveryFeePerKm,
     this.maxDeliveryRadiusKm = 10,
     this.restaurantLat,
@@ -608,20 +744,26 @@ class OnlineOrderSettings {
     this.minimumOrderAmount = 2000,
     this.estimatedDeliveryMinutes = 45,
     this.estimatedTakeawayMinutes = 20,
-    this.loyaltyPointsPerFCFA = 100,   // 1 point / 100 FCFA
-    this.loyaltyPointValue = 5,         // 1 point = 5 FCFA
+    this.loyaltyPointsPerFCFA = 100,
+    this.loyaltyPointValue = 5,
+    this.minLoyaltyPointsToUse = 10,
     this.restaurantPhone = '',
     this.restaurantAddress = 'Yopougon Millionnaire',
     this.deliveryZones = const [],
   });
 
   double computeDeposit(double total) {
-    if (depositFixedAmount != null) return depositFixedAmount!;
+    if (!depositRequired) return 0;
+    if (depositType == DepositType.fixedAmount && depositFixedAmount != null) {
+      return depositFixedAmount!;
+    }
     return total * depositPercentage / 100;
   }
 
   Map<String, dynamic> toMap() => {
     'isOnlineOrderEnabled': isOnlineOrderEnabled,
+    'depositRequired': depositRequired,
+    'depositType': depositType.index,
     'depositPercentage': depositPercentage,
     'depositFixedAmount': depositFixedAmount,
     'deliveryFeeBase': deliveryFeeBase,
@@ -634,6 +776,7 @@ class OnlineOrderSettings {
     'estimatedTakeawayMinutes': estimatedTakeawayMinutes,
     'loyaltyPointsPerFCFA': loyaltyPointsPerFCFA,
     'loyaltyPointValue': loyaltyPointValue,
+    'minLoyaltyPointsToUse': minLoyaltyPointsToUse,
     'restaurantPhone': restaurantPhone,
     'restaurantAddress': restaurantAddress,
     'deliveryZones': deliveryZones,
@@ -641,9 +784,11 @@ class OnlineOrderSettings {
 
   factory OnlineOrderSettings.fromMap(Map<String, dynamic> m) => OnlineOrderSettings(
     isOnlineOrderEnabled: m['isOnlineOrderEnabled'] as bool? ?? true,
+    depositRequired: m['depositRequired'] as bool? ?? true,
+    depositType: DepositType.values[(m['depositType'] as num?)?.toInt() ?? 0],
     depositPercentage: (m['depositPercentage'] as num?)?.toDouble() ?? 30,
     depositFixedAmount: (m['depositFixedAmount'] as num?)?.toDouble(),
-    deliveryFeeBase: (m['deliveryFeeBase'] as num?)?.toDouble() ?? 1000,
+    deliveryFeeBase: (m['deliveryFeeBase'] as num?)?.toDouble() ?? 0,
     deliveryFeePerKm: (m['deliveryFeePerKm'] as num?)?.toDouble(),
     maxDeliveryRadiusKm: (m['maxDeliveryRadiusKm'] as num?)?.toDouble() ?? 10,
     restaurantLat: (m['restaurantLat'] as num?)?.toDouble(),
@@ -653,6 +798,7 @@ class OnlineOrderSettings {
     estimatedTakeawayMinutes: (m['estimatedTakeawayMinutes'] as num?)?.toInt() ?? 20,
     loyaltyPointsPerFCFA: (m['loyaltyPointsPerFCFA'] as num?)?.toInt() ?? 100,
     loyaltyPointValue: (m['loyaltyPointValue'] as num?)?.toInt() ?? 5,
+    minLoyaltyPointsToUse: (m['minLoyaltyPointsToUse'] as num?)?.toInt() ?? 10,
     restaurantPhone: m['restaurantPhone'] as String? ?? '',
     restaurantAddress: m['restaurantAddress'] as String? ?? 'Yopougon Millionnaire',
     deliveryZones: (m['deliveryZones'] as List?)?.cast<String>() ?? [],

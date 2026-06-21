@@ -262,19 +262,19 @@ class ClientProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  double get deliveryFee {
-    if (_orderType == OrderType.takeaway) return 0;
-    if (_selectedPromotion?.type == PromotionType.freeDelivery) return 0;
-    return _settings.deliveryFeeBase;
-  }
+  // Yango gère les frais de livraison — le client paie directement au livreur
+  double get deliveryFee => 0;
 
   double get discountAmount {
-    if (_selectedPromotion == null) return 0;
-    if (_selectedPromotion!.type == PromotionType.freeDelivery) return 0;
-    return _selectedPromotion!.computeDiscount(cartTotal);
+    double d = 0;
+    if (_selectedPromotion != null && _selectedPromotion!.type != PromotionType.freeDelivery) {
+      d += _selectedPromotion!.computeDiscount(cartTotal);
+    }
+    // La réduction fidélité est calculée séparément dans le checkout
+    return d;
   }
 
-  double get finalTotal => cartTotal - discountAmount + deliveryFee;
+  double get finalTotal => cartTotal - discountAmount;
 
   double get depositAmount => _settings.computeDeposit(finalTotal);
 
@@ -283,6 +283,10 @@ class ClientProvider extends ChangeNotifier {
   int get loyaltyPointsToEarn =>
       (finalTotal / _settings.loyaltyPointsPerFCFA).floor();
 
+  // ── Loyalty: réduction calculée à partir des points utilisés ─────────────
+  double loyaltyDiscount(int pointsUsed) =>
+      pointsUsed * _settings.loyaltyPointValue.toDouble();
+
   // ── Passage de commande ─────────────────────────────────────────────────
 
   Future<String?> placeOrder({
@@ -290,6 +294,8 @@ class ClientProvider extends ChangeNotifier {
     required DeliveryAddress? deliveryAddress,
     String? notes,
     bool payDepositNow = false,
+    int loyaltyPointsUsed = 0,
+    String? deliveryNote,
   }) async {
     if (_client == null || _cart.isEmpty) return null;
 
@@ -297,8 +303,12 @@ class ClientProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      final total = cartTotal - discountAmount;
-      final deposit = payDepositNow ? depositAmount : 0.0;
+      final loyaltyDiscountAmt = loyaltyDiscount(loyaltyPointsUsed);
+      final total = cartTotal - discountAmount - loyaltyDiscountAmt;
+      final depositAmt = _settings.depositRequired
+          ? _settings.computeDeposit(total)
+          : 0.0;
+      final deposit = payDepositNow ? depositAmt : 0.0;
 
       final order = ClientOrder(
         id: '',
@@ -314,16 +324,44 @@ class ClientProvider extends ChangeNotifier {
             ? ClientPaymentStatus.depositPaid
             : ClientPaymentStatus.pending,
         totalAmount: total,
-        deliveryFee: deliveryFee,
+        deliveryFee: 0,          // Yango: frais payés directement au livreur
         depositAmount: deposit,
-        remainingAmount: total + deliveryFee - deposit,
+        remainingAmount: total - deposit,
         notes: notes,
         loyaltyPointsEarned: loyaltyPointsToEarn,
+        // Champs online
+        orderSource: 'online',
+        depositRequired: _settings.depositRequired,
+        depositPaid: payDepositNow,
+        loyaltyPointsUsed: loyaltyPointsUsed,
+        loyaltyDiscountAmount: loyaltyDiscountAmt,
+        // Yango delivery
+        deliveryPartner: _orderType == OrderType.delivery ? 'Yango' : '',
+        deliveryFeePaidTo: _orderType == OrderType.delivery ? 'driver' : '',
+        deliveryFeeIncluded: false,
+        deliveryNote: deliveryNote,
+        geoLocation: _orderType == OrderType.delivery && deliveryAddress != null
+            ? '${deliveryAddress.latitude ?? ''},${deliveryAddress.longitude ?? ''}'
+            : null,
       );
 
       final orderId = await _svc.createOrder(order);
 
-      // Créditer les points fidélité
+      // Débiter les points fidélité utilisés
+      if (loyaltyPointsUsed > 0) {
+        await _svc.addLoyaltyTransaction(LoyaltyTransaction(
+          id: '',
+          clientId: _client!.id,
+          type: LoyaltyType.redeem,
+          points: -loyaltyPointsUsed,
+          description: 'Points utilisés sur commande (-${loyaltyDiscountAmt.toStringAsFixed(0)} F)',
+          orderId: orderId,
+        ));
+        // Mettre à jour le solde de points localement
+        _client!.loyaltyPoints -= loyaltyPointsUsed;
+      }
+
+      // Créditer les points fidélité gagnés
       if (loyaltyPointsToEarn > 0) {
         await _svc.addLoyaltyTransaction(LoyaltyTransaction(
           id: '',
@@ -348,6 +386,12 @@ class ClientProvider extends ChangeNotifier {
 
   Future<void> cancelOrder(String orderId) async {
     await _svc.cancelOrder(orderId);
+  }
+
+  // ── Statut livraison Yango ──────────────────────────────────────────────
+
+  Future<void> updateYangoStatus(String orderId, YangoDeliveryStatus yangoStatus) async {
+    await _svc.updateYangoStatus(orderId, yangoStatus);
   }
 
   // ── Adresses ───────────────────────────────────────────────────────────

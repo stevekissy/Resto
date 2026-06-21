@@ -160,19 +160,37 @@ class ClientProviderProxy {
     required DeliveryAddress? deliveryAddress,
     String? notes,
     bool payDepositNow = false,
+    int loyaltyPointsUsed = 0,
+    String? deliveryNote,
   }) {
     if (_isSandbox) {
       return _sandbox!.placeOrder(
           paymentMethod: paymentMethod,
           deliveryAddress: deliveryAddress,
           notes: notes,
-          payDepositNow: payDepositNow);
+          payDepositNow: payDepositNow,
+          loyaltyPointsUsed: loyaltyPointsUsed,
+          deliveryNote: deliveryNote);
     }
     return _real!.placeOrder(
         paymentMethod: paymentMethod,
         deliveryAddress: deliveryAddress,
         notes: notes,
-        payDepositNow: payDepositNow);
+        payDepositNow: payDepositNow,
+        loyaltyPointsUsed: loyaltyPointsUsed,
+        deliveryNote: deliveryNote);
+  }
+
+  /// Calcul de la réduction fidélité (X points → Y FCFA)
+  double loyaltyDiscount(int pointsUsed) {
+    if (_isSandbox) return _sandbox!.loyaltyDiscount(pointsUsed);
+    return _real!.loyaltyDiscount(pointsUsed);
+  }
+
+  /// Mise à jour du statut Yango (admin/cuisine)
+  Future<void> updateYangoStatus(String orderId, YangoDeliveryStatus yangoStatus) {
+    if (_isSandbox) return _sandbox!.updateYangoStatus(orderId, yangoStatus);
+    return _real!.updateYangoStatus(orderId, yangoStatus);
   }
 
   Future<void> cancelOrder(String orderId) {

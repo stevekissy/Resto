@@ -628,10 +628,18 @@ class AppProvider extends ChangeNotifier {
           _knownOrderIds.add(o.id);
           // Ne pas sonner au premier chargement (liste déjà existante au démarrage)
           if (_knownOrderIds.length > list.length - newOrders.length) {
+            // Commande en ligne : notification spéciale prioritaire
+            final isOnline = (o.source == 'online' || o.tableNumber == 'Livraison Yango'
+                || o.tableNumber == 'À Emporter');
             if (o.isUrgent) {
               NotificationService().trigger(
                 NotifEvent.commandeUrgente,
                 message: '🚨 Commande urgente #${o.orderNumber} — Table ${o.tableNumber}',
+              );
+            } else if (isOnline) {
+              NotificationService().trigger(
+                NotifEvent.nouvelleCommandeEnLigne,
+                message: '📱 NOUVELLE COMMANDE EN LIGNE #${o.orderNumber} — ${o.serverName ?? o.tableNumber}',
               );
             } else {
               NotificationService().trigger(

@@ -230,22 +230,50 @@ class ClientFirebaseService {
       final totalAmount = (clientOrderData['totalAmount'] as num?)?.toDouble() ?? 0;
       final deliveryFee = (clientOrderData['deliveryFee'] as num?)?.toDouble() ?? 0;
 
+      final orderType = (clientOrderData['orderType'] as num?)?.toInt() ?? 0;
+      final depositAmount = (clientOrderData['depositAmount'] as num?)?.toDouble() ?? 0;
+      final loyaltyDiscount = (clientOrderData['loyaltyDiscountAmount'] as num?)?.toDouble() ?? 0;
+      final deliveryAddr = clientOrderData['deliveryAddress'] as Map<String, dynamic>?;
+
       await _db.collection('orders').doc(internalOrderId).set({
         'id': internalOrderId,
-        'clientOrderId': clientOrderId,         // lien retour
+        'clientOrderId': clientOrderId,
         'orderNumber': clientOrderData['orderNumber'],
-        'tableNumber': clientOrderData['orderType'] == 0 ? 'Livraison' : 'Emporter',
+        'tableNumber': orderType == 0 ? 'Livraison Yango' : 'À Emporter',
         'serverName': clientOrderData['clientName'] ?? '',
         'items': items,
         'status': 'pending',
-        'totalAmount': totalAmount + deliveryFee,
-        'discount': 0.0,
-        'cashStatus': 'pending_cashout',
+        'totalAmount': totalAmount,
+        'discount': loyaltyDiscount,
+        'cashStatus': depositAmount > 0 ? 'deposit_received' : 'pending_cashout',
         'notes': clientOrderData['notes'] ?? '',
         'createdAt': clientOrderData['createdAt'],
+        // Source et identification commande en ligne
         'source': 'online',
+        'orderSource': 'online',
+        'clientId': clientOrderData['clientId'],
         'clientName': clientOrderData['clientName'],
         'clientPhone': clientOrderData['clientPhone'],
+        // Adresse livraison
+        'deliveryAddress': deliveryAddr?['address'] ?? '',
+        'geoLocation': clientOrderData['geoLocation'],
+        // Acompte
+        'depositRequired': clientOrderData['depositRequired'] ?? true,
+        'depositAmount': depositAmount,
+        'depositPaid': clientOrderData['depositPaid'] ?? false,
+        'paymentMethod': clientOrderData['paymentMethod'],
+        'paymentStatus': clientOrderData['paymentStatus'],
+        // Points fidélité
+        'loyaltyPointsUsed': clientOrderData['loyaltyPointsUsed'] ?? 0,
+        'loyaltyDiscountAmount': loyaltyDiscount,
+        // Yango delivery
+        'deliveryPartner': 'Yango',
+        'deliveryFeePaidTo': 'driver',
+        'deliveryFeeIncluded': false,
+        'deliveryNote': clientOrderData['deliveryNote'],
+        'yangoStatus': 0,  // YangoDeliveryStatus.waiting
+        'remainingAmount': clientOrderData['remainingAmount'],
+        'kitchenStatus': 'pending',
       });
 
       // Mettre à jour clientOrderData avec l'id interne
@@ -273,6 +301,26 @@ class ClientFirebaseService {
       'status': ClientOrderStatus.cancelled.index,
       'updatedAt': DateTime.now().millisecondsSinceEpoch,
     });
+  }
+
+  Future<void> updateYangoStatus(String orderId, YangoDeliveryStatus yangoStatus) async {
+    await _db.collection('client_orders').doc(orderId).update({
+      'yangoStatus': yangoStatus.index,
+      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+    // Mettre à jour aussi dans la collection orders principale
+    try {
+      final snap = await _db.collection('orders')
+          .where('clientOrderId', isEqualTo: orderId)
+          .limit(1)
+          .get();
+      if (snap.docs.isNotEmpty) {
+        await snap.docs.first.reference.update({
+          'yangoStatus': yangoStatus.index,
+          'yangoStatusLabel': yangoStatus.label,
+        });
+      }
+    } catch (_) {}
   }
 
   // ── Paramètres commandes en ligne ──────────────────────────────────────

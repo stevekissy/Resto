@@ -28,6 +28,7 @@ enum NotifEvent {
   stockFaible,
   ruptureStock,
   notificationSysteme,
+  nouvelleCommandeEnLigne,   // Commande reçue depuis l'espace client
 }
 
 extension NotifEventX on NotifEvent {
@@ -45,6 +46,7 @@ extension NotifEventX on NotifEvent {
       case NotifEvent.stockFaible:           return 'Stock faible';
       case NotifEvent.ruptureStock:          return 'Produit en rupture';
       case NotifEvent.notificationSysteme:   return 'Notification système';
+      case NotifEvent.nouvelleCommandeEnLigne: return 'NOUVELLE COMMANDE EN LIGNE';
     }
   }
 
@@ -62,6 +64,7 @@ extension NotifEventX on NotifEvent {
       case NotifEvent.stockFaible:           return '⚠️';
       case NotifEvent.ruptureStock:          return '🚫';
       case NotifEvent.notificationSysteme:   return '🔔';
+      case NotifEvent.nouvelleCommandeEnLigne: return '📱';
     }
   }
 
@@ -80,6 +83,7 @@ extension NotifEventX on NotifEvent {
       case NotifEvent.stockFaible:           return 'discrete';
       case NotifEvent.ruptureStock:          return 'urgent';
       case NotifEvent.notificationSysteme:   return 'classic';
+      case NotifEvent.nouvelleCommandeEnLigne: return 'restaurant';
     }
   }
 
@@ -97,11 +101,13 @@ extension NotifEventX on NotifEvent {
       case NotifEvent.nouvelleReservation:
       case NotifEvent.reservationAujourdhui:
       case NotifEvent.reservationDemain:    return 'reservations';
+      case NotifEvent.nouvelleCommandeEnLigne: return 'cuisine';
       default:                              return 'systeme';
     }
   }
 
-  bool get isUrgent => this == NotifEvent.commandeUrgente || this == NotifEvent.ruptureStock;
+  bool get isUrgent => this == NotifEvent.commandeUrgente || this == NotifEvent.ruptureStock
+      || this == NotifEvent.nouvelleCommandeEnLigne;
 }
 
 // ── Entrée dans l'historique ──────────────────────────────────────────────
