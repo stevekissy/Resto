@@ -901,20 +901,49 @@ class _CartBottomSheet extends StatefulWidget {
 
 class _CartBottomSheetState extends State<_CartBottomSheet> {
   bool _infoExpanded = false;
+  final ScrollController _scrollCtrl = ScrollController();
+  final FocusNode _notesFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _notesFocus.addListener(() {
+      if (_notesFocus.hasFocus) {
+        // Auto-expand le panneau et scroll vers le bas
+        setState(() => _infoExpanded = true);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollCtrl.hasClients) {
+            _scrollCtrl.animateTo(
+              _scrollCtrl.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOut,
+            );
+          }
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    _notesFocus.dispose();
+    super.dispose();
+  }
 
   int get _totalQty => widget.cartItems.fold(0, (s, i) => s + i.quantity);
 
   @override
   Widget build(BuildContext context) {
-    final screenH = MediaQuery.of(context).size.height;
+    final keyboardH = MediaQuery.of(context).viewInsets.bottom;
 
     return Container(
-      height: screenH * 0.92,
       decoration: const BoxDecoration(
         color: Color(0xFF0F1629),
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           // ── Poignée ──────────────────────────────────────────────
           Container(
@@ -971,46 +1000,56 @@ class _CartBottomSheetState extends State<_CartBottomSheet> {
 
           const Divider(height: 1, color: Color(0xFF2A2A5A)),
 
-          // ── Liste articles ────────────────────────────────────────
+          // ── Zone scrollable : articles + panneau infos ───────────
           Expanded(
-            child: widget.cartItems.isEmpty
-                ? const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.shopping_cart_outlined, size: 52, color: Color(0xFF3A4A7A)),
-                        SizedBox(height: 12),
-                        Text('Panier vide', style: TextStyle(color: AppTheme.textSecondary, fontSize: 15)),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                    itemCount: widget.cartItems.length,
-                    itemBuilder: (context, i) {
-                      final item = widget.cartItems[i];
-                      return _CartSheetItem(
-                        item: item,
-                        onRemove: () => widget.onRemove(item.productId),
-                        onDecrease: () => widget.onDecrease(item.productId),
-                        onIncrease: () => widget.onIncrease(item.productId),
-                      );
-                    },
-                  ),
-          ),
+            child: SingleChildScrollView(
+              controller: _scrollCtrl,
+              physics: const ClampingScrollPhysics(),
+              child: Column(
+                children: [
+                  // Articles
+                  widget.cartItems.isEmpty
+                      ? const SizedBox(
+                          height: 120,
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.shopping_cart_outlined, size: 52, color: Color(0xFF3A4A7A)),
+                                SizedBox(height: 12),
+                                Text('Panier vide', style: TextStyle(color: AppTheme.textSecondary, fontSize: 15)),
+                              ],
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                          itemCount: widget.cartItems.length,
+                          itemBuilder: (context, i) {
+                            final item = widget.cartItems[i];
+                            return _CartSheetItem(
+                              item: item,
+                              onRemove: () => widget.onRemove(item.productId),
+                              onDecrease: () => widget.onDecrease(item.productId),
+                              onIncrease: () => widget.onIncrease(item.productId),
+                            );
+                          },
+                        ),
 
-          // ── Panneau "Informations commande" ───────────────────────
-          Container(
-            margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceLight,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFF2A2A5A)),
-            ),
-            child: Column(
-              children: [
-                // Bouton toggle
-                GestureDetector(
+                  // ── Panneau "Informations commande" ────────────────
+                  Container(
+                    margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceLight,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFF2A2A5A)),
+                    ),
+                    child: Column(
+                      children: [
+                        // Bouton toggle
+                        GestureDetector(
                   onTap: () => setState(() => _infoExpanded = !_infoExpanded),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1116,11 +1155,13 @@ class _CartBottomSheetState extends State<_CartBottomSheet> {
                                 onChanged: (v) { widget.onServerChanged(v); setState(() {}); },
                               ),
                               const SizedBox(height: 8),
-                              // Notes
+                              // Notes — FocusNode pour scroll auto sur mobile
                               TextField(
                                 controller: widget.notesController,
+                                focusNode: _notesFocus,
                                 style: const TextStyle(color: Colors.white, fontSize: 12),
                                 maxLines: 2,
+                                textInputAction: TextInputAction.done,
                                 decoration: const InputDecoration(
                                   hintText: 'Instructions spéciales...',
                                   contentPadding: EdgeInsets.all(10),
@@ -1130,13 +1171,20 @@ class _CartBottomSheetState extends State<_CartBottomSheet> {
                           ),
                         )
                       : const SizedBox.shrink(),
-                ),
-              ],
-            ),
-          ),
+                    ),       // AnimatedSize
+                      ],     // Column.children (info panel)
+                    ),       // Column (info panel)
+                  ),         // Container (info panel)
+                  const SizedBox(height: 4),  // breathing room at bottom
+                ],           // SingleChildScrollView Column children
+              ),             // Column
+            ),               // SingleChildScrollView
+          ),                 // Expanded
 
-          // ── Total + Bouton envoyer ────────────────────────────────
-          Container(
+          // ── Total + Bouton envoyer (monte avec le clavier) ────────
+          Padding(
+            padding: EdgeInsets.only(bottom: keyboardH),
+            child: Container(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
             decoration: const BoxDecoration(
               color: Color(0xFF0F1629),
@@ -1182,12 +1230,13 @@ class _CartBottomSheetState extends State<_CartBottomSheet> {
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+                ],       // SafeArea Column children
+              ),         // SafeArea Column
+            ),           // SafeArea
+          ),             // Container (total+button)
+          ),             // Padding(bottom: keyboardH)
+        ],               // outer Column children
+      ),                 // outer Column
     );
   }
 }
@@ -1308,6 +1357,23 @@ class _OrderInfoPanel extends StatefulWidget {
 
 class _OrderInfoPanelState extends State<_OrderInfoPanel> {
   bool _expanded = false;
+  final FocusNode _notesFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _notesFocus.addListener(() {
+      if (_notesFocus.hasFocus && !_expanded) {
+        setState(() => _expanded = true);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _notesFocus.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1429,8 +1495,10 @@ class _OrderInfoPanelState extends State<_OrderInfoPanel> {
                         // Notes
                         TextField(
                           controller: widget.notesController,
+                          focusNode: _notesFocus,
                           style: const TextStyle(color: Colors.white, fontSize: 12),
                           maxLines: 2,
+                          textInputAction: TextInputAction.done,
                           decoration: const InputDecoration(
                             hintText: 'Instructions spéciales...',
                             contentPadding: EdgeInsets.all(10),
