@@ -1332,4 +1332,318 @@ $prtBtn
     // L'URL relative fonctionne dans la fenêtre d'impression (même origine)
     return 'assets/images/logo_sankadiokro.png';
   }
+
+  // ── DEVIS RÉSERVATION ─────────────────────────────────────────────────────
+  void printReservationQuote({required Reservation reservation}) {
+    final html = _buildReservationQuoteHtml(reservation: reservation);
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    }
+  }
+
+  String _buildReservationQuoteHtml({required Reservation reservation}) {
+    final r       = reservation;
+    final fmt     = NumberFormat('#,###', 'fr_FR');
+    final fmtDate = DateFormat('dd/MM/yyyy', 'fr_FR');
+    final fmtFull = DateFormat('EEEE dd MMMM yyyy', 'fr_FR');
+    final now     = DateTime.now();
+    final ref     = 'DEV-${now.year}${now.month.toString().padLeft(2, '0')}-${now.millisecond}';
+
+    String statusColor;
+    switch (r.paymentStatus) {
+      case ReservationPaymentStatus.paye:    statusColor = '#2E7D32'; break;
+      case ReservationPaymentStatus.partiel: statusColor = '#E65100'; break;
+      default:                               statusColor = '#B71C1C';
+    }
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<title>Devis Réservation – ${r.nomClient}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #fff; color: #1a1a2e; font-size: 11px; }
+  .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #1565C0; padding-bottom: 14px; margin-bottom: 18px; }
+  .logo-block { display: flex; align-items: center; gap: 12px; }
+  .logo { width: 60px; height: 60px; object-fit: contain; }
+  .company h1 { font-size: 18px; font-weight: 900; color: #1565C0; letter-spacing: 2px; }
+  .company p  { font-size: 10px; color: #555; }
+  .doc-info   { text-align: right; }
+  .doc-info h2 { font-size: 16px; font-weight: 900; color: #1565C0; text-transform: uppercase; }
+  .doc-info .ref { font-size: 11px; color: #555; margin-top: 4px; }
+  .section { margin-bottom: 16px; }
+  .section-title { font-size: 12px; font-weight: 800; color: #1565C0; border-left: 4px solid #1565C0; padding-left: 8px; margin-bottom: 8px; text-transform: uppercase; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; }
+  .info-row  { display: flex; gap: 6px; }
+  .info-row .lbl { color: #666; min-width: 110px; }
+  .info-row .val { font-weight: 600; color: #1a1a2e; }
+  table.montants { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  table.montants th { background: #1565C0; color: #fff; padding: 8px 10px; text-align: left; font-size: 11px; }
+  table.montants td { padding: 8px 10px; border-bottom: 1px solid #e0e0e0; }
+  table.montants tr:nth-child(even) td { background: #f5f5f5; }
+  .net-box { background: #1565C0; color: white; padding: 14px 20px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin: 14px 0; }
+  .net-box .lbl { font-size: 14px; font-weight: 700; }
+  .net-box .val { font-size: 20px; font-weight: 900; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 700; color: white; }
+  .event-box { background: #E3F2FD; border: 1px solid #1565C0; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; }
+  .event-box .emoji { font-size: 28px; }
+  .event-type { font-size: 14px; font-weight: 900; color: #1565C0; }
+  .footer { margin-top: 24px; border-top: 1px solid #e0e0e0; padding-top: 12px; font-size: 9px; color: #888; text-align: center; }
+  .signatures { display: flex; gap: 20px; margin-top: 30px; }
+  .sig-block { flex: 1; border: 1px dashed #aaa; padding: 16px; border-radius: 6px; min-height: 70px; text-align: center; color: #666; font-size: 10px; }
+  @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo-block">
+    <img src="${_logoBase64()}" class="logo" alt="Logo"/>
+    <div class="company">
+      <h1>RESTAURANT SANKADIOKRO</h1>
+      <p>Restaurant Africain • Cuisine traditionnelle</p>
+      <p>Abidjan, Côte d\'Ivoire</p>
+    </div>
+  </div>
+  <div class="doc-info">
+    <h2>Devis Réservation</h2>
+    <div class="ref">Réf : $ref</div>
+    <div class="ref">Date : ${fmtDate.format(now)}</div>
+    <span class="badge" style="background:${statusColor}">${r.paymentStatus.label}</span>
+  </div>
+</div>
+
+<div class="event-box">
+  <div style="display:flex;align-items:center;gap:12px">
+    <span class="emoji">${r.typeEvenement.emoji}</span>
+    <div>
+      <div class="event-type">${r.typeEvenement.label}</div>
+      <div style="font-size:11px;color:#555">Le ${fmtFull.format(r.dateEvenement)}</div>
+      ${r.heureDebut.isNotEmpty ? '<div style="font-size:11px;color:#555">Horaires : ${r.heureDebut}${r.heureFin.isNotEmpty ? " – ${r.heureFin}" : ""}</div>' : ''}
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Informations client</div>
+  <div class="info-grid">
+    <div class="info-row"><span class="lbl">Nom complet :</span><span class="val">${r.nomClient}</span></div>
+    <div class="info-row"><span class="lbl">Téléphone :</span><span class="val">${r.telephone}</span></div>
+    ${r.telephoneSecondaire.isNotEmpty ? '<div class="info-row"><span class="lbl">Tél. secondaire :</span><span class="val">${r.telephoneSecondaire}</span></div>' : ''}
+    ${r.email.isNotEmpty ? '<div class="info-row"><span class="lbl">Email :</span><span class="val">${r.email}</span></div>' : ''}
+    ${r.adresse.isNotEmpty ? '<div class="info-row"><span class="lbl">Adresse :</span><span class="val">${r.adresse}</span></div>' : ''}
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Détails de l\'événement</div>
+  <div class="info-grid">
+    <div class="info-row"><span class="lbl">Type :</span><span class="val">${r.typeEvenement.label}</span></div>
+    <div class="info-row"><span class="lbl">Date événement :</span><span class="val">${fmtFull.format(r.dateEvenement)}</span></div>
+    <div class="info-row"><span class="lbl">Nb. personnes :</span><span class="val">${r.nombrePersonnes} personnes</span></div>
+    ${r.salle.isNotEmpty ? '<div class="info-row"><span class="lbl">Salle :</span><span class="val">${r.salle}</span></div>' : ''}
+    ${r.responsableCommercial.isNotEmpty ? '<div class="info-row"><span class="lbl">Responsable :</span><span class="val">${r.responsableCommercial}</span></div>' : ''}
+  </div>
+  ${r.description.isNotEmpty ? '<div style="margin-top:8px"><span style="color:#666">Description : </span>${r.description}</div>' : ''}
+</div>
+
+<div class="section">
+  <div class="section-title">Détail des montants</div>
+  <table class="montants">
+    <tr><th>Désignation</th><th style="text-align:right">Montant (F CFA)</th></tr>
+    <tr><td>Montant total devis</td><td style="text-align:right;font-weight:600">${fmt.format(r.montantTotal)}</td></tr>
+    ${r.remise > 0 ? '<tr><td>Remise accordée</td><td style="text-align:right;color:#c00">- ${fmt.format(r.remise)}</td></tr>' : ''}
+    <tr style="background:#E3F2FD"><td style="font-weight:800">Montant net</td><td style="text-align:right;font-weight:800">${fmt.format(r.montantNet)}</td></tr>
+    <tr><td>Acompte versé</td><td style="text-align:right;color:green">- ${fmt.format(r.acompteVerse)}</td></tr>
+    <tr><td>Montant déjà payé</td><td style="text-align:right;color:green">- ${fmt.format(r.montantPaye)}</td></tr>
+  </table>
+</div>
+
+<div class="net-box">
+  <span class="lbl">SOLDE RESTANT À PAYER</span>
+  <span class="val">${fmt.format(r.soldeRestant.clamp(0, double.infinity))} F CFA</span>
+</div>
+
+<div class="section">
+  <div class="section-title">Signatures</div>
+  <div class="signatures">
+    <div class="sig-block">
+      <div>Le Client</div>
+      <div style="margin-top:30px;border-top:1px solid #ccc;padding-top:6px">${r.nomClient}</div>
+    </div>
+    <div class="sig-block">
+      <div>La Direction</div>
+      <div style="margin-top:30px;border-top:1px solid #ccc;padding-top:6px">Restaurant SANKADIOKRO</div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  Ce document est un devis valable 30 jours à compter de sa date d\'émission.<br>
+  Restaurant SANKADIOKRO — Abidjan, Côte d\'Ivoire — Généré le ${DateFormat('dd/MM/yyyy HH:mm', 'fr_FR').format(now)}
+</div>
+
+</body></html>''';
+  }
+
+  // ── CONTRAT RÉSERVATION ───────────────────────────────────────────────────
+  void printReservationContract({required Reservation reservation}) {
+    final html = _buildReservationContractHtml(reservation: reservation);
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    }
+  }
+
+  String _buildReservationContractHtml({required Reservation reservation}) {
+    final r       = reservation;
+    final fmt     = NumberFormat('#,###', 'fr_FR');
+    final fmtDate = DateFormat('dd/MM/yyyy', 'fr_FR');
+    final fmtFull = DateFormat('EEEE dd MMMM yyyy', 'fr_FR');
+    final now     = DateTime.now();
+    final ref     = 'CONT-${now.year}${now.month.toString().padLeft(2, '0')}-${r.nomClient.length}${now.millisecond}';
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<title>Contrat de Réservation – ${r.nomClient}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #fff; color: #1a1a2e; font-size: 11px; line-height: 1.5; }
+  .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #1565C0; padding-bottom: 14px; margin-bottom: 18px; }
+  .logo-block { display: flex; align-items: center; gap: 12px; }
+  .logo { width: 60px; height: 60px; object-fit: contain; }
+  .company h1 { font-size: 18px; font-weight: 900; color: #1565C0; letter-spacing: 2px; }
+  .company p  { font-size: 10px; color: #555; }
+  .doc-info   { text-align: right; }
+  .doc-info h2 { font-size: 16px; font-weight: 900; color: #1565C0; text-transform: uppercase; }
+  .doc-info .ref { font-size: 11px; color: #555; margin-top: 4px; }
+  .parties { display: flex; gap: 16px; margin-bottom: 16px; }
+  .partie { flex: 1; background: #f5f9ff; border: 1px solid #1565C0; border-radius: 6px; padding: 12px; }
+  .partie h3 { font-size: 12px; font-weight: 800; color: #1565C0; margin-bottom: 6px; text-transform: uppercase; }
+  .article { margin-bottom: 14px; }
+  .article h4 { font-size: 12px; font-weight: 800; color: #1565C0; border-left: 4px solid #1565C0; padding-left: 8px; margin-bottom: 6px; }
+  .article p  { text-align: justify; color: #333; }
+  .fin-table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  .fin-table th { background: #1565C0; color: #fff; padding: 7px 10px; text-align: left; font-size: 11px; }
+  .fin-table td { padding: 7px 10px; border-bottom: 1px solid #e0e0e0; }
+  .net-box { background: #1565C0; color: white; padding: 12px 18px; border-radius: 8px; display: flex; justify-content: space-between; margin: 12px 0; }
+  .net-box .lbl { font-size: 13px; font-weight: 700; }
+  .net-box .val { font-size: 18px; font-weight: 900; }
+  .signatures { display: flex; gap: 20px; margin-top: 30px; }
+  .sig-block { flex: 1; border: 1px dashed #aaa; padding: 16px; border-radius: 6px; min-height: 80px; text-align: center; color: #666; font-size: 10px; }
+  .footer { margin-top: 20px; border-top: 1px solid #e0e0e0; padding-top: 10px; font-size: 9px; color: #888; text-align: center; }
+  @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo-block">
+    <img src="${_logoBase64()}" class="logo" alt="Logo"/>
+    <div class="company">
+      <h1>RESTAURANT SANKADIOKRO</h1>
+      <p>Restaurant Africain • Cuisine traditionnelle</p>
+      <p>Abidjan, Côte d\'Ivoire</p>
+    </div>
+  </div>
+  <div class="doc-info">
+    <h2>Contrat de Réservation</h2>
+    <div class="ref">Réf : $ref</div>
+    <div class="ref">Date : ${fmtDate.format(now)}</div>
+  </div>
+</div>
+
+<div class="parties">
+  <div class="partie">
+    <h3>Le Prestataire</h3>
+    <p><strong>Restaurant SANKADIOKRO</strong><br>Abidjan, Côte d\'Ivoire<br>Restauration – Événementiel</p>
+  </div>
+  <div class="partie">
+    <h3>Le Client</h3>
+    <p><strong>${r.nomClient}</strong><br>Tél. : ${r.telephone}${r.email.isNotEmpty ? '<br>' + r.email : ''}${r.adresse.isNotEmpty ? '<br>' + r.adresse : ''}</p>
+  </div>
+</div>
+
+<div class="article">
+  <h4>Article 1 – Objet du contrat</h4>
+  <p>Le Restaurant SANKADIOKRO s\'engage à mettre à la disposition du Client ses locaux et ses services pour l\'organisation de : <strong>${r.typeEvenement.emoji} ${r.typeEvenement.label}</strong>${r.description.isNotEmpty ? ', ' + r.description : ''}.</p>
+</div>
+
+<div class="article">
+  <h4>Article 2 – Date et détails de l\'événement</h4>
+  <p>
+    <strong>Date :</strong> ${fmtFull.format(r.dateEvenement)}<br>
+    ${r.heureDebut.isNotEmpty ? '<strong>Horaires :</strong> ${r.heureDebut}${r.heureFin.isNotEmpty ? " – ${r.heureFin}" : ""}<br>' : ''}
+    <strong>Nombre de personnes :</strong> ${r.nombrePersonnes} personnes<br>
+    ${r.salle.isNotEmpty ? '<strong>Salle/espace :</strong> ${r.salle}<br>' : ''}
+    ${r.responsableCommercial.isNotEmpty ? '<strong>Responsable commercial :</strong> ${r.responsableCommercial}' : ''}
+  </p>
+</div>
+
+<div class="article">
+  <h4>Article 3 – Conditions financières</h4>
+  <table class="fin-table">
+    <tr><th>Désignation</th><th style="text-align:right">Montant (F CFA)</th></tr>
+    <tr><td>Montant total convenu</td><td style="text-align:right;font-weight:700">${fmt.format(r.montantTotal)}</td></tr>
+    ${r.remise > 0 ? '<tr><td>Remise accordée</td><td style="text-align:right;color:green">- ${fmt.format(r.remise)}</td></tr>' : ''}
+    <tr><td><strong>Montant net</strong></td><td style="text-align:right;font-weight:800">${fmt.format(r.montantNet)}</td></tr>
+    <tr><td>Acompte à verser à la signature</td><td style="text-align:right;color:#c00">${fmt.format(r.acompteVerse)}</td></tr>
+  </table>
+  <div class="net-box">
+    <span class="lbl">SOLDE À RÉGLER LE JOUR DE L\'ÉVÉNEMENT</span>
+    <span class="val">${fmt.format((r.montantNet - r.acompteVerse).clamp(0, double.infinity))} F CFA</span>
+  </div>
+</div>
+
+<div class="article">
+  <h4>Article 4 – Conditions d\'annulation</h4>
+  <p>Toute annulation devra être notifiée par écrit au Restaurant SANKADIOKRO :<br>
+  — Annulation plus de 30 jours avant l\'événement : remboursement intégral de l\'acompte.<br>
+  — Annulation entre 15 et 30 jours : retenue de 50% de l\'acompte.<br>
+  — Annulation moins de 15 jours avant l\'événement : l\'acompte reste acquis au Prestataire.</p>
+</div>
+
+<div class="article">
+  <h4>Article 5 – Obligations du Prestataire</h4>
+  <p>Le Restaurant SANKADIOKRO s\'engage à fournir les prestations convenues dans les conditions définies au présent contrat, à maintenir la confidentialité des informations transmises par le Client, et à respecter les délais et conditions fixés.</p>
+</div>
+
+<div class="article">
+  <h4>Article 6 – Obligations du Client</h4>
+  <p>Le Client s\'engage à verser l\'acompte prévu à la signature du présent contrat, à informer le Prestataire de tout changement dans le nombre de convives au moins 72h avant l\'événement, et à régler le solde restant avant ou le jour de l\'événement.</p>
+</div>
+
+<div class="article">
+  <h4>Article 7 – Signatures</h4>
+  <p>Les parties reconnaissent avoir lu et accepté les termes du présent contrat.</p>
+  <div class="signatures">
+    <div class="sig-block">
+      <div><strong>Le Client</strong></div>
+      <div style="margin-top:8px;font-size:9px;color:#aaa">Lu et approuvé — Bon pour accord</div>
+      <div style="margin-top:24px;border-top:1px solid #ccc;padding-top:6px">${r.nomClient}</div>
+    </div>
+    <div class="sig-block">
+      <div><strong>Direction SANKADIOKRO</strong></div>
+      <div style="margin-top:8px;font-size:9px;color:#aaa">Cachet et signature</div>
+      <div style="margin-top:24px;border-top:1px solid #ccc;padding-top:6px">Restaurant SANKADIOKRO</div>
+    </div>
+    <div class="sig-block">
+      <div><strong>Responsable commercial</strong></div>
+      <div style="margin-top:8px;font-size:9px;color:#aaa">Visa</div>
+      <div style="margin-top:24px;border-top:1px solid #ccc;padding-top:6px">${r.responsableCommercial.isNotEmpty ? r.responsableCommercial : "_______________"}</div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  Contrat établi en deux exemplaires originaux de valeur égale.<br>
+  Restaurant SANKADIOKRO — Abidjan, Côte d\'Ivoire — ${DateFormat('dd/MM/yyyy HH:mm', 'fr_FR').format(now)}
+</div>
+
+</body></html>''';
+  }
 }

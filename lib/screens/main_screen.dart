@@ -15,12 +15,13 @@ import 'stats/stats_screen.dart';
 import 'suppliers/supplier_screen.dart';
 import 'admin/products_admin_screen.dart';
 import 'admin/admin_management_screen.dart';
+import 'reservations/reservation_screen.dart';
 import 'login_screen.dart';
 
 // ── Constantes de build — identifiant de version visible dans le drawer ──
-const String _kBuildCommit = 'ccf80da';
-const String _kBuildDate   = '21 Jun 2026';
-const String _kBuildFeatures = 'TTS v2 · Reçus PDF v2 · Stock · IA';
+const String _kBuildCommit = 'reservations';
+const String _kBuildDate   = '22 Jun 2026';
+const String _kBuildFeatures = 'TTS v2 · Salaires · Réservations · IA';
 
 /// Widget affiché quand un utilisateur tente d'accéder à un module interdit.
 class _AccessDeniedScreen extends StatelessWidget {
@@ -130,6 +131,10 @@ class _MainScreenState extends State<MainScreen> {
       _NavItem(
         icon: Icons.restaurant_menu, label: 'Produits',
         screen: const ProductsAdminScreen(), permissionKey: 'productManagement',
+      ),
+      _NavItem(
+        icon: Icons.event_note, label: 'Réservations',
+        screen: const ReservationScreen(), permissionKey: 'reservations',
       ),
       _NavItem(
         icon: Icons.admin_panel_settings, label: 'Gestion Admins',

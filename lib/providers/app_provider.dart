@@ -38,6 +38,9 @@ class AppProvider extends ChangeNotifier {
   StreamSubscription? _subContractAlerts;
   StreamSubscription? _subSalaries;
   StreamSubscription? _subSalaryPayments;
+  StreamSubscription? _subReservations;
+  StreamSubscription? _subReservationPayments;
+  StreamSubscription? _subReservationAlerts;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
@@ -170,6 +173,45 @@ class AppProvider extends ChangeNotifier {
 
   List<SalaryPayment> paymentsForSalary(String salaryId) =>
       _salaryPayments.where((p) => p.salaryId == salaryId).toList();
+
+  // ── Réservations & Événements ─────────────────────────────────────────
+  List<Reservation>        _reservations        = [];
+  List<Reservation>        get reservations     => _reservations;
+  List<ReservationPayment> _reservationPayments = [];
+  List<ReservationPayment> get reservationPayments => _reservationPayments;
+  List<ReservationAlert>   _reservationAlerts   = [];
+  List<ReservationAlert>   get reservationAlerts => _reservationAlerts;
+
+  List<Reservation> get reservationsToday =>
+      _reservations.where((r) => r.isToday).toList();
+
+  List<Reservation> get reservationsAVenir =>
+      _reservations.where((r) => !r.isPast && r.status != ReservationStatus.annule).toList();
+
+  List<Reservation> get reservationsConfirmees =>
+      _reservations.where((r) => r.status == ReservationStatus.confirme).toList();
+
+  List<Reservation> get reservationsEnAttente =>
+      _reservations.where((r) => r.status == ReservationStatus.enAttente).toList();
+
+  List<Reservation> get reservationsAnnulees =>
+      _reservations.where((r) => r.status == ReservationStatus.annule).toList();
+
+  double get reservationsMontantAttendu =>
+      _reservations.where((r) => r.status != ReservationStatus.annule)
+          .fold(0, (s, r) => s + r.montantNet);
+
+  double get reservationsMontantEncaisse =>
+      _reservations.fold(0, (s, r) => s + r.montantPaye);
+
+  double get reservationsSoldeRestant =>
+      reservationsMontantAttendu - reservationsMontantEncaisse;
+
+  List<ReservationPayment> paymentsForReservation(String reservationId) =>
+      _reservationPayments.where((p) => p.reservationId == reservationId).toList();
+
+  List<ReservationAlert> get unreadReservationAlerts =>
+      _reservationAlerts.where((a) => !a.isRead).toList();
 
   // ── Appel entrant ────────────────────────────────────────────────────
   CallSession? _incomingCall;
@@ -679,6 +721,28 @@ class AppProvider extends ChangeNotifier {
       cancelOnError: false,
     );
 
+    _subReservations = _firebase.streamReservations().listen(
+      (list) {
+        _reservations = list;
+        notifyListeners();
+        _generateReservationAlerts();
+      },
+      onError: (e) { debugPrint('[stream.reservations] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
+    _subReservationPayments = _firebase.streamAllReservationPayments().listen(
+      (list) { _reservationPayments = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.reservationPayments] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
+    _subReservationAlerts = _firebase.streamReservationAlerts().listen(
+      (list) { _reservationAlerts = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.reservationAlerts] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
     // Stream appels entrants (pour l'utilisateur connecté)
     final uid = _currentUser?.id;
     if (uid != null) {
@@ -712,6 +776,9 @@ class AppProvider extends ChangeNotifier {
     _subContractAlerts?.cancel();
     _subSalaries?.cancel();
     _subSalaryPayments?.cancel();
+    _subReservations?.cancel();
+    _subReservationPayments?.cancel();
+    _subReservationAlerts?.cancel();
   }
 
   /// Déconnexion complète : signOut Firebase + nettoyage local.
@@ -1711,6 +1778,75 @@ class AppProvider extends ChangeNotifier {
       totalPaye: list.fold(0, (s, e) => s + e.montantPaye),
     );
     await _firebase.savePayrollReport(report);
+  }
+
+  // ── RÉSERVATIONS CRUD ────────────────────────────────────────────────────
+
+  Future<void> addReservation(Reservation r) async {
+    try { await _firebase.addReservation(r); }
+    catch (e) { debugPrint('[addReservation] $e'); rethrow; }
+  }
+
+  Future<void> updateReservation(Reservation r) async {
+    try { await _firebase.updateReservation(r); }
+    catch (e) { debugPrint('[updateReservation] $e'); rethrow; }
+  }
+
+  Future<void> deleteReservation(String id) async {
+    try {
+      await _firebase.deleteReservation(id);
+      await _firebase.deleteReservationAlertsByReservation(id);
+    } catch (e) { debugPrint('[deleteReservation] $e'); rethrow; }
+  }
+
+  Future<void> addReservationPayment(ReservationPayment p) async {
+    try { await _firebase.addReservationPayment(p); }
+    catch (e) { debugPrint('[addReservationPayment] $e'); rethrow; }
+  }
+
+  Future<void> markReservationAlertRead(String id) async {
+    try { await _firebase.markReservationAlertRead(id); }
+    catch (e) { debugPrint('[markReservationAlertRead] $e'); }
+  }
+
+  Future<void> markAllReservationAlertsRead() async {
+    for (final a in _reservationAlerts.where((x) => !x.isRead)) {
+      await _firebase.markReservationAlertRead(a.id);
+    }
+  }
+
+  /// Génère automatiquement les alertes pour les réservations à venir
+  Future<void> _generateReservationAlerts() async {
+    final now = DateTime.now();
+    for (final r in _reservations) {
+      if (r.status == ReservationStatus.annule) continue;
+      final days = r.dateEvenement.difference(now).inDays;
+      final thresholds = [30, 15, 7, 3, 1, 0];
+      for (final t in thresholds) {
+        if (days == t || (t == 1 && days == 0 && r.dateEvenement.day == now.day)) {
+          final typeAlerte = t == 30 ? '30j' : t == 15 ? '15j' : t == 7 ? '7j'
+              : t == 3 ? '3j' : t == 1 ? '24h' : 'auj';
+          final msg = t == 0
+              ? "Événement aujourd'hui : ${r.typeEvenement.label} — ${r.nomClient}"
+              : t == 1
+              ? "Demain : ${r.typeEvenement.label} de ${r.nomClient} (${r.nombrePersonnes} pers.)"
+              : "Dans ${t == 30 ? '30' : t == 15 ? '15' : t == 7 ? '7' : '3'} jours : ${r.typeEvenement.label} — ${r.nomClient}";
+          await _firebase.upsertReservationAlert(ReservationAlert(
+            id: '', reservationId: r.id, nomClient: r.nomClient,
+            typeAlerte: typeAlerte, message: msg, dateAlerte: now,
+          ));
+        }
+      }
+      // Alerte impayé
+      if (r.soldeRestant > 0 && days <= 7 && days >= 0) {
+        await _firebase.upsertReservationAlert(ReservationAlert(
+          id: '', reservationId: r.id, nomClient: r.nomClient,
+          typeAlerte: 'impaye',
+          message: 'Solde impayé de ${r.soldeRestant.toStringAsFixed(0)} F CFA — ${r.nomClient}',
+          dateAlerte: now,
+        ));
+      }
+    }
   }
 
   @override

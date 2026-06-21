@@ -1255,36 +1255,42 @@ class FirebaseService {
           'dashboard': true, 'orders': true, 'kitchen': true, 'cashier': true,
           'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
           'suppliers': true, 'productManagement': true, 'adminManagement': true,
+          'reservations': true,
         };
       case UserRole.manager:
         return {
           'dashboard': true, 'orders': true, 'kitchen': true, 'cashier': true,
           'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
           'suppliers': true, 'productManagement': true, 'adminManagement': false,
+          'reservations': true,
         };
       case UserRole.cashier:
         return {
           'dashboard': true, 'orders': true, 'kitchen': false, 'cashier': true,
           'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
+          'reservations': true,
         };
       case UserRole.kitchen:
         return {
           'dashboard': true, 'orders': false, 'kitchen': true, 'cashier': false,
           'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
+          'reservations': false,
         };
       case UserRole.server:
         return {
           'dashboard': true, 'orders': true, 'kitchen': false, 'cashier': false,
           'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
+          'reservations': false,
         };
       case UserRole.stockManager:
         return {
           'dashboard': true, 'orders': false, 'kitchen': false, 'cashier': false,
           'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': true, 'productManagement': true, 'adminManagement': false,
+          'reservations': false,
         };
     }
   }
@@ -1908,6 +1914,106 @@ class FirebaseService {
           .orderBy('annee', descending: true)
           .snapshots()
           .map((s) => s.docs.map((d) => PayrollReport.fromMap(d.data(), d.id)).toList());
+
+  // ── RÉSERVATIONS & ÉVÉNEMENTS ─────────────────────────────────────────
+
+  Stream<List<Reservation>> streamReservations() =>
+      _db.collection('reservations')
+          .orderBy('dateEvenement', descending: false)
+          .snapshots()
+          .map((s) => s.docs.map((d) => Reservation.fromMap(d.data(), d.id)).toList());
+
+  Stream<List<Reservation>> streamReservationsByMonth(int year, int month) {
+    final start = DateTime(year, month, 1).toIso8601String();
+    final end   = DateTime(year, month + 1, 1).toIso8601String();
+    return _db.collection('reservations')
+        .where('dateEvenement', isGreaterThanOrEqualTo: start)
+        .where('dateEvenement', isLessThan: end)
+        .snapshots()
+        .map((s) => s.docs.map((d) => Reservation.fromMap(d.data(), d.id)).toList());
+  }
+
+  Future<void> addReservation(Reservation r) async {
+    final ref = _db.collection('reservations').doc();
+    await ref.set(r.copyWith(id: ref.id).toMap());
+  }
+
+  Future<void> updateReservation(Reservation r) =>
+      _db.collection('reservations').doc(r.id).update(r.toMap());
+
+  Future<void> deleteReservation(String id) =>
+      _db.collection('reservations').doc(id).delete();
+
+  // Paiements réservation
+  Stream<List<ReservationPayment>> streamReservationPayments(String reservationId) =>
+      _db.collection('reservation_payments')
+          .where('reservationId', isEqualTo: reservationId)
+          .snapshots()
+          .map((s) {
+            final list = s.docs.map((d) => ReservationPayment.fromMap(d.data(), d.id)).toList();
+            list.sort((a, b) => b.date.compareTo(a.date));
+            return list;
+          });
+
+  Stream<List<ReservationPayment>> streamAllReservationPayments() =>
+      _db.collection('reservation_payments')
+          .snapshots()
+          .map((s) {
+            final list = s.docs.map((d) => ReservationPayment.fromMap(d.data(), d.id)).toList();
+            list.sort((a, b) => b.date.compareTo(a.date));
+            return list;
+          });
+
+  Future<void> addReservationPayment(ReservationPayment p) async {
+    final ref = _db.collection('reservation_payments').doc();
+    await ref.set(p.toMap());
+    // Mise à jour du montant payé sur la réservation
+    final snap = await _db.collection('reservations').doc(p.reservationId).get();
+    if (snap.exists) {
+      final res = Reservation.fromMap(snap.data()!, snap.id);
+      final newPaye = res.montantPaye + p.montant;
+      ReservationPaymentStatus newStatus;
+      if (newPaye <= 0)             newStatus = ReservationPaymentStatus.nonPaye;
+      else if (newPaye >= res.montantNet) newStatus = ReservationPaymentStatus.paye;
+      else                           newStatus = ReservationPaymentStatus.partiel;
+      await _db.collection('reservations').doc(p.reservationId).update({
+        'montantPaye': newPaye,
+        'paymentStatus': newStatus.name,
+      });
+    }
+  }
+
+  // Alertes réservation
+  Stream<List<ReservationAlert>> streamReservationAlerts() =>
+      _db.collection('reservation_alerts')
+          .where('isRead', isEqualTo: false)
+          .snapshots()
+          .map((s) {
+            final list = s.docs.map((d) => ReservationAlert.fromMap(d.data(), d.id)).toList();
+            list.sort((a, b) => b.dateAlerte.compareTo(a.dateAlerte));
+            return list;
+          });
+
+  Future<void> markReservationAlertRead(String id) =>
+      _db.collection('reservation_alerts').doc(id).update({'isRead': true});
+
+  Future<void> upsertReservationAlert(ReservationAlert a) async {
+    // Chercher une alerte existante non lue pour ce typeAlerte + reservationId
+    final existing = await _db.collection('reservation_alerts')
+        .where('reservationId', isEqualTo: a.reservationId)
+        .where('typeAlerte', isEqualTo: a.typeAlerte)
+        .where('isRead', isEqualTo: false)
+        .get();
+    if (existing.docs.isNotEmpty) return; // déjà présente
+    final ref = _db.collection('reservation_alerts').doc();
+    await ref.set({...a.toMap(), 'id': ref.id});
+  }
+
+  Future<void> deleteReservationAlertsByReservation(String reservationId) async {
+    final snap = await _db.collection('reservation_alerts')
+        .where('reservationId', isEqualTo: reservationId).get();
+    for (final doc in snap.docs) { await doc.reference.delete(); }
+  }
 }
 
 // ── Helpers privés pour les transactions stock ─────────────────────────────

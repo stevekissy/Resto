@@ -1689,3 +1689,354 @@ class PayrollReport {
         generatedAt:   DateTime.tryParse(m['generatedAt'] as String? ?? '') ?? DateTime.now(),
       );
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// MODULE RÉSERVATIONS & ÉVÉNEMENTS
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Enum type d'événement ─────────────────────────────────────────────────
+enum EventType {
+  anniversaire, mariage, bapteme, reunion, soutenance,
+  formation, dejeunerEntreprise, dinerEntreprise, reservationSimple, autre
+}
+
+extension EventTypeX on EventType {
+  String get label {
+    switch (this) {
+      case EventType.anniversaire:       return 'Anniversaire';
+      case EventType.mariage:            return 'Mariage';
+      case EventType.bapteme:            return 'Baptême';
+      case EventType.reunion:            return 'Réunion';
+      case EventType.soutenance:         return 'Soutenance';
+      case EventType.formation:          return 'Formation';
+      case EventType.dejeunerEntreprise: return 'Déjeuner entreprise';
+      case EventType.dinerEntreprise:    return 'Dîner entreprise';
+      case EventType.reservationSimple:  return 'Réservation simple';
+      case EventType.autre:              return 'Autre';
+    }
+  }
+
+  String get emoji {
+    switch (this) {
+      case EventType.anniversaire:       return '🎂';
+      case EventType.mariage:            return '💍';
+      case EventType.bapteme:            return '👶';
+      case EventType.reunion:            return '🤝';
+      case EventType.soutenance:         return '🎓';
+      case EventType.formation:          return '📚';
+      case EventType.dejeunerEntreprise: return '🍽️';
+      case EventType.dinerEntreprise:    return '🌙';
+      case EventType.reservationSimple:  return '📅';
+      case EventType.autre:              return '⭐';
+    }
+  }
+
+  static EventType fromString(String s) {
+    return EventType.values.firstWhere(
+      (e) => e.name == s,
+      orElse: () => EventType.autre,
+    );
+  }
+}
+
+// ── Enum statut réservation ───────────────────────────────────────────────
+enum ReservationStatus { enAttente, confirme, annule, termine }
+
+extension ReservationStatusX on ReservationStatus {
+  String get label {
+    switch (this) {
+      case ReservationStatus.enAttente: return 'En attente';
+      case ReservationStatus.confirme:  return 'Confirmée';
+      case ReservationStatus.annule:    return 'Annulée';
+      case ReservationStatus.termine:   return 'Terminée';
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case ReservationStatus.enAttente: return const Color(0xFFFFC107);
+      case ReservationStatus.confirme:  return const Color(0xFF2196F3);
+      case ReservationStatus.annule:    return const Color(0xFFF44336);
+      case ReservationStatus.termine:   return const Color(0xFF4CAF50);
+    }
+  }
+
+  static ReservationStatus fromString(String s) {
+    return ReservationStatus.values.firstWhere(
+      (e) => e.name == s,
+      orElse: () => ReservationStatus.enAttente,
+    );
+  }
+}
+
+// ── Enum statut paiement réservation ─────────────────────────────────────
+enum ReservationPaymentStatus { nonPaye, partiel, paye }
+
+extension ReservationPaymentStatusX on ReservationPaymentStatus {
+  String get label {
+    switch (this) {
+      case ReservationPaymentStatus.nonPaye: return 'Non payé';
+      case ReservationPaymentStatus.partiel: return 'Partiel';
+      case ReservationPaymentStatus.paye:    return 'Payé';
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case ReservationPaymentStatus.nonPaye: return const Color(0xFFF44336);
+      case ReservationPaymentStatus.partiel: return const Color(0xFFFFC107);
+      case ReservationPaymentStatus.paye:    return const Color(0xFF4CAF50);
+    }
+  }
+
+  static ReservationPaymentStatus fromString(String s) {
+    return ReservationPaymentStatus.values.firstWhere(
+      (e) => e.name == s,
+      orElse: () => ReservationPaymentStatus.nonPaye,
+    );
+  }
+}
+
+// ── Modèle Réservation ────────────────────────────────────────────────────
+class Reservation {
+  final String id;
+  // Client
+  final String nomClient;
+  final String telephone;
+  final String telephoneSecondaire;
+  final String email;
+  final String adresse;
+  // Événement
+  final EventType typeEvenement;
+  final DateTime dateReservation;
+  final DateTime dateEvenement;
+  final String heureDebut;
+  final String heureFin;
+  final int nombrePersonnes;
+  final String salle;
+  final String responsableCommercial;
+  final String description;
+  // Montants
+  final double montantTotal;
+  final double acompteVerse;
+  final double remise;
+  // Statuts
+  ReservationStatus status;
+  ReservationPaymentStatus paymentStatus;
+  // Paiement
+  final double montantPaye;
+  // Méta
+  final DateTime createdAt;
+  final String createdBy;
+
+  Reservation({
+    required this.id,
+    required this.nomClient,
+    required this.telephone,
+    this.telephoneSecondaire = '',
+    this.email = '',
+    this.adresse = '',
+    required this.typeEvenement,
+    required this.dateReservation,
+    required this.dateEvenement,
+    this.heureDebut = '',
+    this.heureFin = '',
+    this.nombrePersonnes = 1,
+    this.salle = '',
+    this.responsableCommercial = '',
+    this.description = '',
+    required this.montantTotal,
+    this.acompteVerse = 0,
+    this.remise = 0,
+    this.status = ReservationStatus.enAttente,
+    this.paymentStatus = ReservationPaymentStatus.nonPaye,
+    this.montantPaye = 0,
+    DateTime? createdAt,
+    this.createdBy = '',
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  double get soldeRestant => montantTotal - remise - montantPaye;
+  double get montantNet   => montantTotal - remise;
+  bool   get isToday      => _sameDay(dateEvenement, DateTime.now());
+  bool   get isPast       => dateEvenement.isBefore(DateTime.now());
+  int    get daysUntil    => dateEvenement.difference(DateTime.now()).inDays;
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  Map<String, dynamic> toMap() => {
+    'nomClient':              nomClient,
+    'telephone':              telephone,
+    'telephoneSecondaire':    telephoneSecondaire,
+    'email':                  email,
+    'adresse':                adresse,
+    'typeEvenement':          typeEvenement.name,
+    'dateReservation':        dateReservation.toIso8601String(),
+    'dateEvenement':          dateEvenement.toIso8601String(),
+    'heureDebut':             heureDebut,
+    'heureFin':               heureFin,
+    'nombrePersonnes':        nombrePersonnes,
+    'salle':                  salle,
+    'responsableCommercial':  responsableCommercial,
+    'description':            description,
+    'montantTotal':           montantTotal,
+    'acompteVerse':           acompteVerse,
+    'remise':                 remise,
+    'status':                 status.name,
+    'paymentStatus':          paymentStatus.name,
+    'montantPaye':            montantPaye,
+    'createdAt':              createdAt.toIso8601String(),
+    'createdBy':              createdBy,
+  };
+
+  factory Reservation.fromMap(Map<String, dynamic> m, String docId) => Reservation(
+    id:                    docId,
+    nomClient:             m['nomClient']            as String? ?? '',
+    telephone:             m['telephone']            as String? ?? '',
+    telephoneSecondaire:   m['telephoneSecondaire']  as String? ?? '',
+    email:                 m['email']                as String? ?? '',
+    adresse:               m['adresse']              as String? ?? '',
+    typeEvenement:         EventTypeX.fromString(m['typeEvenement'] as String? ?? ''),
+    dateReservation:       DateTime.tryParse(m['dateReservation'] as String? ?? '') ?? DateTime.now(),
+    dateEvenement:         DateTime.tryParse(m['dateEvenement']  as String? ?? '') ?? DateTime.now(),
+    heureDebut:            m['heureDebut']           as String? ?? '',
+    heureFin:              m['heureFin']             as String? ?? '',
+    nombrePersonnes:       (m['nombrePersonnes']     as num?)?.toInt() ?? 1,
+    salle:                 m['salle']                as String? ?? '',
+    responsableCommercial: m['responsableCommercial'] as String? ?? '',
+    description:           m['description']          as String? ?? '',
+    montantTotal:          (m['montantTotal']        as num?)?.toDouble() ?? 0,
+    acompteVerse:          (m['acompteVerse']        as num?)?.toDouble() ?? 0,
+    remise:                (m['remise']              as num?)?.toDouble() ?? 0,
+    status:                ReservationStatusX.fromString(m['status'] as String? ?? ''),
+    paymentStatus:         ReservationPaymentStatusX.fromString(m['paymentStatus'] as String? ?? ''),
+    montantPaye:           (m['montantPaye']         as num?)?.toDouble() ?? 0,
+    createdAt:             DateTime.tryParse(m['createdAt'] as String? ?? '') ?? DateTime.now(),
+    createdBy:             m['createdBy']            as String? ?? '',
+  );
+
+  Reservation copyWith({
+    String? id, String? nomClient, String? telephone, String? telephoneSecondaire,
+    String? email, String? adresse, EventType? typeEvenement,
+    DateTime? dateReservation, DateTime? dateEvenement,
+    String? heureDebut, String? heureFin, int? nombrePersonnes,
+    String? salle, String? responsableCommercial, String? description,
+    double? montantTotal, double? acompteVerse, double? remise,
+    ReservationStatus? status, ReservationPaymentStatus? paymentStatus,
+    double? montantPaye, DateTime? createdAt, String? createdBy,
+  }) => Reservation(
+    id:                    id                    ?? this.id,
+    nomClient:             nomClient             ?? this.nomClient,
+    telephone:             telephone             ?? this.telephone,
+    telephoneSecondaire:   telephoneSecondaire   ?? this.telephoneSecondaire,
+    email:                 email                 ?? this.email,
+    adresse:               adresse               ?? this.adresse,
+    typeEvenement:         typeEvenement         ?? this.typeEvenement,
+    dateReservation:       dateReservation       ?? this.dateReservation,
+    dateEvenement:         dateEvenement         ?? this.dateEvenement,
+    heureDebut:            heureDebut            ?? this.heureDebut,
+    heureFin:              heureFin              ?? this.heureFin,
+    nombrePersonnes:       nombrePersonnes       ?? this.nombrePersonnes,
+    salle:                 salle                 ?? this.salle,
+    responsableCommercial: responsableCommercial ?? this.responsableCommercial,
+    description:           description           ?? this.description,
+    montantTotal:          montantTotal          ?? this.montantTotal,
+    acompteVerse:          acompteVerse          ?? this.acompteVerse,
+    remise:                remise                ?? this.remise,
+    status:                status                ?? this.status,
+    paymentStatus:         paymentStatus         ?? this.paymentStatus,
+    montantPaye:           montantPaye           ?? this.montantPaye,
+    createdAt:             createdAt             ?? this.createdAt,
+    createdBy:             createdBy             ?? this.createdBy,
+  );
+}
+
+// ── Paiement réservation ─────────────────────────────────────────────────
+class ReservationPayment {
+  final String id;
+  final String reservationId;
+  final String nomClient;
+  final double montant;
+  final String modePaiement;
+  final DateTime date;
+  final String caissier;
+  final String observation;
+  final String typeVersement; // 'acompte' | 'complement' | 'final' | 'autre'
+
+  ReservationPayment({
+    required this.id,
+    required this.reservationId,
+    required this.nomClient,
+    required this.montant,
+    required this.modePaiement,
+    required this.date,
+    this.caissier = '',
+    this.observation = '',
+    this.typeVersement = 'complement',
+  });
+
+  Map<String, dynamic> toMap() => {
+    'reservationId':  reservationId,
+    'nomClient':      nomClient,
+    'montant':        montant,
+    'modePaiement':   modePaiement,
+    'date':           date.toIso8601String(),
+    'caissier':       caissier,
+    'observation':    observation,
+    'typeVersement':  typeVersement,
+  };
+
+  factory ReservationPayment.fromMap(Map<String, dynamic> m, String docId) =>
+      ReservationPayment(
+        id:            docId,
+        reservationId: m['reservationId'] as String? ?? '',
+        nomClient:     m['nomClient']     as String? ?? '',
+        montant:       (m['montant']      as num?)?.toDouble() ?? 0,
+        modePaiement:  m['modePaiement']  as String? ?? 'Espèces',
+        date:          DateTime.tryParse(m['date'] as String? ?? '') ?? DateTime.now(),
+        caissier:      m['caissier']      as String? ?? '',
+        observation:   m['observation']   as String? ?? '',
+        typeVersement: m['typeVersement'] as String? ?? 'complement',
+      );
+}
+
+// ── Alerte réservation ────────────────────────────────────────────────────
+class ReservationAlert {
+  final String id;
+  final String reservationId;
+  final String nomClient;
+  final String typeAlerte; // '30j' | '15j' | '7j' | '3j' | '24h' | 'impaye' | 'auj'
+  final String message;
+  final DateTime dateAlerte;
+  bool isRead;
+
+  ReservationAlert({
+    required this.id,
+    required this.reservationId,
+    required this.nomClient,
+    required this.typeAlerte,
+    required this.message,
+    required this.dateAlerte,
+    this.isRead = false,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'reservationId': reservationId,
+    'nomClient':     nomClient,
+    'typeAlerte':    typeAlerte,
+    'message':       message,
+    'dateAlerte':    dateAlerte.toIso8601String(),
+    'isRead':        isRead,
+  };
+
+  factory ReservationAlert.fromMap(Map<String, dynamic> m, String docId) =>
+      ReservationAlert(
+        id:            docId,
+        reservationId: m['reservationId'] as String? ?? '',
+        nomClient:     m['nomClient']     as String? ?? '',
+        typeAlerte:    m['typeAlerte']    as String? ?? '',
+        message:       m['message']       as String? ?? '',
+        dateAlerte:    DateTime.tryParse(m['dateAlerte'] as String? ?? '') ?? DateTime.now(),
+        isRead:        m['isRead']        as bool? ?? false,
+      );
+}
