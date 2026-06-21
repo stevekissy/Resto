@@ -754,6 +754,258 @@ $prtBtn
         .replaceAll("'", '&#x27;');
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  //  CONTRAT EMPLOYÉ — impression PDF A4
+  //  Appelé depuis contract_screen.dart via PrintService().printContract(contract: c)
+  // ─────────────────────────────────────────────────────────────────────
+  void printContract({required EmployeeContract contract}) {
+    final html = _buildContractHtml(contract: contract);
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    } else {
+      if (kDebugMode) debugPrint('[PrintService] Mobile: contrat employé ${contract.employeeId}');
+    }
+  }
+
+  /// Construit le HTML A4 pour un contrat employé.
+  String _buildContractHtml({required EmployeeContract contract}) {
+    final logo = _logoBase64();
+    final dateFmtShort = DateFormat('dd/MM/yyyy');
+    final now = DateTime.now();
+
+    final startStr  = dateFmtShort.format(contract.startDate);
+    final endStr    = contract.endDate != null ? dateFmtShort.format(contract.endDate!) : '—';
+    final printedAt = DateFormat('dd/MM/yyyy HH:mm').format(now);
+    final typeLabel   = contract.type.label;
+    final statusLabel = contract.computedStatus.label;
+    final salary = contract.salary > 0
+        ? '${_fmt.format(contract.salary)} FCFA'
+        : '—';
+    final poste   = _escape(contract.poste.isNotEmpty ? contract.poste : '—');
+    final site    = _escape(contract.site.isNotEmpty  ? contract.site  : '—');
+    final comment = _escape(contract.comment.isNotEmpty ? contract.comment : '—');
+
+    // Status colour for the badge
+    final statusHex = _contractStatusHex(contract.computedStatus);
+
+    // Days left row (only when there's an endDate)
+    String daysLeftRow = '';
+    if (contract.endDate != null) {
+      final d = contract.daysLeft!;
+      final daysStr = d < 0 ? 'Expiré (${d.abs()} jours)' : 'Dans $d jour(s)';
+      daysLeftRow = '''
+        <tr>
+          <td class="ct-label">Jours restants</td>
+          <td class="ct-value">$daysStr</td>
+        </tr>''';
+    }
+
+    // Comment/decision block (shown when comment is set)
+    String decisionBlock = '';
+    if (contract.comment.isNotEmpty) {
+      decisionBlock = '''
+      <div class="section-block">
+        <div class="section-heading">Commentaire / Décision</div>
+        <p class="decision-text">${_escape(contract.comment)}</p>
+      </div>''';
+    }
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<title>Contrat Employé — ${_escape(contract.poste)}</title>
+<style>
+  @page { size: A4; margin: 18mm 15mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11px; color: #111; background: #fff;
+  }
+  .page { width: 100%; }
+
+  /* ── EN-TÊTE ── */
+  .doc-header { display: flex; align-items: center; border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 14px; }
+  .logo-wrap  { flex-shrink: 0; margin-right: 14px; }
+  .logo-img   { width: 64px; height: 64px; object-fit: contain; }
+  .hdr-text   { flex: 1; }
+  .hdr-name   { font-size: 16px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
+  .hdr-tag    { font-size: 10px; font-style: italic; color: #555; margin-top: 2px; }
+  .doc-title-wrap { text-align: right; }
+  .doc-title  { font-size: 13px; font-weight: bold; text-transform: uppercase;
+                letter-spacing: 1.2px; color: #0D47A1; border: 1.5px solid #0D47A1;
+                padding: 4px 14px; border-radius: 4px; display: inline-block; }
+  .doc-subtitle { font-size: 9px; color: #777; margin-top: 4px; }
+
+  /* ── BADGE STATUT ── */
+  .status-badge { display: inline-block; padding: 3px 12px; border-radius: 12px;
+                  font-weight: bold; font-size: 10.5px; letter-spacing: 0.8px;
+                  background: $statusHex; color: #fff; }
+
+  /* ── SECTIONS ── */
+  .section-block { margin-bottom: 14px; }
+  .section-heading {
+    font-size: 9px; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 1.4px; color: #555;
+    border-bottom: 1px solid #ddd; padding-bottom: 3px; margin-bottom: 6px;
+  }
+
+  /* ── TABLE CONTRAT ── */
+  .ct-table { width: 100%; border-collapse: collapse; }
+  .ct-table tr td { padding: 4px 4px; font-size: 11px; vertical-align: top; border-bottom: 1px solid #f0f0f0; }
+  .ct-label { color: #555; width: 38%; }
+  .ct-value { font-weight: bold; color: #111; }
+
+  /* ── DÉCISION ── */
+  .decision-text {
+    font-style: italic; color: #333; background: #F9F9F9;
+    border-left: 3px solid #0D47A1; padding: 6px 10px;
+    border-radius: 0 4px 4px 0; font-size: 11px; margin-top: 4px;
+  }
+
+  /* ── SIGNATURES ── */
+  .signatures-row { display: flex; gap: 24px; margin-top: 40px; }
+  .sig-block { flex: 1; text-align: center; }
+  .sig-title { font-size: 10px; font-weight: bold; color: #333; text-transform: uppercase;
+               letter-spacing: 0.8px; margin-bottom: 48px; }
+  .sig-line  { border-top: 1px solid #111; padding-top: 4px; font-size: 9.5px; color: #555; }
+
+  /* ── PIED DE PAGE ── */
+  .doc-footer { border-top: 1px dashed #aaa; margin-top: 30px; padding-top: 6px;
+                text-align: center; font-size: 8.5px; color: #777; }
+
+  /* ── BOUTON ── */
+  .print-btn { text-align: center; margin-top: 18px; }
+
+  /* ── ÉCRAN ── */
+  @media screen {
+    body { background: #ECEFF1; display: flex; justify-content: center; padding: 24px; }
+    .page { background: #fff; max-width: 210mm; box-shadow: 0 4px 24px rgba(0,0,0,0.15); padding: 20px 24px; }
+  }
+  @media print {
+    body { background: #fff; }
+    .print-btn { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- EN-TÊTE -->
+  <div class="doc-header">
+    <div class="logo-wrap">
+      <img src="$logo" alt="Logo" class="logo-img" onerror="this.style.display='none'" />
+    </div>
+    <div class="hdr-text">
+      <div class="hdr-name">Restaurant Sankadiokro</div>
+      <div class="hdr-tag">Cuisine Africaine &amp; Ivoirienne</div>
+    </div>
+    <div class="doc-title-wrap">
+      <div class="doc-title">Contrat de Travail</div>
+      <div class="doc-subtitle">Imprimé le $printedAt</div>
+    </div>
+  </div>
+
+  <!-- INFORMATIONS DU CONTRAT -->
+  <div class="section-block">
+    <div class="section-heading">Informations du Contrat</div>
+    <table class="ct-table">
+      <tr>
+        <td class="ct-label">Type de contrat</td>
+        <td class="ct-value">$typeLabel</td>
+      </tr>
+      <tr>
+        <td class="ct-label">Poste</td>
+        <td class="ct-value">$poste</td>
+      </tr>
+      <tr>
+        <td class="ct-label">Site d'affectation</td>
+        <td class="ct-value">$site</td>
+      </tr>
+      <tr>
+        <td class="ct-label">Date de début</td>
+        <td class="ct-value">$startStr</td>
+      </tr>
+      <tr>
+        <td class="ct-label">Date de fin</td>
+        <td class="ct-value">$endStr</td>
+      </tr>
+      $daysLeftRow
+      <tr>
+        <td class="ct-label">Salaire mensuel</td>
+        <td class="ct-value">$salary</td>
+      </tr>
+      <tr>
+        <td class="ct-label">Statut</td>
+        <td class="ct-value"><span class="status-badge">$statusLabel</span></td>
+      </tr>
+      <tr>
+        <td class="ct-label">Commentaire</td>
+        <td class="ct-value">$comment</td>
+      </tr>
+    </table>
+  </div>
+
+  $decisionBlock
+
+  <!-- CLAUSES -->
+  <div class="section-block">
+    <div class="section-heading">Clauses &amp; Conditions</div>
+    <p style="font-size:10.5px;color:#333;line-height:1.7;">
+      Le présent contrat est établi conformément aux dispositions du Code du Travail de la République de
+      Côte d'Ivoire. L'employé s'engage à respecter le règlement intérieur de l'établissement,
+      à observer les horaires fixés et à accomplir les tâches relevant de son poste.
+      En cas de manquement grave, le contrat pourra être résilié selon les modalités légales en vigueur.
+    </p>
+  </div>
+
+  <!-- SIGNATURES -->
+  <div class="signatures-row">
+    <div class="sig-block">
+      <div class="sig-title">Signature de l'Employé</div>
+      <div class="sig-line">Nom &amp; Signature</div>
+    </div>
+    <div class="sig-block">
+      <div class="sig-title">Signature de la Direction</div>
+      <div class="sig-line">Directeur / Gérant</div>
+    </div>
+    <div class="sig-block">
+      <div class="sig-title">Cachet de l'Établissement</div>
+      <div class="sig-line">Tampon officiel</div>
+    </div>
+  </div>
+
+  <!-- PIED DE PAGE -->
+  <div class="doc-footer">
+    Restaurant Sankadiokro &nbsp;|&nbsp; Yopougon Millionnaire, Abidjan &nbsp;|&nbsp;
+    &#9993; restaurantsankadiokro@gmail.com &nbsp;|&nbsp; &#128222; 07 07 04 29 47
+  </div>
+
+  <!-- BOUTON IMPRESSION -->
+  <div class="print-btn">
+    <button onclick="window.print()"
+      style="padding:8px 24px;background:#0D47A1;color:#fff;border:none;border-radius:6px;
+             cursor:pointer;font-size:12px;font-weight:bold;letter-spacing:0.5px;">
+      &#128424; Imprimer / Enregistrer PDF
+    </button>
+  </div>
+
+</div>
+</body>
+</html>''';
+  }
+
+  /// Retourne la couleur hex correspondant à un statut de contrat (pour le badge HTML)
+  String _contractStatusHex(ContractStatus s) {
+    switch (s) {
+      case ContractStatus.actif:         return '#2E7D32';
+      case ContractStatus.bientotExpire: return '#E65100';
+      case ContractStatus.expire:        return '#B71C1C';
+      case ContractStatus.renouvele:     return '#1565C0';
+      case ContractStatus.nonRenouvele:  return '#4E342E';
+    }
+  }
+
   /// Retourne l'URL du logo pour inclusion dans les tickets HTML
   /// Sur Web Flutter, les assets sont accessibles via chemin relatif depuis la racine
   String _logoBase64() {

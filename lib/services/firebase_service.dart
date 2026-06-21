@@ -1767,6 +1767,79 @@ class FirebaseService {
     batch.delete(_db.collection('inventory_sessions').doc(sessionId));
     await batch.commit();
   }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  EMPLOYEE CONTRACTS
+  // ══════════════════════════════════════════════════════════════════════
+
+  Stream<List<EmployeeContract>> streamContracts() =>
+      _db.collection('employee_contracts')
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .map((s) => s.docs
+              .map((d) => EmployeeContract.fromMap(d.data(), d.id))
+              .toList());
+
+  Future<void> addContract(EmployeeContract c) async {
+    final id = _db.collection('employee_contracts').doc().id;
+    final doc = EmployeeContract(
+      id: id, employeeId: c.employeeId, employeeName: c.employeeName,
+      type: c.type, startDate: c.startDate, endDate: c.endDate,
+      salary: c.salary, poste: c.poste, site: c.site,
+      status: c.status, comment: c.comment,
+      createdBy: c.createdBy,
+    );
+    await _db.collection('employee_contracts').doc(id).set(doc.toMap());
+  }
+
+  Future<void> updateContract(EmployeeContract c) =>
+      _db.collection('employee_contracts').doc(c.id).update(c.toMap());
+
+  Future<void> deleteContract(String id) =>
+      _db.collection('employee_contracts').doc(id).delete();
+
+  // ── Historique ─────────────────────────────────────────────────────────
+  Stream<List<ContractHistory>> streamContractHistory(String contractId) =>
+      _db.collection('contract_history')
+          .where('contractId', isEqualTo: contractId)
+          .snapshots()
+          .map((s) => s.docs
+              .map((d) => ContractHistory.fromMap(d.data(), d.id))
+              .toList()
+              ..sort((a, b) => b.date.compareTo(a.date)));
+
+  Future<void> addContractHistory(ContractHistory h) async {
+    final id = _db.collection('contract_history').doc().id;
+    await _db.collection('contract_history').doc(id).set({...h.toMap(), 'id': id});
+  }
+
+  // ── Alertes ────────────────────────────────────────────────────────────
+  Stream<List<ContractAlert>> streamContractAlerts() =>
+      _db.collection('contract_alerts')
+          .where('isRead', isEqualTo: false)
+          .snapshots()
+          .map((s) => s.docs
+              .map((d) => ContractAlert.fromMap(d.data(), d.id))
+              .toList()
+              ..sort((a, b) => a.daysLeft.compareTo(b.daysLeft)));
+
+  Future<void> markAlertRead(String id) =>
+      _db.collection('contract_alerts').doc(id).update({'isRead': true});
+
+  Future<void> upsertContractAlert(ContractAlert alert) async {
+    // Cherche une alerte existante non lue pour ce contrat
+    final existing = await _db.collection('contract_alerts')
+        .where('contractId', isEqualTo: alert.contractId)
+        .where('isRead', isEqualTo: false)
+        .get();
+    if (existing.docs.isNotEmpty) {
+      await _db.collection('contract_alerts').doc(existing.docs.first.id)
+          .update({'daysLeft': alert.daysLeft});
+    } else {
+      final id = _db.collection('contract_alerts').doc().id;
+      await _db.collection('contract_alerts').doc(id).set({...alert.toMap(), 'id': id});
+    }
+  }
 }
 
 // ── Helpers privés pour les transactions stock ─────────────────────────────

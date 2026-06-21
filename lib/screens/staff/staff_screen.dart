@@ -5,6 +5,7 @@ import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../../models/models.dart';
+import 'contract_screen.dart';
 
 class StaffScreen extends StatefulWidget {
   const StaffScreen({super.key});
@@ -19,7 +20,7 @@ class _StaffScreenState extends State<StaffScreen> with SingleTickerProviderStat
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -44,6 +45,7 @@ class _StaffScreenState extends State<StaffScreen> with SingleTickerProviderStat
                 Tab(text: 'Personnel', icon: Icon(Icons.people, size: 16)),
                 Tab(text: 'Présences', icon: Icon(Icons.how_to_reg, size: 16)),
                 Tab(text: 'Accès & Admin', icon: Icon(Icons.admin_panel_settings, size: 16)),
+                Tab(text: 'Contrats', icon: Icon(Icons.description, size: 16)),
               ],
             ),
           ),
@@ -54,6 +56,7 @@ class _StaffScreenState extends State<StaffScreen> with SingleTickerProviderStat
                 _PersonnelTab(),
                 _AttendanceTab(),
                 _AccessTab(),
+                ContractTab(),
               ],
             ),
           ),

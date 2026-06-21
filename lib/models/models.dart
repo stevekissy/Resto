@@ -1161,3 +1161,243 @@ class InventoryItem {
         unitCost:       (m['unitCost']       as num?)?.toDouble() ?? 0,
       );
 }
+
+// =================== CONTRACT MODELS ===================
+
+enum ContractType { stage, cdd, cdi, essai, journalier }
+
+extension ContractTypeX on ContractType {
+  String get label {
+    switch (this) {
+      case ContractType.stage:      return 'Stage';
+      case ContractType.cdd:        return 'CDD';
+      case ContractType.cdi:        return 'CDI';
+      case ContractType.essai:      return 'Période d\'essai';
+      case ContractType.journalier: return 'Journalier';
+    }
+  }
+  static ContractType fromString(String s) {
+    switch (s) {
+      case 'stage':      return ContractType.stage;
+      case 'cdd':        return ContractType.cdd;
+      case 'cdi':        return ContractType.cdi;
+      case 'essai':      return ContractType.essai;
+      case 'journalier': return ContractType.journalier;
+      default:           return ContractType.cdd;
+    }
+  }
+}
+
+enum ContractStatus { actif, bientotExpire, expire, renouvele, nonRenouvele }
+
+extension ContractStatusX on ContractStatus {
+  String get label {
+    switch (this) {
+      case ContractStatus.actif:          return 'Actif';
+      case ContractStatus.bientotExpire:  return 'Bientôt expiré';
+      case ContractStatus.expire:         return 'Expiré';
+      case ContractStatus.renouvele:      return 'Renouvelé';
+      case ContractStatus.nonRenouvele:   return 'Non renouvelé';
+    }
+  }
+  Color get color {
+    switch (this) {
+      case ContractStatus.actif:          return const Color(0xFF4CAF50);
+      case ContractStatus.bientotExpire:  return const Color(0xFFFF9800);
+      case ContractStatus.expire:         return const Color(0xFFF44336);
+      case ContractStatus.renouvele:      return const Color(0xFF2196F3);
+      case ContractStatus.nonRenouvele:   return const Color(0xFF9E9E9E);
+    }
+  }
+  static ContractStatus fromString(String s) {
+    switch (s) {
+      case 'actif':          return ContractStatus.actif;
+      case 'bientotExpire':  return ContractStatus.bientotExpire;
+      case 'expire':         return ContractStatus.expire;
+      case 'renouvele':      return ContractStatus.renouvele;
+      case 'nonRenouvele':   return ContractStatus.nonRenouvele;
+      default:               return ContractStatus.actif;
+    }
+  }
+}
+
+class EmployeeContract {
+  final String id;
+  final String employeeId;
+  final String employeeName;
+  ContractType type;
+  DateTime startDate;
+  DateTime? endDate;
+  double salary;
+  String poste;
+  String site;
+  ContractStatus status;
+  String comment;
+  DateTime createdAt;
+  String createdBy;
+
+  EmployeeContract({
+    required this.id,
+    required this.employeeId,
+    required this.employeeName,
+    required this.type,
+    required this.startDate,
+    this.endDate,
+    required this.salary,
+    required this.poste,
+    required this.site,
+    this.status = ContractStatus.actif,
+    this.comment = '',
+    DateTime? createdAt,
+    this.createdBy = '',
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  /// Calcule automatiquement le statut selon la date de fin
+  ContractStatus get computedStatus {
+    if (status == ContractStatus.renouvele || status == ContractStatus.nonRenouvele) {
+      return status;
+    }
+    if (endDate == null) return ContractStatus.actif; // CDI sans fin
+    final now = DateTime.now();
+    final diff = endDate!.difference(now).inDays;
+    if (diff < 0)  return ContractStatus.expire;
+    if (diff <= 30) return ContractStatus.bientotExpire;
+    return ContractStatus.actif;
+  }
+
+  /// Jours restants avant expiration (null si pas de date de fin)
+  int? get daysLeft => endDate == null ? null : endDate!.difference(DateTime.now()).inDays;
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'employeeId': employeeId,
+    'employeeName': employeeName,
+    'type': type.name,
+    'startDate': startDate.toIso8601String(),
+    'endDate': endDate?.toIso8601String(),
+    'salary': salary,
+    'poste': poste,
+    'site': site,
+    'status': status.name,
+    'comment': comment,
+    'createdAt': createdAt.toIso8601String(),
+    'createdBy': createdBy,
+  };
+
+  factory EmployeeContract.fromMap(Map<String, dynamic> m, String docId) =>
+      EmployeeContract(
+        id:           docId,
+        employeeId:   m['employeeId']   as String? ?? '',
+        employeeName: m['employeeName'] as String? ?? '',
+        type:         ContractTypeX.fromString(m['type'] as String? ?? 'cdd'),
+        startDate:    DateTime.tryParse(m['startDate'] as String? ?? '') ?? DateTime.now(),
+        endDate:      m['endDate'] != null ? DateTime.tryParse(m['endDate'] as String) : null,
+        salary:       (m['salary'] as num?)?.toDouble() ?? 0,
+        poste:        m['poste']   as String? ?? '',
+        site:         m['site']    as String? ?? '',
+        status:       ContractStatusX.fromString(m['status'] as String? ?? 'actif'),
+        comment:      m['comment'] as String? ?? '',
+        createdAt:    DateTime.tryParse(m['createdAt'] as String? ?? '') ?? DateTime.now(),
+        createdBy:    m['createdBy'] as String? ?? '',
+      );
+}
+
+class ContractHistory {
+  final String id;
+  final String contractId;
+  final String employeeId;
+  final String employeeName;
+  final String action;       // 'renewed', 'not_renewed', 'modified', 'created'
+  final String oldData;      // JSON snapshot
+  final String newData;      // JSON snapshot
+  final String decision;
+  final String responsable;
+  final DateTime date;
+
+  ContractHistory({
+    required this.id,
+    required this.contractId,
+    required this.employeeId,
+    required this.employeeName,
+    required this.action,
+    this.oldData = '',
+    this.newData = '',
+    this.decision = '',
+    required this.responsable,
+    DateTime? date,
+  }) : date = date ?? DateTime.now();
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'contractId': contractId,
+    'employeeId': employeeId,
+    'employeeName': employeeName,
+    'action': action,
+    'oldData': oldData,
+    'newData': newData,
+    'decision': decision,
+    'responsable': responsable,
+    'date': date.toIso8601String(),
+  };
+
+  factory ContractHistory.fromMap(Map<String, dynamic> m, String docId) =>
+      ContractHistory(
+        id:           docId,
+        contractId:   m['contractId']   as String? ?? '',
+        employeeId:   m['employeeId']   as String? ?? '',
+        employeeName: m['employeeName'] as String? ?? '',
+        action:       m['action']       as String? ?? '',
+        oldData:      m['oldData']      as String? ?? '',
+        newData:      m['newData']      as String? ?? '',
+        decision:     m['decision']     as String? ?? '',
+        responsable:  m['responsable']  as String? ?? '',
+        date:         DateTime.tryParse(m['date'] as String? ?? '') ?? DateTime.now(),
+      );
+}
+
+class ContractAlert {
+  final String id;
+  final String contractId;
+  final String employeeId;
+  final String employeeName;
+  final int daysLeft;
+  final bool isRead;
+  final DateTime createdAt;
+
+  ContractAlert({
+    required this.id,
+    required this.contractId,
+    required this.employeeId,
+    required this.employeeName,
+    required this.daysLeft,
+    this.isRead = false,
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  String get message {
+    if (daysLeft < 0) return 'Le contrat de $employeeName a expiré.';
+    if (daysLeft == 0) return 'Le contrat de $employeeName expire aujourd\'hui !';
+    return 'Le contrat de $employeeName expire dans $daysLeft jour${daysLeft > 1 ? 's' : ''}.';
+  }
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'contractId': contractId,
+    'employeeId': employeeId,
+    'employeeName': employeeName,
+    'daysLeft': daysLeft,
+    'isRead': isRead,
+    'createdAt': createdAt.toIso8601String(),
+  };
+
+  factory ContractAlert.fromMap(Map<String, dynamic> m, String docId) =>
+      ContractAlert(
+        id:           docId,
+        contractId:   m['contractId']   as String? ?? '',
+        employeeId:   m['employeeId']   as String? ?? '',
+        employeeName: m['employeeName'] as String? ?? '',
+        daysLeft:     (m['daysLeft']    as num?)?.toInt() ?? 0,
+        isRead:       m['isRead']       as bool? ?? false,
+        createdAt:    DateTime.tryParse(m['createdAt'] as String? ?? '') ?? DateTime.now(),
+      );
+}

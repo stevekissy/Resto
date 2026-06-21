@@ -34,6 +34,8 @@ class AppProvider extends ChangeNotifier {
   StreamSubscription? _subCategories;
   StreamSubscription? _subInvoiceHistory;
   StreamSubscription? _subIncomingCall;
+  StreamSubscription? _subContracts;
+  StreamSubscription? _subContractAlerts;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
@@ -137,6 +139,20 @@ class AppProvider extends ChangeNotifier {
   // ── Historique factures ──────────────────────────────────────────────
   List<Map<String, dynamic>> _invoiceHistory = [];
   List<Map<String, dynamic>> get invoiceHistory => _invoiceHistory;
+
+  // =================== CONTRACTS ===================
+  List<EmployeeContract> _contracts = [];
+  List<EmployeeContract> get contracts => _contracts;
+  List<EmployeeContract> get activeContracts =>
+      _contracts.where((c) => c.computedStatus == ContractStatus.actif).toList();
+  List<EmployeeContract> get expiringContracts =>
+      _contracts.where((c) => c.computedStatus == ContractStatus.bientotExpire).toList();
+  List<EmployeeContract> get expiredContracts =>
+      _contracts.where((c) => c.computedStatus == ContractStatus.expire).toList();
+
+  List<ContractAlert> _contractAlerts = [];
+  List<ContractAlert> get contractAlerts => _contractAlerts;
+  int get unreadContractAlertsCount => _contractAlerts.where((a) => !a.isRead).length;
 
   // ── Appel entrant ────────────────────────────────────────────────────
   CallSession? _incomingCall;
@@ -622,6 +638,18 @@ class AppProvider extends ChangeNotifier {
       cancelOnError: false,
     );
 
+    _subContracts = _firebase.streamContracts().listen(
+      (list) { _contracts = list; _refreshContractAlerts(); notifyListeners(); },
+      onError: (e) { debugPrint('[stream.contracts] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
+    _subContractAlerts = _firebase.streamContractAlerts().listen(
+      (list) { _contractAlerts = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.contractAlerts] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
     // Stream appels entrants (pour l'utilisateur connecté)
     final uid = _currentUser?.id;
     if (uid != null) {
@@ -651,6 +679,8 @@ class AppProvider extends ChangeNotifier {
     _subCategories?.cancel();
     _subInvoiceHistory?.cancel();
     _subIncomingCall?.cancel();
+    _subContracts?.cancel();
+    _subContractAlerts?.cancel();
   }
 
   /// Déconnexion complète : signOut Firebase + nettoyage local.
@@ -1505,6 +1535,89 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> deleteInventorySession(String sessionId) =>
       _firebase.deleteInventorySession(sessionId);
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  CONTRACTS — CRUD + alertes automatiques
+  // ══════════════════════════════════════════════════════════════════════
+
+  Future<void> addContract(EmployeeContract c) => _firebase.addContract(c);
+
+  Future<void> updateContract(EmployeeContract c) => _firebase.updateContract(c);
+
+  Future<void> deleteContract(String id) => _firebase.deleteContract(id);
+
+  Future<void> renewContract({
+    required EmployeeContract contract,
+    required DateTime newEndDate,
+    required String decision,
+  }) async {
+    final old = contract.toMap().toString();
+    contract.endDate = newEndDate;
+    contract.status = ContractStatus.renouvele;
+    contract.comment = decision.isNotEmpty ? decision : contract.comment;
+    await _firebase.updateContract(contract);
+
+    final h = ContractHistory(
+      id: '', contractId: contract.id,
+      employeeId: contract.employeeId, employeeName: contract.employeeName,
+      action: 'renewed', oldData: old, newData: contract.toMap().toString(),
+      decision: decision, responsable: currentUser?.name ?? 'Inconnu',
+    );
+    await _firebase.addContractHistory(h);
+  }
+
+  Future<void> declineRenewal({
+    required EmployeeContract contract,
+    required String decision,
+  }) async {
+    final old = contract.toMap().toString();
+    contract.status = ContractStatus.nonRenouvele;
+    contract.comment = decision.isNotEmpty ? decision : contract.comment;
+    await _firebase.updateContract(contract);
+
+    final h = ContractHistory(
+      id: '', contractId: contract.id,
+      employeeId: contract.employeeId, employeeName: contract.employeeName,
+      action: 'not_renewed', oldData: old, newData: contract.toMap().toString(),
+      decision: decision, responsable: currentUser?.name ?? 'Inconnu',
+    );
+    await _firebase.addContractHistory(h);
+  }
+
+  Future<void> addCommentToContract(EmployeeContract c, String comment) async {
+    c.comment = comment;
+    await _firebase.updateContract(c);
+    final h = ContractHistory(
+      id: '', contractId: c.id,
+      employeeId: c.employeeId, employeeName: c.employeeName,
+      action: 'comment', decision: comment,
+      responsable: currentUser?.name ?? 'Inconnu',
+    );
+    await _firebase.addContractHistory(h);
+  }
+
+  Future<List<ContractHistory>> fetchContractHistory(String contractId) async {
+    final snap = await _firebase.streamContractHistory(contractId).first;
+    return snap;
+  }
+
+  Future<void> markAlertRead(String alertId) => _firebase.markAlertRead(alertId);
+
+  /// Génère automatiquement les alertes Firestore pour les contrats proches d'expiration
+  void _refreshContractAlerts() {
+    for (final c in _contracts) {
+      if (c.endDate == null) continue;
+      final days = c.daysLeft!;
+      if (days <= 30) {
+        final alert = ContractAlert(
+          id: '', contractId: c.id,
+          employeeId: c.employeeId, employeeName: c.employeeName,
+          daysLeft: days,
+        );
+        _firebase.upsertContractAlert(alert).catchError((_) {});
+      }
+    }
+  }
 
   @override
   void dispose() {
