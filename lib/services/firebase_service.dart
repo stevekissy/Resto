@@ -451,6 +451,9 @@ class FirebaseService {
       final list = snap.docs.map((d) {
         try {
           final data = d.data();
+          // Ignorer les items soft-deleted (active == false)
+          final active = data['active'] as bool? ?? true;
+          if (!active) return null;
           return StockItem(
             id: d.id,
             name: data['name'] as String? ?? '',
@@ -461,6 +464,7 @@ class FirebaseService {
             unitCost: (data['unitCost'] as num?)?.toDouble() ?? 0,
             category: data['category'] as String? ?? 'Divers',
             expiryDate: _toDateTimeNullable(data['expiryDate']),
+            active: true,
           );
         } catch (e) {
           debugPrint('[stream.stock] doc ${d.id}: $e');
@@ -482,6 +486,15 @@ class FirebaseService {
 
   Future<void> deleteStockItem(String itemId) async {
     await _db.collection('stock').doc(itemId).delete();
+  }
+
+  /// Soft-delete : marque l'item inactive sans supprimer le document
+  Future<void> softDeleteStockItem(String itemId, String deletedByName) async {
+    await _db.collection('stock').doc(itemId).update({
+      'active': false,
+      'deletedAt': DateTime.now().millisecondsSinceEpoch,
+      'deletedBy': deletedByName,
+    });
   }
 
   // =================== STOCK CATEGORIES ===================

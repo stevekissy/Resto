@@ -1040,6 +1040,12 @@ class AppProvider extends ChangeNotifier {
     await _firebase.deleteStockItem(id);
   }
 
+  /// Soft-delete : active=false + deletedAt + deletedBy
+  Future<void> softDeleteStockItem(String id) async {
+    final userName = currentUser?.name ?? 'Inconnu';
+    await _firebase.softDeleteStockItem(id, userName);
+  }
+
   // ── Catégories stock (Firestore stock_categories) ────────────────────────
   Future<List<String>> fetchStockCategories() => _firebase.fetchStockCategories();
   Future<void> addStockCategory(String name) => _firebase.addStockCategory(name);

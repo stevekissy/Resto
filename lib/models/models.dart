@@ -527,6 +527,9 @@ class StockItem {
   double unitCost;
   DateTime? expiryDate;
   String category;
+  bool active;               // false = soft-deleted
+  DateTime? deletedAt;
+  String? deletedBy;
 
   StockItem({
     required this.id,
@@ -538,6 +541,9 @@ class StockItem {
     required this.unitCost,
     this.expiryDate,
     required this.category,
+    this.active = true,
+    this.deletedAt,
+    this.deletedBy,
   });
 
   bool get isLow => currentQuantity <= minQuantity && currentQuantity > 0;
@@ -550,6 +556,9 @@ class StockItem {
     'maxQuantity': maxQuantity, 'unitCost': unitCost,
     'expiryDate': expiryDate?.millisecondsSinceEpoch,
     'category': category,
+    'active': active,
+    'deletedAt': deletedAt?.millisecondsSinceEpoch,
+    'deletedBy': deletedBy,
   };
 
   factory StockItem.fromMap(Map<String, dynamic> map) => StockItem(
@@ -560,6 +569,11 @@ class StockItem {
     unitCost: (map['unitCost'] as num).toDouble(),
     expiryDate: map['expiryDate'] != null ? DateTime.fromMillisecondsSinceEpoch(map['expiryDate']) : null,
     category: map['category'],
+    active: map['active'] as bool? ?? true,
+    deletedAt: map['deletedAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(map['deletedAt'] as int)
+        : null,
+    deletedBy: map['deletedBy'] as String?,
   );
 }
 

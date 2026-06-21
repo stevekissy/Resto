@@ -131,7 +131,7 @@ class _StockTabState extends State<_StockTab> {
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
-                // ── Ligne 1 : filtres statut + boutons ───────────────
+                // ── Ligne 1 : filtres statut ──────────────────────────
                 Row(
                   children: [
                     _FilterBtn(label: 'Tous',    selected: _filter == 'all',     onTap: () => setState(() => _filter = 'all'),     color: AppTheme.primary),
@@ -139,35 +139,45 @@ class _StockTabState extends State<_StockTab> {
                     _FilterBtn(label: '⚠ Faible (${provider.lowStockItems.length})',   selected: _filter == 'low',     onTap: () => setState(() => _filter = 'low'),     color: AppTheme.warning),
                     const SizedBox(width: 6),
                     _FilterBtn(label: '🔴 Rupture (${provider.outOfStockItems.length})', selected: _filter == 'out',  onTap: () => setState(() => _filter = 'out'),     color: AppTheme.error),
-                    const Spacer(),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                // ── Ligne 1b : boutons actions (responsive 2 colonnes) ─
+                Row(
+                  children: [
                     // Bouton Approvisionner
-                    TextButton.icon(
-                      onPressed: () => _showRestockDialog(context, provider),
-                      icon: const Icon(Icons.add_shopping_cart, size: 15, color: Color(0xFF2E7D32)),
-                      label: const Text('Approvisionner',
-                          style: TextStyle(color: Color(0xFF2E7D32), fontSize: 12, fontWeight: FontWeight.w700)),
-                      style: TextButton.styleFrom(
-                        backgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.12),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          side: const BorderSide(color: Color(0xFF2E7D32), width: 1),
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: () => _showRestockDialog(context, provider),
+                        icon: const Icon(Icons.add_shopping_cart, size: 15, color: Color(0xFF2E7D32)),
+                        label: const Text('Approvisionner',
+                            style: TextStyle(color: Color(0xFF2E7D32), fontSize: 12, fontWeight: FontWeight.w700)),
+                        style: TextButton.styleFrom(
+                          backgroundColor: const Color(0xFF2E7D32).withValues(alpha: 0.12),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            side: const BorderSide(color: Color(0xFF2E7D32), width: 1),
+                          ),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     // Bouton Ajouter stock
-                    TextButton.icon(
-                      onPressed: () => _showAddStockDialog(context, provider, categories),
-                      icon: const Icon(Icons.add_box_outlined, size: 15, color: AppTheme.primary),
-                      label: const Text('Ajouter stock',
-                          style: TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w700)),
-                      style: TextButton.styleFrom(
-                        backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          side: BorderSide(color: AppTheme.primary, width: 1),
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: () => _showAddStockDialog(context, provider, categories),
+                        icon: const Icon(Icons.add_box_outlined, size: 15, color: AppTheme.primary),
+                        label: const Text('Ajouter stock',
+                            style: TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w700)),
+                        style: TextButton.styleFrom(
+                          backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            side: BorderSide(color: AppTheme.primary, width: 1),
+                          ),
                         ),
                       ),
                     ),
@@ -270,6 +280,7 @@ class _StockTabState extends State<_StockTab> {
                     itemBuilder: (context, i) => _StockItemCard(
                       item: items[i],
                       onEdit: () => _showEditDialog(context, items[i], provider, _buildCategories(provider.stockItems)),
+                      onDelete: () => _showDeleteDialog(context, items[i], provider),
                     ),
                   ),
           ),
@@ -549,6 +560,107 @@ class _StockTabState extends State<_StockTab> {
     );
   }
 
+  // ── Dialog Suppression (soft-delete) ──────────────────────────────────────
+  Future<void> _showDeleteDialog(BuildContext context, StockItem item, AppProvider provider) async {
+    // Détecter si le produit a des mouvements ou est lié à un menu
+    final hasMenuLinks = provider.products.any(
+      (p) => p.name.toLowerCase() == item.name.toLowerCase(),
+    );
+
+    final isSoftDelete = hasMenuLinks;
+    final warningText = isSoftDelete
+        ? 'Ce produit est lié au menu. Il sera désactivé (non supprimé définitivement).'
+        : 'Ce produit sera désactivé et masqué de la liste.\nLes mouvements de stock seront conservés.';;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.delete_outline, color: AppTheme.error, size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Supprimer ${item.name} ?',
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.warning.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.warning.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline, color: AppTheme.warning, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      warningText,
+                      style: const TextStyle(color: AppTheme.warning, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Stock actuel : ${item.currentQuantity} ${item.unit}',
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.delete_outline, size: 16),
+            label: const Text('Désactiver'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.error,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      try {
+        await provider.softDeleteStockItem(item.id);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${item.name} supprimé du stock'),
+              backgroundColor: AppTheme.success,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erreur: $e'), backgroundColor: AppTheme.error),
+          );
+        }
+      }
+    }
+  }
+
   // ── Dialog Gérer catégories ──────────────────────────────────────────────
   void _showManageCategoriesDialog(BuildContext context, AppProvider provider) {
     showDialog(
@@ -785,9 +897,14 @@ class _ManageCategoriesDialogState extends State<_ManageCategoriesDialog> {
     if (mounted) setState(() { _categories = cats; _loading = false; });
   }
 
-  /// Vérifie si un produit stock utilise cette catégorie
+  /// Vérifie si des produits actifs utilisent cette catégorie
   bool _isCategoryInUse(String name) {
+    // stockItems ne contient que les items actifs (filtré par streamStock)
     return widget.provider.stockItems.any((s) => s.category == name);
+  }
+
+  int _countProductsInCategory(String name) {
+    return widget.provider.stockItems.where((s) => s.category == name).length;
   }
 
   Future<void> _add() async {
@@ -831,22 +948,38 @@ class _ManageCategoriesDialogState extends State<_ManageCategoriesDialog> {
 
   Future<void> _delete(String name) async {
     if (_isCategoryInUse(name)) {
+      final count = _countProductsInCategory(name);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Impossible : des produits utilisent la catégorie "$name"'),
-          backgroundColor: AppTheme.error));
+          content: Text(
+            'Impossible de supprimer "$name" : elle contient $count produit${count > 1 ? 's' : ''} actif${count > 1 ? 's' : ''}. '
+            'Réaffectez ou supprimez ces produits d\'abord.',
+          ),
+          backgroundColor: AppTheme.error,
+          duration: const Duration(seconds: 4)));
       return;
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Supprimer la catégorie ?'),
-        content: Text('Supprimer "$name" définitivement ?'),
+        backgroundColor: AppTheme.surface,
+        title: Row(
+          children: [
+            const Icon(Icons.delete_outline, color: AppTheme.error, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Supprimer "$name" ?', style: const TextStyle(fontSize: 15))),
+          ],
+        ),
+        content: Text(
+          'Cette catégorie sera supprimée définitivement.\nAucun produit actif n\'y est rattaché.',
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
-          ElevatedButton(
+          ElevatedButton.icon(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
-            child: const Text('Supprimer'),
+            icon: const Icon(Icons.delete_outline, size: 16),
+            label: const Text('Supprimer'),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error, foregroundColor: Colors.white),
           ),
         ],
       ),
@@ -936,7 +1069,7 @@ class _ManageCategoriesDialogState extends State<_ManageCategoriesDialog> {
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                '${widget.provider.stockItems.where((s) => s.category == cat).length} produits',
+                                '${_countProductsInCategory(cat)} produit${_countProductsInCategory(cat) > 1 ? 's' : ''}',
                                 style: const TextStyle(color: AppTheme.primary, fontSize: 10),
                               ),
                             ),
@@ -1002,8 +1135,9 @@ class _FilterBtn extends StatelessWidget {
 class _StockItemCard extends StatelessWidget {
   final StockItem item;
   final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
-  const _StockItemCard({required this.item, required this.onEdit});
+  const _StockItemCard({required this.item, required this.onEdit, required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -1060,12 +1194,44 @@ class _StockItemCard extends StatelessWidget {
                   ],
                 ),
               ),
+              // Actions : modifier + supprimer
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   StatusBadge(label: statusLabel, color: statusColor, fontSize: 10),
-                  const SizedBox(height: 4),
-                  const Icon(Icons.edit, color: AppTheme.textSecondary, size: 14),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Bouton modifier
+                      GestureDetector(
+                        onTap: onEdit,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(7),
+                            border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+                          ),
+                          child: const Icon(Icons.edit_outlined, color: AppTheme.primary, size: 14),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      // Bouton supprimer
+                      GestureDetector(
+                        onTap: onDelete,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: AppTheme.error.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(7),
+                            border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+                          ),
+                          child: const Icon(Icons.delete_outline, color: AppTheme.error, size: 14),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ],
