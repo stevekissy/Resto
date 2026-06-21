@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../providers/client_provider.dart';
+import '../../../sandbox/client_provider_proxy.dart';
 import '../../../models/client_models.dart';
 import '../../../utils/app_theme.dart';
 import '../menu/client_menu_screen.dart';
@@ -15,7 +16,7 @@ class ClientHomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ClientProvider>();
+    final provider = ClientProviderProxy.watch(context);
     final client = provider.client;
 
     if (client == null) {
@@ -219,7 +220,7 @@ class ClientHomeScreen extends StatelessWidget {
   }
 
   void _openMenu(BuildContext context, OrderType type) {
-    context.read<ClientProvider>().setOrderType(type);
+    ClientProviderProxy.read(context).setOrderType(type);
     DefaultTabController.maybeOf(context);
     // Naviguer vers l'onglet Menu (index 1) via le parent
     final scaffold = ScaffoldMessenger.of(context);

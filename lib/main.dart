@@ -12,6 +12,7 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'firebase_options.dart';
 import 'providers/app_provider.dart';
 import 'providers/client_provider.dart';
+import 'sandbox/sandbox_provider.dart';
 import 'utils/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
@@ -161,6 +162,7 @@ class SankadiokroApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider.value(value: provider),
         ChangeNotifierProvider<ClientProvider>(create: (_) => ClientProvider()),
+        ChangeNotifierProvider<SandboxProvider>(create: (_) => SandboxProvider()),
       ],
       child: MaterialApp(
         title: 'Sankadio Manager',

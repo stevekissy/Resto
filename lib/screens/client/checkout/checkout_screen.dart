@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../providers/client_provider.dart';
+import '../../../sandbox/client_provider_proxy.dart';
 import '../../../models/client_models.dart';
 import '../../../utils/app_theme.dart';
 
@@ -31,7 +32,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ClientProvider>();
+    final provider = ClientProviderProxy.watch(context);
     final cart = provider.cart;
     final fmt = NumberFormat('#,###', 'fr_FR');
     final addr = _selectedAddress ?? provider.defaultAddress;
@@ -446,7 +447,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  Future<void> _placeOrder(BuildContext context, ClientProvider provider, DeliveryAddress? addr) async {
+  Future<void> _placeOrder(BuildContext context, ClientProviderProxy provider, DeliveryAddress? addr) async {
     // Validation
     if (provider.orderType == OrderType.delivery && addr == null) {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../providers/client_provider.dart';
+import '../../../sandbox/client_provider_proxy.dart';
 import '../../../models/client_models.dart';
 import '../../../utils/app_theme.dart';
 
@@ -34,7 +35,7 @@ class _ClientOrdersScreenState extends State<ClientOrdersScreen>
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ClientProvider>();
+    final provider = ClientProviderProxy.watch(context);
     final active = provider.activeOrders;
     final history = provider.orders
         .where((o) =>
@@ -306,7 +307,7 @@ class _OrderTrackingCard extends StatelessWidget {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(ctx);
-              context.read<ClientProvider>().cancelOrder(order.id);
+              ClientProviderProxy.read(context).cancelOrder(order.id);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Commande annulée'),

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../providers/client_provider.dart';
+import '../../../sandbox/sandbox_provider.dart';
+import '../../../sandbox/sandbox_dashboard_screen.dart';
 import '../../../models/client_models.dart';
 import '../../../utils/app_theme.dart';
 import '../auth/client_auth_screen.dart';
@@ -15,8 +17,27 @@ class ClientProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ClientProvider>();
-    final client = provider.client;
+    // Détection automatique du mode sandbox
+    final sbProvider = context.watch<SandboxProvider>();
+    final isSandbox = sbProvider.isSandboxActive;
+
+    final ClientUser? client;
+    final List<LoyaltyTransaction> loyaltyHistory;
+    final List<DeliveryAddress> addresses;
+    final OnlineOrderSettings settings;
+
+    if (isSandbox) {
+      client = sbProvider.client;
+      loyaltyHistory = sbProvider.loyaltyHistory;
+      addresses = sbProvider.addresses;
+      settings = sbProvider.settings;
+    } else {
+      final provider = context.watch<ClientProvider>();
+      client = provider.client;
+      loyaltyHistory = provider.loyaltyHistory;
+      addresses = provider.addresses;
+      settings = provider.settings;
+    }
     if (client == null) return const Center(child: CircularProgressIndicator());
 
     return Scaffold(
@@ -51,7 +72,7 @@ class ClientProfileScreen extends StatelessWidget {
                             border: Border.all(color: Colors.white24, width: 2),
                           ),
                           child: Center(
-                            child: Text(client.initials,
+                            child: Text(client!.initials,
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 24)),
                           ),
                         ),
@@ -61,7 +82,7 @@ class ClientProfileScreen extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(client.name,
+                              Text(client!.name,
                                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
                               const SizedBox(height: 4),
                               Text(client.email,
@@ -75,7 +96,7 @@ class ClientProfileScreen extends StatelessWidget {
                           ),
                         ),
                         IconButton(
-                          onPressed: () => _showEditProfile(context, client),
+                          onPressed: () => _showEditProfile(context, client!),
                           icon: const Icon(Icons.edit_outlined, color: Colors.white70, size: 20),
                         ),
                       ],
@@ -96,30 +117,47 @@ class ClientProfileScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // KPIs
-                  _StatsRow(client: client, settings: provider.settings),
+                  _StatsRow(client: client!, settings: settings),
                   const SizedBox(height: 20),
 
+                  // Bouton Tableau de bord Sandbox (uniquement en mode sandbox)
+                  if (isSandbox) ..._buildSandboxControls(context),
+
+
                   // Programme fidélité
-                  _LoyaltySection(client: client, history: provider.loyaltyHistory, settings: provider.settings),
+                  _LoyaltySection(client: client!, history: loyaltyHistory, settings: settings),
                   const SizedBox(height: 20),
 
                   // Adresses
-                  _AddressSection(addresses: provider.addresses),
+                  _AddressSection(addresses: addresses),
                   const SizedBox(height: 20),
 
                   // Menu profil
-                  _ProfileMenu(client: client),
+                  _ProfileMenu(client: client!),
                   const SizedBox(height: 20),
 
-                  // Bouton déconnexion
+                  // Bouton déconnexion / quitter sandbox
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () => _confirmLogout(context),
-                      icon: const Icon(Icons.logout, color: AppTheme.error),
-                      label: const Text('Déconnexion', style: TextStyle(color: AppTheme.error, fontSize: 15, fontWeight: FontWeight.w700)),
+                      onPressed: () => isSandbox
+                          ? _confirmExitSandbox(context)
+                          : _confirmLogout(context),
+                      icon: Icon(
+                        isSandbox ? Icons.science_rounded : Icons.logout,
+                        color: isSandbox ? const Color(0xFF7C3AED) : AppTheme.error,
+                      ),
+                      label: Text(
+                        isSandbox ? 'Quitter le mode Sandbox' : 'Déconnexion',
+                        style: TextStyle(
+                          color: isSandbox ? const Color(0xFF7C3AED) : AppTheme.error,
+                          fontSize: 15, fontWeight: FontWeight.w700,
+                        ),
+                      ),
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: AppTheme.error),
+                        side: BorderSide(
+                          color: isSandbox ? const Color(0xFF7C3AED) : AppTheme.error,
+                        ),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
@@ -129,6 +167,111 @@ class ClientProfileScreen extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildSandboxControls(BuildContext context) {
+    return [
+      GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const SandboxDashboardScreen()),
+        ),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 20),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF7C3AED).withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+                color: const Color(0xFF7C3AED).withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF7C3AED).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.science_rounded,
+                    color: Color(0xFF7C3AED), size: 20),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Tableau de Bord Sandbox',
+                      style: TextStyle(
+                        color: Color(0xFF7C3AED),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Progresser les statuts, simuler paiements et livraisons',
+                      style: TextStyle(
+                        color: Color(0xFF9D6EF5),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right,
+                  color: Color(0xFF7C3AED), size: 20),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  void _confirmExitSandbox(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.science_rounded, color: Color(0xFF7C3AED), size: 22),
+            SizedBox(width: 10),
+            Text('Quitter le Sandbox ?',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        content: Text(
+          'La session de test sera terminée. Toutes les données sandbox seront effacées.',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Continuer le test',
+                style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF7C3AED)),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await ctx.read<SandboxProvider>().exitSandbox();
+              if (ctx.mounted) {
+                Navigator.of(ctx).pushAndRemoveUntil(
+                  MaterialPageRoute(
+                      builder: (_) => const ClientAuthScreen()),
+                  (_) => false,
+                );
+              }
+            },
+            child: const Text('Quitter', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),

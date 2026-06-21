@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../providers/client_provider.dart';
+import '../../../sandbox/client_provider_proxy.dart';
 import '../../../models/models.dart';
 import '../../../utils/app_theme.dart';
 import '../checkout/checkout_screen.dart';
@@ -33,7 +34,7 @@ class _ClientMenuScreenState extends State<ClientMenuScreen>
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ClientProvider>();
+    final provider = ClientProviderProxy.watch(context);
     final allProducts = provider.products;
     final categories = ['Tous', ...provider.categories];
     final cartCount = provider.cartCount;
@@ -219,7 +220,7 @@ class _ProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ClientProvider>();
+    final provider = ClientProviderProxy.watch(context);
     final fmt = NumberFormat('#,###', 'fr_FR');
     final cartItem = provider.cart.where((i) => i.productId == product.id).isNotEmpty
         ? provider.cart.firstWhere((i) => i.productId == product.id)

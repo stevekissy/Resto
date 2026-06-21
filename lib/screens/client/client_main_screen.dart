@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/client_provider.dart';
+import '../../sandbox/sandbox_provider.dart';
 import '../../utils/app_theme.dart';
 import 'home/client_home_screen.dart';
 import 'menu/client_menu_screen.dart';
@@ -13,7 +14,8 @@ import 'profile/client_profile_screen.dart';
 // ═══════════════════════════════════════════════════════════════════════════
 
 class ClientMainScreen extends StatefulWidget {
-  const ClientMainScreen({super.key});
+  final bool isSandbox;
+  const ClientMainScreen({super.key, this.isSandbox = false});
 
   @override
   State<ClientMainScreen> createState() => _ClientMainScreenState();
@@ -31,9 +33,18 @@ class _ClientMainScreenState extends State<ClientMainScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ClientProvider>();
-    final cartCount = provider.cartCount;
-    final activeOrders = provider.activeOrders.length;
+    // En mode sandbox, on lit depuis SandboxProvider ; sinon ClientProvider
+    final int cartCount;
+    final int activeOrders;
+    if (widget.isSandbox) {
+      final sb = context.watch<SandboxProvider>();
+      cartCount = sb.cartCount;
+      activeOrders = sb.activeOrders.length;
+    } else {
+      final provider = context.watch<ClientProvider>();
+      cartCount = provider.cartCount;
+      activeOrders = provider.activeOrders.length;
+    }
 
     return Scaffold(
       backgroundColor: AppTheme.background,

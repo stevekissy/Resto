@@ -6,6 +6,7 @@ import '../../../models/client_models.dart';
 import '../../../providers/client_provider.dart';
 import '../../../services/client_firebase_service.dart';
 import '../../../utils/app_theme.dart';
+import '../../../sandbox/sandbox_mode_screen.dart';
 import '../client_main_screen.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -244,12 +245,77 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
                         ),
                       ),
                     ),
+                    const SizedBox(height: 20),
+                    _buildSandboxButton(),
                     const SizedBox(height: 32),
                   ],
                 ),
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSandboxButton() {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const SandboxModeScreen()),
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF7C3AED).withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: const Color(0xFF7C3AED).withValues(alpha: 0.3),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.science_rounded,
+                color: Color(0xFF7C3AED), size: 16),
+            const SizedBox(width: 10),
+            const Column(
+              children: [
+                Text(
+                  'Mode Test / Sandbox',
+                  style: TextStyle(
+                    color: Color(0xFF7C3AED),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  'Tester sans compte réel',
+                  style: TextStyle(
+                    color: Color(0xFF9D6EF5),
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFF7C3AED).withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'DÉMO',
+                style: TextStyle(
+                  color: Color(0xFF7C3AED),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
