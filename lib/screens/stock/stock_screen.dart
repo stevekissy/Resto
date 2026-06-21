@@ -278,7 +278,7 @@ class _StockTabState extends State<_StockTab> {
                     subtitle: null,
                   )
                 : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    padding: const EdgeInsets.only(left: 12, right: 12, bottom: 80),
                     itemCount: items.length,
                     itemBuilder: (context, i) => _StockItemCard(
                       item: items[i],

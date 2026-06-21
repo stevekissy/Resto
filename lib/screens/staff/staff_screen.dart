@@ -77,15 +77,23 @@ class _PersonnelTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
 
+    final isWide = MediaQuery.of(context).size.width >= 600;
     return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddUserDialog(context, provider),
-        backgroundColor: AppTheme.primary,
-        icon: const Icon(Icons.person_add),
-        label: const Text('Ajouter'),
-      ),
+      floatingActionButton: isWide
+          ? FloatingActionButton.extended(
+              onPressed: () => _showAddUserDialog(context, provider),
+              backgroundColor: AppTheme.primary,
+              icon: const Icon(Icons.person_add),
+              label: const Text('Ajouter'),
+            )
+          : FloatingActionButton(
+              onPressed: () => _showAddUserDialog(context, provider),
+              backgroundColor: AppTheme.primary,
+              child: const Icon(Icons.person_add),
+            ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: ListView.builder(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.only(left: 12, right: 12, top: 12, bottom: 80),
         itemCount: provider.users.length,
         itemBuilder: (context, i) => _UserCard(user: provider.users[i], provider: provider),
       ),

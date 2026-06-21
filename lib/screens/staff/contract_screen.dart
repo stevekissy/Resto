@@ -91,12 +91,24 @@ class _ContractTabState extends State<ContractTab> with SingleTickerProviderStat
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddContractDialog(context, provider),
-        icon: const Icon(Icons.add),
-        label: const Text('Nouveau contrat'),
-        backgroundColor: AppTheme.primary,
+      floatingActionButton: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = MediaQuery.of(context).size.width >= 600;
+          return isWide
+              ? FloatingActionButton.extended(
+                  onPressed: () => _showAddContractDialog(context, provider),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Nouveau contrat'),
+                  backgroundColor: AppTheme.primary,
+                )
+              : FloatingActionButton(
+                  onPressed: () => _showAddContractDialog(context, provider),
+                  backgroundColor: AppTheme.primary,
+                  child: const Icon(Icons.add),
+                );
+        },
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 
@@ -259,7 +271,7 @@ class _ContractListTab extends StatelessWidget {
                   subtitle: null,
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  padding: const EdgeInsets.only(left: 12, right: 12, bottom: 80),
                   itemCount: contracts.length,
                   itemBuilder: (context, i) => _ContractCard(contract: contracts[i]),
                 ),
@@ -1269,7 +1281,7 @@ class _HistoryTab extends StatelessWidget {
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.only(left: 12, right: 12, top: 12, bottom: 80),
       itemCount: archived.length,
       itemBuilder: (context, i) {
         final c = archived[i];

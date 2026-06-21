@@ -65,13 +65,21 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
       return catOk && searchOk;
     }).toList();
 
+    final isWide = MediaQuery.of(context).size.width >= 600;
     return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showProductDialog(context, provider, null),
-        backgroundColor: AppTheme.primary,
-        icon: const Icon(Icons.add),
-        label: const Text('Nouveau Produit'),
-      ),
+      floatingActionButton: isWide
+          ? FloatingActionButton.extended(
+              onPressed: () => _showProductDialog(context, provider, null),
+              backgroundColor: AppTheme.primary,
+              icon: const Icon(Icons.add),
+              label: const Text('Nouveau Produit'),
+            )
+          : FloatingActionButton(
+              onPressed: () => _showProductDialog(context, provider, null),
+              backgroundColor: AppTheme.primary,
+              child: const Icon(Icons.add),
+            ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: Column(
         children: [
           Padding(
@@ -231,13 +239,21 @@ class _CategoriesTabState extends State<_CategoriesTab> {
     final provider = context.watch<AppProvider>();
     final categories = provider.customCategories;
 
+    final isWide = MediaQuery.of(context).size.width >= 600;
     return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddCategoryDialog(context, provider),
-        backgroundColor: AppTheme.primary,
-        icon: const Icon(Icons.add),
-        label: const Text('Nouvelle Catégorie'),
-      ),
+      floatingActionButton: isWide
+          ? FloatingActionButton.extended(
+              onPressed: () => _showAddCategoryDialog(context, provider),
+              backgroundColor: AppTheme.primary,
+              icon: const Icon(Icons.add),
+              label: const Text('Nouvelle Catégorie'),
+            )
+          : FloatingActionButton(
+              onPressed: () => _showAddCategoryDialog(context, provider),
+              backgroundColor: AppTheme.primary,
+              child: const Icon(Icons.add),
+            ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: Column(
         children: [
           Padding(

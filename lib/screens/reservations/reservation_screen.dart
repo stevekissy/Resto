@@ -99,13 +99,20 @@ class _ReservationScreenState extends State<ReservationScreen>
         ],
       ),
       floatingActionButton: _tabIndex < 2
-          ? FloatingActionButton.extended(
-              backgroundColor: AppTheme.primary,
-              icon: const Icon(Icons.add),
-              label: const Text('Nouvelle réservation'),
-              onPressed: () => _showReservationForm(context, provider),
-            )
+          ? (MediaQuery.of(context).size.width >= 600
+              ? FloatingActionButton.extended(
+                  backgroundColor: AppTheme.primary,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Nouvelle réservation'),
+                  onPressed: () => _showReservationForm(context, provider),
+                )
+              : FloatingActionButton(
+                  backgroundColor: AppTheme.primary,
+                  onPressed: () => _showReservationForm(context, provider),
+                  child: const Icon(Icons.add),
+                ))
           : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 

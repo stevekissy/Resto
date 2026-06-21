@@ -84,13 +84,21 @@ class _SuppliersTab extends StatelessWidget {
     final provider = context.watch<AppProvider>();
     final sups = provider.suppliers; // uniquement actifs
 
+    final isWide = MediaQuery.of(context).size.width >= 600;
     return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddSupplierDialog(context, provider),
-        backgroundColor: AppTheme.primary,
-        icon: const Icon(Icons.add),
-        label: const Text('Ajouter'),
-      ),
+      floatingActionButton: isWide
+          ? FloatingActionButton.extended(
+              onPressed: () => _showAddSupplierDialog(context, provider),
+              backgroundColor: AppTheme.primary,
+              icon: const Icon(Icons.add),
+              label: const Text('Ajouter'),
+            )
+          : FloatingActionButton(
+              onPressed: () => _showAddSupplierDialog(context, provider),
+              backgroundColor: AppTheme.primary,
+              child: const Icon(Icons.add),
+            ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: sups.isEmpty
           ? const EmptyState(
               icon: Icons.business,
@@ -98,7 +106,7 @@ class _SuppliersTab extends StatelessWidget {
               subtitle: 'Ajoutez vos fournisseurs ici',
             )
           : ListView.builder(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.only(left: 12, right: 12, top: 12, bottom: 80),
               itemCount: sups.length,
               itemBuilder: (context, i) {
                 final sup = sups[i];
