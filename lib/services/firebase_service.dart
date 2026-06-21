@@ -1255,42 +1255,42 @@ class FirebaseService {
           'dashboard': true, 'orders': true, 'kitchen': true, 'cashier': true,
           'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
           'suppliers': true, 'productManagement': true, 'adminManagement': true,
-          'reservations': true,
+          'reservations': true, 'accounting': true,
         };
       case UserRole.manager:
         return {
           'dashboard': true, 'orders': true, 'kitchen': true, 'cashier': true,
           'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
           'suppliers': true, 'productManagement': true, 'adminManagement': false,
-          'reservations': true,
+          'reservations': true, 'accounting': true,
         };
       case UserRole.cashier:
         return {
           'dashboard': true, 'orders': true, 'kitchen': false, 'cashier': true,
           'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
-          'reservations': true,
+          'reservations': true, 'accounting': false,
         };
       case UserRole.kitchen:
         return {
           'dashboard': true, 'orders': false, 'kitchen': true, 'cashier': false,
           'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
-          'reservations': false,
+          'reservations': false, 'accounting': false,
         };
       case UserRole.server:
         return {
           'dashboard': true, 'orders': true, 'kitchen': false, 'cashier': false,
           'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
-          'reservations': false,
+          'reservations': false, 'accounting': false,
         };
       case UserRole.stockManager:
         return {
           'dashboard': true, 'orders': false, 'kitchen': false, 'cashier': false,
           'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': true, 'productManagement': true, 'adminManagement': false,
-          'reservations': false,
+          'reservations': false, 'accounting': false,
         };
     }
   }

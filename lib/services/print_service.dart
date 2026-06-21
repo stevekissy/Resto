@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import '../models/models.dart';
+import 'accounting_service.dart';
 
 // Import conditionnel : dart:js uniquement sur web
 // ignore: uri_does_not_exist
@@ -1645,5 +1646,578 @@ $prtBtn
 </div>
 
 </body></html>''';
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  COMPTABILITÉ — 3 rapports PDF A4
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  BILAN COMPTABLE A4
+  // ─────────────────────────────────────────────────────────────────────
+  void printBilan({required AccountingReport report}) {
+    final html = _buildBilanHtml(report: report);
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    } else {
+      if (kDebugMode) debugPrint('[PrintService] Mobile: bilan comptable');
+    }
+  }
+
+  String _buildBilanHtml({required AccountingReport report}) {
+    final now = DateTime.now();
+    final dateFmt = DateFormat('dd MMMM yyyy', 'fr_FR');
+    final periodLabel = _periodLabel(report.range);
+    final sante = report.santeFinanciere;
+    final santeColor = sante == 'Excellente'
+        ? '#27ae60'
+        : sante == 'Bonne'
+            ? '#2ecc71'
+            : sante == 'Moyenne'
+                ? '#f39c12'
+                : '#e74c3c';
+
+    String fmtMoney(double v) =>
+        '${NumberFormat('#,###', 'fr_FR').format(v.abs())} F CFA';
+    String fmtPct(double v) => '${v.toStringAsFixed(1)} %';
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Bilan Comptable — SANKADIOKRO</title>
+<style>
+  @page { size: A4; margin: 18mm 15mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #222; background: #fff; }
+  .header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid #c0392b; padding-bottom: 10px; margin-bottom: 14px; }
+  .logo-block { display: flex; align-items: center; gap: 12px; }
+  .logo-circle { width: 50px; height: 50px; background: linear-gradient(135deg,#c0392b,#e74c3c); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 900; font-size: 16px; flex-shrink: 0; }
+  .company h1 { font-size: 16px; font-weight: 900; color: #c0392b; letter-spacing: 1px; }
+  .company p  { font-size: 9px; color: #777; }
+  .doc-info { text-align: right; }
+  .doc-info h2 { font-size: 14px; font-weight: 700; color: #2c3e50; }
+  .doc-info p  { font-size: 10px; color: #555; margin-top: 3px; }
+  .sante-badge { display: inline-block; padding: 4px 14px; border-radius: 20px; font-size: 11px; font-weight: 700; color: #fff; background: ${santeColor}; margin-top: 6px; }
+
+  h3 { font-size: 12px; font-weight: 700; color: #c0392b; text-transform: uppercase; letter-spacing: .5px; border-left: 4px solid #c0392b; padding-left: 8px; margin: 14px 0 8px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  th { background: #2c3e50; color: #fff; padding: 6px 8px; font-size: 10px; text-align: left; }
+  td { padding: 5px 8px; border-bottom: 1px solid #eee; font-size: 10px; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .total-row td { background: #2c3e50; color: #fff; font-weight: 700; padding: 6px 8px; }
+  .section-total-row td { background: #ecf0f1; font-weight: 700; color: #2c3e50; }
+  .amount { text-align: right; font-weight: 600; }
+  .positive { color: #27ae60; }
+  .negative { color: #e74c3c; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 12px; }
+  .bilan-card { border: 1px solid #dee2e6; border-radius: 6px; overflow: hidden; }
+  .bilan-card-header { padding: 7px 10px; font-size: 11px; font-weight: 700; color: #fff; }
+  .actif-header  { background: #27ae60; }
+  .passif-header { background: #e74c3c; }
+  .bilan-row { display: flex; justify-content: space-between; padding: 5px 10px; border-bottom: 1px solid #f0f0f0; font-size: 10px; }
+  .bilan-total { display: flex; justify-content: space-between; padding: 6px 10px; font-weight: 700; font-size: 11px; }
+  .actif-total  { background: #eafaf1; color: #27ae60; }
+  .passif-total { background: #fdf0ed; color: #e74c3c; }
+
+  .result-box { border: 2px solid ${santeColor}; border-radius: 8px; padding: 10px 14px; text-align: center; margin: 8px 0; }
+  .result-box .label { font-size: 10px; color: #777; }
+  .result-box .value { font-size: 20px; font-weight: 900; color: ${santeColor}; margin: 4px 0; }
+
+  .signature-section { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .sig-block { border-top: 1px solid #bbb; padding-top: 8px; text-align: center; }
+  .sig-block p { font-size: 9px; color: #555; }
+
+  .footer { margin-top: 16px; padding-top: 8px; border-top: 1px solid #ddd; text-align: center; font-size: 9px; color: #aaa; }
+</style>
+</head>
+<body>
+
+<!-- EN-TÊTE -->
+<div class="header">
+  <div class="logo-block">
+    <div class="logo-circle">S</div>
+    <div class="company">
+      <h1>RESTAURANT SANKADIOKRO</h1>
+      <p>Abidjan, Côte d\'Ivoire</p>
+      <p>Restauration · Événementiel · Traiteur</p>
+    </div>
+  </div>
+  <div class="doc-info">
+    <h2>BILAN COMPTABLE</h2>
+    <p>Période : $periodLabel</p>
+    <p>Édité le ${dateFmt.format(now)}</p>
+    <span class="sante-badge">$sante</span>
+  </div>
+</div>
+
+<!-- RÉSUMÉ EXÉCUTIF -->
+<h3>Résumé financier</h3>
+<table>
+  <tr><th style="width:55%">Indicateur</th><th style="width:22%">Valeur</th><th>Variation</th></tr>
+  <tr><td>Chiffre d\'affaires total</td><td class="amount">${fmtMoney(report.totalProduits)}</td><td></td></tr>
+  <tr><td>Recettes encaissées</td><td class="amount">${fmtMoney(report.recettesEncaissees)}</td><td></td></tr>
+  <tr><td>Charges totales</td><td class="amount negative">${fmtMoney(report.totalCharges)}</td><td></td></tr>
+  <tr><td>Marge brute</td><td class="amount">${fmtPct(report.margeBrute)}</td><td></td></tr>
+  <tr><td>Marge nette</td><td class="amount">${fmtPct(report.margeNette)}</td><td></td></tr>
+  <tr class="total-row"><td>Résultat net</td><td class="amount">${fmtMoney(report.resultatNet)}</td><td>${report.isRentable ? "✅ Bénéfice" : "❌ Perte"}</td></tr>
+</table>
+
+<!-- BILAN ACTIF / PASSIF -->
+<h3>Bilan simplifié</h3>
+<div class="grid-2">
+  <div class="bilan-card">
+    <div class="bilan-card-header actif-header">ACTIF</div>
+    <div class="bilan-row"><span>Caisse disponible</span><span><strong>${fmtMoney(report.caisse)}</strong></span></div>
+    <div class="bilan-row"><span>Créances clients</span><span><strong>${fmtMoney(report.creancesClients)}</strong></span></div>
+    <div class="bilan-row"><span>Stock valorisé</span><span><strong>${fmtMoney(report.stockValue)}</strong></span></div>
+    <div class="bilan-total actif-total"><span>TOTAL ACTIF</span><span>${fmtMoney(report.totalActif)}</span></div>
+  </div>
+  <div class="bilan-card">
+    <div class="bilan-card-header passif-header">PASSIF</div>
+    <div class="bilan-row"><span>Dettes fournisseurs</span><span><strong>${fmtMoney(report.dettesFournisseurs)}</strong></span></div>
+    <div class="bilan-row"><span>Salaires dus</span><span><strong>${fmtMoney(report.salairesDus)}</strong></span></div>
+    <div class="bilan-total passif-total"><span>TOTAL PASSIF</span><span>${fmtMoney(report.totalPassif)}</span></div>
+  </div>
+</div>
+
+<div class="result-box">
+  <div class="label">Équilibre financier (Actif − Passif)</div>
+  <div class="value">${fmtMoney(report.equilibre)}</div>
+  <div class="label">${report.equilibre >= 0 ? "✅ Actif supérieur au passif — situation saine" : "⚠️ Passif supérieur à l\'actif — vigilance requise"}</div>
+</div>
+
+<!-- ALERTES -->
+${report.alerts.isNotEmpty ? '''
+<h3>Alertes comptables</h3>
+<table>
+  <tr><th>Niveau</th><th>Message</th></tr>
+  ${report.alerts.map((a) => '<tr><td>${a.icon} ${a.type == AlertType.danger ? "Critique" : a.type == AlertType.warning ? "Attention" : "Info"}</td><td>${a.message}</td></tr>').join()}
+</table>''' : ''}
+
+<!-- SIGNATURES -->
+<div class="signature-section">
+  <div class="sig-block">
+    <p>Établi par le service comptable</p>
+    <br><br><br>
+    <p>Signature &amp; cachet</p>
+  </div>
+  <div class="sig-block">
+    <p>Approuvé par la Direction</p>
+    <br><br><br>
+    <p>Signature Direction générale</p>
+  </div>
+</div>
+
+<div class="footer">
+  Bilan comptable confidentiel — Restaurant SANKADIOKRO — Généré automatiquement le ${dateFmt.format(now)}
+</div>
+
+</body></html>''';
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  COMPTE DE RÉSULTAT A4
+  // ─────────────────────────────────────────────────────────────────────
+  void printCompteResultat({required AccountingReport report}) {
+    final html = _buildCompteResultatHtml(report: report);
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    } else {
+      if (kDebugMode) debugPrint('[PrintService] Mobile: compte de résultat');
+    }
+  }
+
+  String _buildCompteResultatHtml({required AccountingReport report}) {
+    final now = DateTime.now();
+    final dateFmt = DateFormat('dd MMMM yyyy', 'fr_FR');
+    final periodLabel = _periodLabel(report.range);
+    final isProfit = report.isRentable;
+    final resultColor = isProfit ? '#27ae60' : '#e74c3c';
+
+    String fmtMoney(double v) =>
+        '${NumberFormat('#,###', 'fr_FR').format(v.abs())} F CFA';
+    String fmtPct(double base, double part) =>
+        base > 0 ? '${(part / base * 100).toStringAsFixed(1)} %' : '—';
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Compte de Résultat — SANKADIOKRO</title>
+<style>
+  @page { size: A4; margin: 18mm 15mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #222; background: #fff; }
+  .header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid #2980b9; padding-bottom: 10px; margin-bottom: 14px; }
+  .logo-circle { width: 50px; height: 50px; background: linear-gradient(135deg,#c0392b,#e74c3c); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 900; font-size: 16px; flex-shrink: 0; }
+  .logo-block { display: flex; align-items: center; gap: 12px; }
+  .company h1 { font-size: 16px; font-weight: 900; color: #c0392b; letter-spacing: 1px; }
+  .company p  { font-size: 9px; color: #777; }
+  .doc-info { text-align: right; }
+  .doc-info h2 { font-size: 14px; font-weight: 700; color: #2980b9; }
+  .doc-info p  { font-size: 10px; color: #555; margin-top: 3px; }
+
+  h3 { font-size: 12px; font-weight: 700; color: #2980b9; text-transform: uppercase; letter-spacing: .5px; border-left: 4px solid #2980b9; padding-left: 8px; margin: 14px 0 8px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  th { padding: 6px 8px; font-size: 10px; text-align: left; color: #fff; }
+  .produits-header th { background: #27ae60; }
+  .charges-header  th { background: #e74c3c; }
+  .result-header   th { background: ${resultColor}; }
+  td { padding: 5px 8px; border-bottom: 1px solid #eee; font-size: 10px; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .sub-total td { background: #ecf0f1; font-weight: 700; font-size: 10px; }
+  .amount { text-align: right; }
+  .pct    { text-align: right; color: #888; font-size: 9px; }
+
+  .result-final { margin: 12px 0; border: 3px solid ${resultColor}; border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; }
+  .result-final .label { font-size: 13px; font-weight: 700; color: #333; }
+  .result-final .value { font-size: 22px; font-weight: 900; color: ${resultColor}; }
+  .result-final .verdict { font-size: 11px; color: ${resultColor}; font-weight: 600; }
+
+  .note { font-size: 9px; color: #888; margin: 4px 0 10px; }
+
+  .signature-section { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .sig-block { border-top: 1px solid #bbb; padding-top: 8px; text-align: center; }
+  .sig-block p { font-size: 9px; color: #555; }
+  .footer { margin-top: 16px; padding-top: 8px; border-top: 1px solid #ddd; text-align: center; font-size: 9px; color: #aaa; }
+</style>
+</head>
+<body>
+
+<!-- EN-TÊTE -->
+<div class="header">
+  <div class="logo-block">
+    <div class="logo-circle">S</div>
+    <div class="company">
+      <h1>RESTAURANT SANKADIOKRO</h1>
+      <p>Abidjan, Côte d\'Ivoire</p>
+      <p>Restauration · Événementiel · Traiteur</p>
+    </div>
+  </div>
+  <div class="doc-info">
+    <h2>COMPTE DE RÉSULTAT</h2>
+    <p>Période : $periodLabel</p>
+    <p>Édité le ${dateFmt.format(now)}</p>
+  </div>
+</div>
+
+<!-- PRODUITS -->
+<h3>Produits (Revenus)</h3>
+<table>
+  <thead class="produits-header"><tr><th style="width:55%">Libellé</th><th style="width:25%">Montant</th><th>% du CA</th></tr></thead>
+  <tbody>
+    <tr><td>Ventes restaurant (factures)</td><td class="amount">${fmtMoney(report.caRestaurant)}</td><td class="pct">${fmtPct(report.totalProduits, report.caRestaurant)}</td></tr>
+    <tr><td>Revenus réservations / événements</td><td class="amount">${fmtMoney(report.caReservations)}</td><td class="pct">${fmtPct(report.totalProduits, report.caReservations)}</td></tr>
+    <tr class="sub-total"><td>TOTAL PRODUITS</td><td class="amount">${fmtMoney(report.totalProduits)}</td><td class="pct">100 %</td></tr>
+  </tbody>
+</table>
+<p class="note">• Recettes effectivement encaissées : ${fmtMoney(report.recettesEncaissees)} (${fmtPct(report.totalProduits, report.recettesEncaissees)})</p>
+
+<!-- CHARGES -->
+<h3>Charges (Dépenses)</h3>
+<table>
+  <thead class="charges-header"><tr><th style="width:55%">Libellé</th><th style="width:25%">Montant</th><th>% du CA</th></tr></thead>
+  <tbody>
+    <tr><td>Achats marchandises fournisseurs</td><td class="amount">${fmtMoney(report.achatsFournisseurs)}</td><td class="pct">${fmtPct(report.totalProduits, report.achatsFournisseurs)}</td></tr>
+    <tr><td>Salaires bruts du personnel</td><td class="amount">${fmtMoney(report.salairesBruts)}</td><td class="pct">${fmtPct(report.totalProduits, report.salairesBruts)}</td></tr>
+    <tr><td>Charges du jour (dépenses diverses)</td><td class="amount">${fmtMoney(report.chargesJour)}</td><td class="pct">${fmtPct(report.totalProduits, report.chargesJour)}</td></tr>
+    <tr><td>Pertes et déchets stock</td><td class="amount">${fmtMoney(report.pertesStock)}</td><td class="pct">${fmtPct(report.totalProduits, report.pertesStock)}</td></tr>
+    <tr class="sub-total"><td>TOTAL CHARGES</td><td class="amount">${fmtMoney(report.totalCharges)}</td><td class="pct">${fmtPct(report.totalProduits, report.totalCharges)}</td></tr>
+  </tbody>
+</table>
+
+<!-- RÉSULTAT NET -->
+<div class="result-final">
+  <div>
+    <div class="label">RÉSULTAT NET = Produits − Charges</div>
+    <div class="verdict">${isProfit ? "✅ Le restaurant est rentable sur cette période" : "❌ Le restaurant est en perte sur cette période"}</div>
+  </div>
+  <div class="value">${isProfit ? "+" : "−"}${fmtMoney(report.resultatNet)}</div>
+</div>
+
+<!-- DÉTAIL FOURNISSEURS si disponible -->
+${report.supplierOrdersDetail.isNotEmpty ? '''
+<h3>Détail commandes fournisseurs (${report.nbCommandesFournisseurs})</h3>
+<table>
+  <tr><th>Fournisseur</th><th>Montant total</th><th>Payé</th><th>Reste dû</th></tr>
+  ${report.supplierOrdersDetail.take(8).map((o) => '<tr><td>${o.supplierName}</td><td class="amount">${fmtMoney(o.totalAmount)}</td><td class="amount">${fmtMoney(o.paidAmount)}</td><td class="amount">${fmtMoney(o.remainingAmount)}</td></tr>').join()}
+  ${report.supplierOrdersDetail.length > 8 ? '<tr><td colspan="4" style="text-align:center;color:#888;font-size:9px">… et ${report.supplierOrdersDetail.length - 8} autres commandes</td></tr>' : ''}
+</table>''' : ''}
+
+<!-- SIGNATURES -->
+<div class="signature-section">
+  <div class="sig-block">
+    <p>Établi par le service comptable</p>
+    <br><br><br>
+    <p>Signature &amp; cachet</p>
+  </div>
+  <div class="sig-block">
+    <p>Approuvé par la Direction</p>
+    <br><br><br>
+    <p>Signature Direction générale</p>
+  </div>
+</div>
+
+<div class="footer">
+  Compte de résultat confidentiel — Restaurant SANKADIOKRO — Généré automatiquement le ${dateFmt.format(now)}
+</div>
+
+</body></html>''';
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  RAPPORT DE RENTABILITÉ A4
+  // ─────────────────────────────────────────────────────────────────────
+  void printRentabilite({required AccountingReport report}) {
+    final html = _buildRentabiliteHtml(report: report);
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    } else {
+      if (kDebugMode) debugPrint('[PrintService] Mobile: rapport rentabilité');
+    }
+  }
+
+  String _buildRentabiliteHtml({required AccountingReport report}) {
+    final now = DateTime.now();
+    final dateFmt = DateFormat('dd MMMM yyyy', 'fr_FR');
+    final periodLabel = _periodLabel(report.range);
+    final isProfit = report.isRentable;
+    final sante = report.santeFinanciere;
+    final mainColor = sante == 'Excellente' || sante == 'Bonne' ? '#8e44ad' : '#e74c3c';
+
+    String fmtMoney(double v) =>
+        '${NumberFormat('#,###', 'fr_FR').format(v.abs())} F CFA';
+    String pctBar(double pct, {String color = '#8e44ad'}) {
+      final p = pct.clamp(0, 100).toStringAsFixed(0);
+      return '''<div style="background:#eee;border-radius:4px;height:10px;width:100%;margin-top:3px">
+        <div style="background:$color;height:10px;border-radius:4px;width:$p%"></div>
+      </div><div style="font-size:9px;color:$color;margin-top:2px">$p %</div>''';
+    }
+
+    final chargesItems = [
+      {'label': 'Achats fournisseurs', 'val': report.achatsFournisseurs, 'color': '#e74c3c'},
+      {'label': 'Salaires bruts',      'val': report.salairesBruts,      'color': '#e67e22'},
+      {'label': 'Charges du jour',     'val': report.chargesJour,        'color': '#f39c12'},
+      {'label': 'Pertes stock',        'val': report.pertesStock,        'color': '#95a5a6'},
+    ];
+
+    String chargesTableRows() {
+      return chargesItems.map((item) {
+        final pct = report.totalCharges > 0
+            ? (item['val']! as double) / report.totalCharges * 100
+            : 0.0;
+        final p = pct.toStringAsFixed(1);
+        return '''<tr>
+          <td>${item['label']}</td>
+          <td class="amount">${fmtMoney(item['val']! as double)}</td>
+          <td style="width:35%">
+            <div style="background:#eee;border-radius:3px;height:8px">
+              <div style="background:${item['color']};height:8px;border-radius:3px;width:${pct.clamp(0,100).toStringAsFixed(0)}%"></div>
+            </div>
+            <span style="font-size:9px;color:${item['color']}">$p %</span>
+          </td>
+        </tr>''';
+      }).join();
+    }
+
+    // Recommandations IA
+    final recs = <String>[];
+    if (report.achatsFournisseurs > report.totalProduits * 0.45) {
+      recs.add('🔍 Renégocier les tarifs fournisseurs — les achats représentent ${(report.achatsFournisseurs/report.totalProduits*100).toStringAsFixed(0)}% du CA (optimal : < 45%).');
+    }
+    if (report.salairesBruts > report.totalProduits * 0.35) {
+      recs.add('👥 Optimiser la masse salariale — les salaires représentent ${(report.salairesBruts/report.totalProduits*100).toStringAsFixed(0)}% du CA (optimal : < 35%).');
+    }
+    if (report.creancesClients > report.recettesEncaissees * 0.2) {
+      recs.add('💰 Accélérer le recouvrement client — créances élevées : ${fmtMoney(report.creancesClients)}.');
+    }
+    if (report.stockValue < 30000) {
+      recs.add('📦 Reconstituer le stock — valeur actuelle très faible : ${fmtMoney(report.stockValue)}.');
+    }
+    if (report.caReservations > 0 && report.caReservations < report.totalProduits * 0.1) {
+      recs.add('🎉 Développer les réservations événementielles — potentiel sous-exploité (${(report.caReservations/report.totalProduits*100).toStringAsFixed(0)}% du CA).');
+    }
+    if (report.salairesDus > 0) {
+      recs.add('⚠️ Régulariser les salaires impayés : ${fmtMoney(report.salairesDus)} restants.');
+    }
+    if (recs.isEmpty) {
+      recs.add('✅ Bonne gestion globale — maintenir les pratiques actuelles et surveiller les tendances.');
+      recs.add('📈 Continuer à développer les ventes réservations pour diversifier les revenus.');
+    }
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Rapport de Rentabilité — SANKADIOKRO</title>
+<style>
+  @page { size: A4; margin: 18mm 15mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #222; background: #fff; }
+  .header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid $mainColor; padding-bottom: 10px; margin-bottom: 14px; }
+  .logo-circle { width: 50px; height: 50px; background: linear-gradient(135deg,#c0392b,#e74c3c); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 900; font-size: 16px; flex-shrink: 0; }
+  .logo-block { display: flex; align-items: center; gap: 12px; }
+  .company h1 { font-size: 16px; font-weight: 900; color: #c0392b; letter-spacing: 1px; }
+  .company p  { font-size: 9px; color: #777; }
+  .doc-info { text-align: right; }
+  .doc-info h2 { font-size: 14px; font-weight: 700; color: $mainColor; }
+  .doc-info p  { font-size: 10px; color: #555; margin-top: 3px; }
+
+  h3 { font-size: 12px; font-weight: 700; color: $mainColor; text-transform: uppercase; letter-spacing: .5px; border-left: 4px solid $mainColor; padding-left: 8px; margin: 14px 0 8px; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+  .kpi-card { border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; text-align: center; }
+  .kpi-card .kpi-label { font-size: 9px; color: #888; text-transform: uppercase; letter-spacing: .3px; }
+  .kpi-card .kpi-value { font-size: 14px; font-weight: 900; color: $mainColor; margin: 4px 0 2px; }
+  .kpi-card .kpi-sub   { font-size: 9px; color: #aaa; }
+
+  .verdict-box { background: linear-gradient(135deg, $mainColor, ${isProfit ? '#9b59b6' : '#c0392b'}); border-radius: 8px; padding: 12px 16px; color: #fff; margin: 8px 0; }
+  .verdict-box h4 { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  .verdict-box p  { font-size: 10px; line-height: 1.5; }
+
+  table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  th { background: $mainColor; color: #fff; padding: 6px 8px; font-size: 10px; text-align: left; }
+  td { padding: 5px 8px; border-bottom: 1px solid #eee; font-size: 10px; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .amount { text-align: right; font-weight: 600; }
+
+  .recs-list { list-style: none; }
+  .recs-list li { padding: 6px 8px; border-left: 3px solid $mainColor; margin-bottom: 5px; background: #fdf6ff; font-size: 10px; line-height: 1.4; }
+
+  .conclusion-box { border: 2px solid ${isProfit ? '#27ae60' : '#e74c3c'}; border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+  .conclusion-box h4 { font-size: 11px; font-weight: 700; color: ${isProfit ? '#27ae60' : '#e74c3c'}; margin-bottom: 5px; }
+  .conclusion-box p  { font-size: 10px; line-height: 1.5; }
+
+  .signature-section { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .sig-block { border-top: 1px solid #bbb; padding-top: 8px; text-align: center; }
+  .sig-block p { font-size: 9px; color: #555; }
+  .footer { margin-top: 16px; padding-top: 8px; border-top: 1px solid #ddd; text-align: center; font-size: 9px; color: #aaa; }
+</style>
+</head>
+<body>
+
+<!-- EN-TÊTE -->
+<div class="header">
+  <div class="logo-block">
+    <div class="logo-circle">S</div>
+    <div class="company">
+      <h1>RESTAURANT SANKADIOKRO</h1>
+      <p>Abidjan, Côte d\'Ivoire</p>
+      <p>Restauration · Événementiel · Traiteur</p>
+    </div>
+  </div>
+  <div class="doc-info">
+    <h2>RAPPORT DE RENTABILITÉ</h2>
+    <p>Période : $periodLabel</p>
+    <p>Édité le ${dateFmt.format(now)}</p>
+  </div>
+</div>
+
+<!-- VERDICT -->
+<div class="verdict-box">
+  <h4>${isProfit ? "✅ Le restaurant est RENTABLE sur cette période" : "❌ Le restaurant est en PERTE sur cette période"}</h4>
+  <p>Résultat net : <strong>${isProfit ? "+" : "−"}${fmtMoney(report.resultatNet)}</strong> — 
+  Marge brute : <strong>${report.margeBrute.toStringAsFixed(1)} %</strong> — 
+  Marge nette : <strong>${report.margeNette.toStringAsFixed(1)} %</strong> — 
+  Santé financière : <strong>$sante</strong></p>
+</div>
+
+<!-- KPI -->
+<h3>Indicateurs clés de performance</h3>
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-label">Chiffre d\'affaires</div>
+    <div class="kpi-value">${fmtMoney(report.totalProduits)}</div>
+    <div class="kpi-sub">${report.nbFactures} factures</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Charges totales</div>
+    <div class="kpi-value">${fmtMoney(report.totalCharges)}</div>
+    <div class="kpi-sub">${report.margeNette >= 0 ? "Marge nette " + report.margeNette.toStringAsFixed(1) + "%" : "Déficit"}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Résultat net</div>
+    <div class="kpi-value" style="color:${isProfit ? '#27ae60' : '#e74c3c'}">${isProfit ? "+" : "−"}${fmtMoney(report.resultatNet)}</div>
+    <div class="kpi-sub">${isProfit ? "Bénéfice" : "Perte"}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Marge brute</div>
+    <div class="kpi-value">${report.margeBrute.toStringAsFixed(1)} %</div>
+    <div class="kpi-sub">Avant salaires & charges</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Caisse disponible</div>
+    <div class="kpi-value">${fmtMoney(report.caisse)}</div>
+    <div class="kpi-sub">Liquidités</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Stock valorisé</div>
+    <div class="kpi-value">${fmtMoney(report.stockValue)}</div>
+    <div class="kpi-sub">Actif circulant</div>
+  </div>
+</div>
+
+<!-- RÉPARTITION DES CHARGES -->
+<h3>Répartition des charges</h3>
+<table>
+  <tr><th style="width:40%">Poste de charge</th><th style="width:25%">Montant</th><th>Part relative</th></tr>
+  $chargesTableRows
+</table>
+
+<!-- COMPARATIF PRODUITS -->
+<h3>Comparatif produits vs charges</h3>
+<table>
+  <tr><th>Flux</th><th>Montant</th><th>% CA</th></tr>
+  <tr><td>✅ Ventes restaurant</td><td class="amount">${fmtMoney(report.caRestaurant)}</td><td>${report.totalProduits > 0 ? (report.caRestaurant/report.totalProduits*100).toStringAsFixed(1) : 0} %</td></tr>
+  <tr><td>✅ Réservations / événements</td><td class="amount">${fmtMoney(report.caReservations)}</td><td>${report.totalProduits > 0 ? (report.caReservations/report.totalProduits*100).toStringAsFixed(1) : 0} %</td></tr>
+  <tr><td>🔴 Achats fournisseurs</td><td class="amount">${fmtMoney(report.achatsFournisseurs)}</td><td>${report.totalProduits > 0 ? (report.achatsFournisseurs/report.totalProduits*100).toStringAsFixed(1) : 0} %</td></tr>
+  <tr><td>🔴 Salaires</td><td class="amount">${fmtMoney(report.salairesBruts)}</td><td>${report.totalProduits > 0 ? (report.salairesBruts/report.totalProduits*100).toStringAsFixed(1) : 0} %</td></tr>
+  <tr><td>🔴 Charges diverses</td><td class="amount">${fmtMoney(report.chargesJour)}</td><td>${report.totalProduits > 0 ? (report.chargesJour/report.totalProduits*100).toStringAsFixed(1) : 0} %</td></tr>
+</table>
+
+<!-- RECOMMANDATIONS IA -->
+<h3>Recommandations de l\'assistant comptable</h3>
+<ul class="recs-list">
+  ${recs.map((r) => '<li>$r</li>').join()}
+</ul>
+
+<!-- CONCLUSION -->
+<div class="conclusion-box">
+  <h4>${isProfit ? "CONCLUSION — Activité rentable" : "CONCLUSION — Activité déficitaire"}</h4>
+  <p>
+    ${isProfit 
+      ? "Sur la période $periodLabel, le Restaurant SANKADIOKRO dégage un résultat net positif de ${fmtMoney(report.resultatNet)} pour un chiffre d\'affaires de ${fmtMoney(report.totalProduits)}. La marge nette de ${report.margeNette.toStringAsFixed(1)}% indique une santé financière $sante. Il est recommandé de maintenir cette dynamique en surveillant l\'évolution des charges fournisseurs."
+      : "Sur la période $periodLabel, le Restaurant SANKADIOKRO enregistre une perte nette de ${fmtMoney(report.resultatNet)} pour un chiffre d\'affaires de ${fmtMoney(report.totalProduits)}. Une analyse approfondie des postes de charges est nécessaire pour rétablir la rentabilité. Les recommandations ci-dessus doivent être appliquées en priorité."
+    }
+  </p>
+</div>
+
+<!-- SIGNATURES -->
+<div class="signature-section">
+  <div class="sig-block">
+    <p>Établi par le service comptable</p>
+    <br><br><br>
+    <p>Signature &amp; cachet</p>
+  </div>
+  <div class="sig-block">
+    <p>Approuvé par la Direction</p>
+    <br><br><br>
+    <p>Signature Direction générale</p>
+  </div>
+</div>
+
+<div class="footer">
+  Rapport de rentabilité confidentiel — Restaurant SANKADIOKRO — Généré automatiquement le ${dateFmt.format(now)}
+</div>
+
+</body></html>''';
+  }
+
+  // ── Utilitaire : libellé de période ────────────────────────────────────
+  String _periodLabel(DateRange range) {
+    final fmt = DateFormat('dd/MM/yyyy', 'fr_FR');
+    return '${fmt.format(range.start)} → ${fmt.format(range.end)}';
   }
 }
