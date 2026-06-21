@@ -12,3 +12,18 @@ void africanStop() {
 bool africanIsSpeaking() {
   return false;
 }
+
+/// Stub — pas d'effet sur Android/iOS
+void setTTSConfig(String voiceName, double rate, double pitch, double volume) {
+  // No-op
+}
+
+/// Stub — retourne une liste vide sur Android/iOS
+String getTTSVoiceList() {
+  return '[]';
+}
+
+/// Stub — pas de voix africaine disponible sur Android/iOS via ce pont
+bool isTTSAfricanAvailable() {
+  return false;
+}

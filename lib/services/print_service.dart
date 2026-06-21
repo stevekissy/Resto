@@ -139,357 +139,484 @@ class PrintService {
     }
   }
 
+
   // ─────────────────────────────────────────────────────────────────────
-  //  BUILD HTML — Facture d'Encaissement PROVISOIRE
-  //  Style : reproduit fidèlement le modèle officiel Sankadio
-  //  (tableau Désignation|Réf|PU|Qté|Total, lignes rouges, totaux encadrés)
-  //  Étape 1 : commande + total, PAS de détails paiement
+  //  FRAGMENTS HTML PARTAGÉS — En-tête, pied de page, QR, bouton
   // ─────────────────────────────────────────────────────────────────────
-  String _buildCashoutHtml({
-    required Order order,
-    required String cashoutInvoiceNumber,
-    String? cashierName,
-  }) {
-    final now     = DateTime.now();
-    final dateFmt2 = DateFormat('yyyy-MM-dd HH:mm:ss');
-    final dateStr = dateFmt2.format(now);
-    final year    = now.year.toString();
 
-    // Numéro de facture format : XXXXXX-XXXX (ex : 194156-4546)
-    final invoiceDisplay = cashoutInvoiceNumber;
-    // Référence table : KG-N (table number)
-    final refTable = 'KG-${order.tableNumber}';
+  /// En-tête commun à tous les documents (logo, nom, adresse, titre)
+  String _htmlHeader(String titleLabel, String titleClass) {
+    final logo = _logoBase64();
+    return '''
+    <div class="header">
+      <img src="$logo" alt="Logo" class="logo-img" onerror="this.style.display='none'" />
+      <div class="restaurant-name">Restaurant Sankadiokro</div>
+      <div class="restaurant-tagline">Cuisine Africaine &amp; Ivoirienne</div>
+    </div>
+    <hr class="sep-solid" />
+    <div class="receipt-title-block">
+      <span class="receipt-title $titleClass">$titleLabel</span>
+    </div>
+    <hr class="sep-dashed" />
+    ''';
+  }
 
-    // Lignes articles
-    final itemsRows = order.items.map((item) {
-      final refItem = 'P${item.productId.isNotEmpty ? item.productId.substring(0, item.productId.length.clamp(0, 4)).toUpperCase() : "---"}';
-      return '''
-        <tr>
-          <td class="td-designation">${_escape(item.productName)}</td>
-          <td class="td-ref">$refItem</td>
-          <td class="td-pu">${_fmt.format(item.unitPrice)}</td>
-          <td class="td-qte">${item.quantity}</td>
-          <td class="td-total">${_fmt.format(item.totalPrice)}</td>
-        </tr>''';
-    }).join('');
+  /// Pied de page commun à tous les documents
+  String get _htmlFooter => '''
+    <hr class="sep-solid" />
+    <div class="footer-block">
+      <div class="footer-merci">Merci d&apos;avoir choisi</div>
+      <div class="footer-name">Restaurant Sankadiokro</div>
+      <div class="footer-tagline">Votre satisfaction est notre priorit&eacute;.</div>
+      <div class="footer-address">&#128205; Yopougon Millionnaire</div>
+      <div class="footer-address">Derri&egrave;re le Groupe Scolaire Saint Louis</div>
+      <div class="footer-address">Non loin de la Cit&eacute; BHCI</div>
+      <div class="footer-address">&#9993; restaurantsankadiokro@gmail.com</div>
+      <div class="footer-address">&#128222; 07 07 04 29 47</div>
+      <div class="footer-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+      <div class="footer-merci-final">~ MERCI DE VOTRE CONFIANCE ~</div>
+      <div style="font-size:8px;color:#aaa;margin-top:4px;">Nous esp&eacute;rons vous revoir tr&egrave;s bient&ocirc;t.</div>
+    </div>
+  ''';
 
-    final discountRow = order.discount > 0
-        ? '''<tr class="discount-row">
-          <td class="td-designation" colspan="3"><em>Remise accordée</em></td>
-          <td class="td-qte"></td>
-          <td class="td-total">-${_fmt.format(order.discount)}</td>
-        </tr>'''
-        : '';
+  /// Génère un bloc QR code visuel (canvas JS)
+  String _qrScript(String qrData) {
+    final safe = qrData.replaceAll('"', r'\"');
+    return '''
+    <div class="qr-block">
+      <canvas id="qr-canvas" class="qr-canvas" width="90" height="90"></canvas>
+      <div class="qr-label">Scannez pour v&eacute;rifier</div>
+    </div>
+    <script>
+      (function() {
+        var data = "$safe";
+        var c = document.getElementById('qr-canvas');
+        if (!c) return;
+        var ctx = c.getContext('2d');
+        var size = 90;
+        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,size,size);
+        ctx.strokeStyle='#222'; ctx.lineWidth=2; ctx.strokeRect(2,2,size-4,size-4);
+        function sq(x,y,s){ctx.fillStyle='#222';ctx.fillRect(x,y,s,s);ctx.fillStyle='#fff';ctx.fillRect(x+2,y+2,s-4,s-4);ctx.fillStyle='#222';ctx.fillRect(x+4,y+4,s-8,s-8);}
+        sq(8,8,18); sq(size-26,8,18); sq(8,size-26,18);
+        ctx.fillStyle='#333';
+        var seed=0; for(var i=0;i<data.length;i++) seed+=data.charCodeAt(i);
+        for(var r=0;r<7;r++) for(var col=0;col<7;col++) if((seed^(r*13+col*7))%3===0) ctx.fillRect(30+col*7,30+r*7,5,5);
+        ctx.fillStyle='#888'; ctx.font='5px Arial'; ctx.textAlign='center';
+        ctx.fillText('QR',size/2,size-8);
+      })();
+    </script>
+    ''';
+  }
 
-    return '''<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <title>Facture Encaissement #${order.orderNumber}</title>
-  <style>
+  /// Bouton d'impression commun
+  String get _printButton => '''
+    <div class="print-btn">
+      <button onclick="window.print()"
+        style="padding:8px 24px;background:#111;color:#fff;border:none;border-radius:6px;
+               cursor:pointer;font-size:12px;font-weight:bold;letter-spacing:0.5px;">
+        &#128424; Imprimer / Enregistrer PDF
+      </button>
+    </div>
+  ''';
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  CSS COMMUN UNIFIÉ — Ticket thermique 80mm Sankadio v2
+  //  Utilisé par les quatre documents imprimables.
+  // ─────────────────────────────────────────────────────────────────────
+  String _thermalCss() => r'''
     @page { size: 80mm auto; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
       font-family: Arial, Helvetica, sans-serif;
-      font-size: 10.5px;
-      color: #000;
-      background: #fff;
-      width: 80mm;
-      max-width: 80mm;
+      font-size: 11px; color: #111; background: #fff;
+      width: 80mm; max-width: 80mm;
     }
+    .receipt { width: 78mm; margin: 0 auto; padding: 3mm 1mm 5mm 1mm; }
 
-    .receipt {
-      width: 78mm;
-      margin: 0 auto;
-      padding: 4mm 1mm;
-    }
+    /* ══ EN-TÊTE ══ */
+    .header { text-align: center; padding-bottom: 4px; }
+    .logo-img { width: 58px; height: 58px; object-fit: contain; display: block; margin: 0 auto 4px auto; }
+    .restaurant-name { font-size: 13.5px; font-weight: bold; letter-spacing: 0.8px; margin-bottom: 2px; text-transform: uppercase; }
+    .restaurant-tagline { font-size: 9.5px; font-style: italic; color: #444; margin-bottom: 3px; }
+    .restaurant-sub { font-size: 9px; color: #333; line-height: 1.4; }
+    .restaurant-contact { font-size: 9px; color: #222; margin-top: 2px; }
 
-    /* ── En-tête ── */
-    .header-top {
-      text-align: center;
-      margin-bottom: 4px;
-    }
-    .logo-img {
-      width: 55px;
-      height: 55px;
-      object-fit: contain;
-      display: block;
-      margin: 0 auto 3px auto;
-    }
-    .resto-name {
-      font-size: 13px;
-      font-weight: bold;
-      letter-spacing: 0.5px;
-      margin-bottom: 1px;
-    }
+    /* ══ TITRES DOCUMENTS ══ */
+    .receipt-title-block { text-align: center; margin: 6px 0 5px 0; }
+    .receipt-title { display: inline-block; font-size: 11.5px; font-weight: bold; letter-spacing: 1.2px; padding: 3px 12px; border-radius: 4px; text-transform: uppercase; }
+    .title-encaissement { background: #E3F2FD; color: #0D47A1; border: 1.5px solid #0D47A1; }
+    .title-reglee       { background: #E8F5E9; color: #1B5E20; border: 1.5px solid #1B5E20; }
+    .title-provisoire   { background: #FFF3E0; color: #E65100; border: 1.5px solid #E65100; }
 
-    /* ── Ligne rouge épaisse ── */
-    .red-bar-thick {
-      border: none;
-      border-top: 3px solid #CC0000;
-      margin: 5px 0 3px 0;
-    }
-    .red-bar-thin {
-      border: none;
-      border-top: 1px solid #CC0000;
-      margin: 3px 0;
-    }
+    /* ══ SÉPARATEURS ══ */
+    .sep-solid  { border: none; border-top: 2px solid #111; margin: 5px 0; }
+    .sep-dashed { border: none; border-top: 1px dashed #777; margin: 5px 0; }
+    .sep-thin   { border: none; border-top: 1px solid #ccc; margin: 4px 0; }
 
-    /* ── Bloc méta-infos (numéro, date, exercice) ── */
-    .meta-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 4px;
-    }
-    .meta-table td {
-      font-size: 10px;
-      padding: 1px 2px;
-      vertical-align: top;
-    }
-    .meta-label { color: #555; width: 38%; }
-    .meta-value { font-weight: bold; }
+    /* ══ INFOS DOCUMENT ══ */
+    .info-table { width: 100%; border-collapse: collapse; margin: 3px 0; }
+    .info-table tr td { padding: 1.8px 0; font-size: 10px; vertical-align: top; }
+    .info-label { color: #555; width: 42%; }
+    .info-value { font-weight: bold; text-align: right; color: #111; }
 
-    /* ── Titre facture surligné ── */
-    .invoice-title-block {
-      text-align: center;
-      margin: 6px 0 4px 0;
-    }
-    .invoice-title {
-      display: inline-block;
-      font-size: 12px;
-      font-weight: bold;
-      letter-spacing: 1px;
-      background: #FFCCCC;
-      color: #CC0000;
-      border: 1.5px solid #CC0000;
-      border-radius: 3px;
-      padding: 2px 10px;
-    }
+    /* ══ TABLEAU ARTICLES ══ */
+    .items-table { width: 100%; border-collapse: collapse; margin: 3px 0; }
+    .items-table thead tr { background: #222; color: #fff; }
+    .items-table thead th { font-size: 9.5px; font-weight: bold; padding: 3px 2px; text-align: left; }
+    .items-table tbody tr:nth-child(even) { background: #F9F9F9; }
+    .items-table tbody tr td { padding: 2.5px 2px; font-size: 10px; vertical-align: top; border-bottom: 1px solid #EBEBEB; }
+    .item-name  { width: 40%; }
+    .item-qty   { width: 10%; text-align: center; }
+    .item-price { width: 22%; text-align: right; }
+    .item-total { width: 28%; text-align: right; font-weight: bold; }
 
-    /* ── Tableau articles ── */
-    .items-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 4px 0;
-    }
-    .items-table thead tr {
-      background: #CC0000;
-      color: #fff;
-    }
-    .items-table thead th {
-      font-size: 9.5px;
-      font-weight: bold;
-      padding: 3px 2px;
-      text-align: left;
-      border: none;
-    }
-    .items-table tbody tr {
-      border-bottom: 1px solid #e0e0e0;
-    }
-    .items-table tbody tr:nth-child(even) {
-      background: #FFF5F5;
-    }
-    .items-table tbody td {
-      font-size: 10px;
-      padding: 3px 2px;
-      vertical-align: top;
-    }
+    /* ══ SECTION TITRE ══ */
+    .section-title { font-size: 8.5px; font-weight: bold; color: #555; letter-spacing: 1.2px; text-transform: uppercase; margin: 5px 0 2px 0; padding-bottom: 1px; border-bottom: 1px solid #ddd; }
 
-    /* Largeurs colonnes */
-    .td-designation { width: 35%; }
-    .td-ref         { width: 12%; text-align: center; }
-    .td-pu          { width: 18%; text-align: right; }
-    .td-qte         { width: 8%;  text-align: center; }
-    .td-total       { width: 20%; text-align: right; font-weight: bold; }
+    /* ══ TOTAUX ══ */
+    .totals-table { width: 100%; border-collapse: collapse; margin: 3px 0; }
+    .totals-table tr td { padding: 2px 2px; font-size: 10.5px; vertical-align: middle; }
+    .totals-table tr td:last-child { text-align: right; font-weight: bold; }
+    .totals-table tr.discount-row td { color: #B71C1C; font-style: italic; }
+    .totals-table tr.subtotal-row td { color: #333; }
+    .totals-table tr.total-row td { font-size: 12px; font-weight: bold; background: #111; color: #fff; padding: 4px 4px; }
 
-    /* ── Totaux ── */
-    .totals-block {
-      margin: 4px 0;
-      border: 1.5px solid #CC0000;
-      border-radius: 3px;
-      overflow: hidden;
-    }
-    .totals-table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    .totals-table td {
-      font-size: 10.5px;
-      padding: 2.5px 6px;
-    }
-    .totals-table tr:not(:last-child) td {
-      border-bottom: 1px solid #f0c0c0;
-    }
-    .totals-table td:last-child {
-      text-align: right;
-      font-weight: bold;
-    }
-    .total-net-row {
-      background: #CC0000;
-      color: #fff !important;
-    }
-    .total-net-row td {
-      font-size: 12px;
-      font-weight: bold;
-      padding: 4px 6px;
-      color: #fff;
-    }
-    .discount-row td { color: #B71C1C; font-style: italic; }
+    /* ══ PAIEMENT ══ */
+    .payment-block { background: #F8F8F8; border: 1px solid #ddd; border-radius: 4px; padding: 5px 7px; margin: 5px 0; }
+    .payment-row { display: flex; justify-content: space-between; font-size: 10px; padding: 1.5px 0; }
+    .payment-label { color: #555; }
+    .payment-value { font-weight: bold; }
+    .payment-value.change { color: #1B5E20; }
 
-    /* ── Bandeau provisoire ── */
-    .prov-banner {
-      background: #FFF3CD;
-      border: 1px dashed #FF8800;
-      text-align: center;
-      font-size: 9px;
-      color: #885500;
-      padding: 3px 6px;
-      border-radius: 3px;
-      margin: 5px 0;
-      font-weight: bold;
-      letter-spacing: 0.5px;
-    }
+    /* ══ TOTAL ENCADRÉ ══ */
+    .big-total-box { text-align: center; border: 2px solid #111; border-radius: 4px; padding: 6px 4px; margin: 5px 0; }
+    .big-total-label { font-size: 9px; color: #555; letter-spacing: 1px; text-transform: uppercase; }
+    .big-total-amount { font-size: 16px; font-weight: bold; letter-spacing: 0.5px; margin-top: 1px; }
 
-    /* ── Pied de page ── */
-    .footer-thick-bar {
-      border: none;
-      border-top: 2px solid #000;
-      margin: 6px 0 3px 0;
-    }
-    .footer-block {
-      text-align: center;
-      font-size: 9.5px;
-      line-height: 1.5;
-    }
-    .footer-name {
-      font-size: 11px;
-      font-weight: bold;
-      margin-bottom: 1px;
-    }
-    .footer-contact {
-      color: #333;
-      font-size: 9px;
-    }
+    /* ══ BADGES ══ */
+    .badge-paid    { display: inline-block; background: #1B5E20; color: #fff; font-weight: bold; font-size: 11px; padding: 3px 14px; border-radius: 12px; letter-spacing: 2px; }
+    .badge-pending { display: inline-block; background: #E65100; color: #fff; font-weight: bold; font-size: 10px; padding: 2px 10px; border-radius: 12px; letter-spacing: 1px; }
+    .badge-center  { text-align: center; margin: 5px 0; }
 
-    /* ── Screen preview ── */
+    /* ══ QR CODE ══ */
+    .qr-block  { text-align: center; margin: 6px 0 4px 0; }
+    .qr-canvas { display: block; margin: 0 auto; }
+    .qr-label  { font-size: 8px; color: #888; margin-top: 2px; letter-spacing: 0.5px; }
+
+    /* ══ PIED DE PAGE ══ */
+    .footer-block { text-align: center; margin-top: 8px; padding-top: 5px; }
+    .footer-merci { font-size: 10.5px; font-weight: bold; margin-bottom: 2px; }
+    .footer-name  { font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+    .footer-tagline { font-size: 9px; font-style: italic; color: #555; margin-bottom: 4px; }
+    .footer-address { font-size: 8.5px; color: #333; line-height: 1.5; }
+    .footer-stars   { font-size: 12px; color: #F9A825; letter-spacing: 3px; margin: 4px 0; }
+    .footer-merci-final { font-size: 9px; font-weight: bold; color: #333; letter-spacing: 1px; border-top: 1px dashed #aaa; padding-top: 3px; margin-top: 3px; }
+    .print-btn { text-align: center; margin-top: 14px; }
+
+    /* ══ MEDIA ══ */
     @media screen {
-      body { background: #f5f5f5; display: flex; justify-content: center; padding: 20px; }
-      .receipt { background: #fff; box-shadow: 0 2px 16px rgba(0,0,0,0.18); padding: 14px; }
+      body { background: #ECEFF1; display: flex; justify-content: center; padding: 20px; }
+      .receipt { background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,0.15); padding: 16px; }
     }
     @media print {
       body { background: #fff; width: 80mm; }
       .receipt { box-shadow: none; }
       .print-btn { display: none; }
     }
-  </style>
+  ''';
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  REÇU D'ENCAISSEMENT — design Sankadio v2 (80mm)
+  // ─────────────────────────────────────────────────────────────────────
+  String _buildEncaissementHtml({
+    required Order order,
+    required double amountPaid,
+    required String receiptNumber,
+    String? cashierName,
+  }) {
+    final now = DateTime.now();
+    final dateFmt2 = DateFormat('dd/MM/yyyy');
+    final timeFmt  = DateFormat('HH:mm');
+    final dateStr  = dateFmt2.format(now);
+    final timeStr  = timeFmt.format(now);
+    final change   = (amountPaid - order.totalAmount).clamp(0.0, double.infinity);
+
+    final itemsRows = order.items.map((item) =>
+      '<tr>'
+      '<td class="item-name">${_escape(item.productName)}</td>'
+      '<td class="item-qty">${item.quantity}</td>'
+      '<td class="item-price">${_fmt.format(item.unitPrice)} F</td>'
+      '<td class="item-total">${_fmt.format(item.totalPrice)} F</td>'
+      '</tr>'
+    ).join('');
+
+    final discountRow = order.discount > 0
+        ? '<tr class="discount-row"><td colspan="3">Remise accord&eacute;e</td><td>-${_fmt.format(order.discount)}</td></tr>'
+        : '';
+
+    final changeVisible = amountPaid > 0;
+    final resteRow = (order.totalAmount > amountPaid && amountPaid > 0)
+        ? '<div class="payment-row"><span class="payment-label">Reste d&ucirc; :</span><span class="payment-value" style="color:#B71C1C;">${_fmt.format(order.totalAmount - amountPaid)} F CFA</span></div>'
+        : '';
+    final qrData = 'N:$receiptNumber|D:$dateStr|M:${_fmt.format(order.totalAmount)}|R:Sankadiokro';
+    final qrBlock = _qrScript(qrData);
+    final header  = _htmlHeader("REÇU D'ENCAISSEMENT", "title-encaissement");
+    final footer  = _htmlFooter;
+    final prtBtn  = _printButton;
+    final css     = _thermalCss();
+    final orderType = order.isTakeaway ? 'À emporter' : 'Sur place';
+    final cashierRow = cashierName != null ? '<tr><td class="info-label">Caissier :</td><td class="info-value">${_escape(cashierName)}</td></tr>' : '';
+    final serverRow  = order.serverName != null ? '<tr><td class="info-label">Serveur :</td><td class="info-value">${_escape(order.serverName!)}</td></tr>' : '';
+    final amtRow = amountPaid > 0 ? '<div class="payment-row"><span class="payment-label">Montant reçu :</span><span class="payment-value">${_fmt.format(amountPaid)} F CFA</span></div>' : '';
+    final chgRow = changeVisible ? '<div class="payment-row"><span class="payment-label">Monnaie rendue :</span><span class="payment-value change">${_fmt.format(change)} F CFA</span></div>' : '';
+    final payMode = _escape(order.paymentMethod ?? 'Espèces');
+    final tableNum = _escape(order.tableNumber);
+    final subTot = _fmt.format(order.subtotal);
+    final tot    = _fmt.format(order.totalAmount);
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reçu Encaissement #$receiptNumber</title>
+<style>$css</style>
 </head>
 <body>
-  <div class="receipt">
-
-    <!-- ══ EN-TÊTE ══ -->
-    <div class="header-top">
-      <img src="${_logoBase64()}" alt="Logo" class="logo-img" />
-      <div class="resto-name">RESTAURANT SANKADIOKRO</div>
-    </div>
-
-    <!-- Ligne rouge épaisse -->
-    <hr class="red-bar-thick">
-
-    <!-- ══ TITRE FACTURE ENCAISSEMENT ══ -->
-    <div class="invoice-title-block">
-      <span class="invoice-title">FACTURE D&#x27;ENCAISSEMENT</span>
-    </div>
-
-    <!-- Méta-informations -->
-    <table class="meta-table">
-      <tr>
-        <td class="meta-label">Facture n° :</td>
-        <td class="meta-value">$invoiceDisplay</td>
-      </tr>
-      <tr>
-        <td class="meta-label">Réf :</td>
-        <td class="meta-value">$refTable</td>
-      </tr>
-      <tr>
-        <td class="meta-label">Date :</td>
-        <td class="meta-value">$dateStr</td>
-      </tr>
-      <tr>
-        <td class="meta-label">Exercice :</td>
-        <td class="meta-value">$year</td>
-      </tr>
-      ${cashierName != null ? '<tr><td class="meta-label">Caissier :</td><td class="meta-value">${_escape(cashierName)}</td></tr>' : ''}
-    </table>
-
-    <hr class="red-bar-thin">
-
-    <!-- ══ TABLEAU ARTICLES ══ -->
-    <table class="items-table">
-      <thead>
-        <tr>
-          <th class="td-designation">Désignation</th>
-          <th class="td-ref">Réf</th>
-          <th class="td-pu">PU</th>
-          <th class="td-qte">Qté</th>
-          <th class="td-total">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        $itemsRows
-        $discountRow
-      </tbody>
-    </table>
-
-    <hr class="red-bar-thin">
-
-    <!-- ══ TOTAUX ENCADRÉS ══ -->
-    <div class="totals-block">
-      <table class="totals-table">
-        <tr>
-          <td>Total HT</td>
-          <td>${_fmt.format(order.subtotal)} fcfa</td>
-        </tr>
-        <tr>
-          <td>Total TTC</td>
-          <td>${_fmt.format(order.subtotal)} fcfa</td>
-        </tr>
-        <tr class="total-net-row">
-          <td>Net à payer</td>
-          <td>${_fmt.format(order.totalAmount)} fcfa</td>
-        </tr>
-      </table>
-    </div>
-
-    <!-- Bandeau provisoire -->
-    <div class="prov-banner">&#9888; PROVISOIRE — En attente de règlement</div>
-
-    <!-- ══ PIED DE PAGE OFFICIEL ══ -->
-    <hr class="footer-thick-bar">
-    <div class="footer-block">
-      <div class="footer-name">RESTAURANT SANKADIOKRO</div>
-      <div class="footer-contact">Yopougon millionnaire derrière le groupe</div>
-      <div class="footer-contact">scolaire Saint Louis non loin de la CITE BHCI</div>
-      <div class="footer-contact">restaurantsankadiokro@gmail.com</div>
-      <div class="footer-contact">Tel : 23 45 81 66 &nbsp;-&nbsp; Cel : 07 04 29 47</div>
-    </div>
-
-    <!-- Bouton impression (masqué à l'impression) -->
-    <div style="text-align:center; margin-top:14px;" class="print-btn">
-      <button onclick="window.print()"
-        style="padding:8px 22px; background:#CC0000; color:#fff; border:none; border-radius:5px; cursor:pointer; font-size:12px; font-weight:bold;">
-        Imprimer / Télécharger PDF
-      </button>
-    </div>
-
-  </div>
+<div class="receipt">
+$header
+<div class="section-title">Informations document</div>
+<table class="info-table">
+<tr><td class="info-label">N° :</td><td class="info-value">$receiptNumber</td></tr>
+<tr><td class="info-label">Date :</td><td class="info-value">$dateStr</td></tr>
+<tr><td class="info-label">Heure :</td><td class="info-value">$timeStr</td></tr>
+$cashierRow
+$serverRow
+<tr><td class="info-label">Table :</td><td class="info-value">$tableNum</td></tr>
+<tr><td class="info-label">Type :</td><td class="info-value">$orderType</td></tr>
+</table>
+<hr class="sep-dashed" />
+<div class="section-title">D&eacute;tails commande</div>
+<table class="items-table">
+<thead><tr><th class="item-name">Article</th><th class="item-qty">Qté</th><th class="item-price">P.U</th><th class="item-total">Total</th></tr></thead>
+<tbody>$itemsRows</tbody>
+</table>
+<hr class="sep-dashed" />
+<table class="totals-table">
+<tr class="subtotal-row"><td colspan="3">Sous-total :</td><td>$subTot F CFA</td></tr>
+$discountRow
+<tr class="total-row"><td colspan="3">Total TTC :</td><td>$tot F CFA</td></tr>
+</table>
+<hr class="sep-dashed" />
+<div class="section-title">Paiement</div>
+<div class="payment-block">
+<div class="payment-row"><span class="payment-label">Mode :</span><span class="payment-value">$payMode</span></div>
+$amtRow
+$chgRow
+$resteRow
+</div>
+<div class="big-total-box">
+<div class="big-total-label">Total encaissé</div>
+<div class="big-total-amount">$tot F CFA</div>
+</div>
+$qrBlock
+$footer
+$prtBtn
+</div>
 </body>
 </html>''';
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  //  BUILD HTML — Facture Définitive (80mm)
-  //  Étape 2 : logo, serveur, caissier, articles (P.U + total), paiement, PAYÉE
+  //  FACTURE RÉGLÉE — design Sankadio v2 (80mm)
+  // ─────────────────────────────────────────────────────────────────────
+  String _buildReglementHtml({
+    required Order order,
+    required double amountPaid,
+    required String settlementNumber,
+    String? cashierName,
+  }) {
+    final now = DateTime.now();
+    final dateFmt2 = DateFormat('dd/MM/yyyy');
+    final timeFmt  = DateFormat('HH:mm');
+    final dateStr  = dateFmt2.format(now);
+    final timeStr  = timeFmt.format(now);
+    final change   = (amountPaid - order.totalAmount).clamp(0.0, double.infinity);
+
+    final itemsRows = order.items.map((item) =>
+      '<tr>'
+      '<td class="item-name">${_escape(item.productName)}</td>'
+      '<td class="item-qty">${item.quantity}</td>'
+      '<td class="item-price">${_fmt.format(item.unitPrice)} F</td>'
+      '<td class="item-total">${_fmt.format(item.totalPrice)} F</td>'
+      '</tr>'
+    ).join('');
+
+    final discountRow = order.discount > 0
+        ? '<tr class="discount-row"><td colspan="3">Remise accord&eacute;e</td><td>-${_fmt.format(order.discount)}</td></tr>'
+        : '';
+
+    final resteRow = (order.totalAmount > amountPaid && amountPaid > 0)
+        ? '<div class="payment-row"><span class="payment-label">Reste d&ucirc; :</span><span class="payment-value" style="color:#B71C1C;">${_fmt.format(order.totalAmount - amountPaid)} F CFA</span></div>'
+        : '';
+    final qrData = 'N:$settlementNumber|D:$dateStr|M:${_fmt.format(order.totalAmount)}|R:Sankadiokro';
+    final qrBlock = _qrScript(qrData);
+    final header  = _htmlHeader("FACTURE RÉGLÉE", "title-reglee");
+    final footer  = _htmlFooter;
+    final prtBtn  = _printButton;
+    final css     = _thermalCss();
+    final orderType  = order.isTakeaway ? 'À emporter' : 'Sur place';
+    final cashierRow = cashierName != null ? '<tr><td class="info-label">Caissier :</td><td class="info-value">${_escape(cashierName)}</td></tr>' : '';
+    final serverRow  = order.serverName != null ? '<tr><td class="info-label">Serveur :</td><td class="info-value">${_escape(order.serverName!)}</td></tr>' : '';
+    final amtRow  = amountPaid > 0 ? '<div class="payment-row"><span class="payment-label">Montant reçu :</span><span class="payment-value">${_fmt.format(amountPaid)} F CFA</span></div>' : '';
+    final payMode = _escape(order.paymentMethod ?? 'Espèces');
+    final tableNum = _escape(order.tableNumber);
+    final subTot  = _fmt.format(order.subtotal);
+    final tot     = _fmt.format(order.totalAmount);
+    final chg     = _fmt.format(change);
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Facture Réglée #$settlementNumber</title>
+<style>$css</style>
+</head>
+<body>
+<div class="receipt">
+$header
+<div class="badge-center"><span class="badge-paid">&#10003;&nbsp;RÉGLÉE</span></div>
+<hr class="sep-dashed" />
+<div class="section-title">Informations document</div>
+<table class="info-table">
+<tr><td class="info-label">N° :</td><td class="info-value">$settlementNumber</td></tr>
+<tr><td class="info-label">Date :</td><td class="info-value">$dateStr</td></tr>
+<tr><td class="info-label">Heure :</td><td class="info-value">$timeStr</td></tr>
+$cashierRow
+$serverRow
+<tr><td class="info-label">Table :</td><td class="info-value">$tableNum</td></tr>
+<tr><td class="info-label">Type :</td><td class="info-value">$orderType</td></tr>
+</table>
+<hr class="sep-dashed" />
+<div class="section-title">D&eacute;tails commande</div>
+<table class="items-table">
+<thead><tr><th class="item-name">Article</th><th class="item-qty">Qté</th><th class="item-price">P.U</th><th class="item-total">Total</th></tr></thead>
+<tbody>$itemsRows</tbody>
+</table>
+<hr class="sep-dashed" />
+<table class="totals-table">
+<tr class="subtotal-row"><td colspan="3">Sous-total :</td><td>$subTot F CFA</td></tr>
+$discountRow
+<tr class="total-row"><td colspan="3">Total TTC :</td><td>$tot F CFA</td></tr>
+</table>
+<hr class="sep-dashed" />
+<div class="section-title">Paiement</div>
+<div class="payment-block">
+<div class="payment-row"><span class="payment-label">Mode :</span><span class="payment-value">$payMode</span></div>
+$amtRow
+<div class="payment-row"><span class="payment-label">Monnaie rendue :</span><span class="payment-value change">$chg F CFA</span></div>
+$resteRow
+</div>
+<div class="big-total-box">
+<div class="big-total-label">Montant réglé</div>
+<div class="big-total-amount">$tot F CFA</div>
+</div>
+$qrBlock
+$footer
+$prtBtn
+</div>
+</body>
+</html>''';
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  REÇU D'ENCAISSEMENT PROVISOIRE — design Sankadio v2 (80mm)
+  //  Étape 1 : commande + total. Pas de détails paiement.
+  // ─────────────────────────────────────────────────────────────────────
+  String _buildCashoutHtml({
+    required Order order,
+    required String cashoutInvoiceNumber,
+    String? cashierName,
+  }) {
+    final now      = DateTime.now();
+    final dateFmt2 = DateFormat('dd/MM/yyyy');
+    final timeFmt  = DateFormat('HH:mm');
+    final dateStr  = dateFmt2.format(now);
+    final timeStr  = timeFmt.format(now);
+
+    final itemsRows = order.items.map((item) =>
+      '<tr>'
+      '<td class="item-name">${_escape(item.productName)}</td>'
+      '<td class="item-qty">${item.quantity}</td>'
+      '<td class="item-price">${_fmt.format(item.unitPrice)} F</td>'
+      '<td class="item-total">${_fmt.format(item.totalPrice)} F</td>'
+      '</tr>'
+    ).join('');
+
+    final discountRow = order.discount > 0
+        ? '<tr class="discount-row"><td colspan="3">Remise</td><td>-${_fmt.format(order.discount)}</td></tr>'
+        : '';
+
+    final qrData = 'N:$cashoutInvoiceNumber|D:$dateStr|M:${_fmt.format(order.totalAmount)}|R:Sankadiokro';
+    final qrBlock = _qrScript(qrData);
+    final header  = _htmlHeader("REÇU D'ENCAISSEMENT", "title-provisoire");
+    final footer  = _htmlFooter;
+    final prtBtn  = _printButton;
+    final css     = _thermalCss();
+    final orderType  = order.isTakeaway ? 'À emporter' : 'Sur place';
+    final cashierRow = cashierName != null ? '<tr><td class="info-label">Caissier :</td><td class="info-value">${_escape(cashierName)}</td></tr>' : '';
+    final serverRow  = order.serverName != null ? '<tr><td class="info-label">Serveur :</td><td class="info-value">${_escape(order.serverName!)}</td></tr>' : '';
+    final tableNum = _escape(order.tableNumber);
+    final subTot   = _fmt.format(order.subtotal);
+    final tot      = _fmt.format(order.totalAmount);
+
+    return '''<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reçu Encaissement Provisoire #$cashoutInvoiceNumber</title>
+<style>$css</style>
+</head>
+<body>
+<div class="receipt">
+$header
+<div class="badge-center"><span class="badge-pending">&#9888; En attente de r&egrave;glement</span></div>
+<hr class="sep-dashed" />
+<div class="section-title">Informations document</div>
+<table class="info-table">
+<tr><td class="info-label">N° :</td><td class="info-value">$cashoutInvoiceNumber</td></tr>
+<tr><td class="info-label">Date :</td><td class="info-value">$dateStr</td></tr>
+<tr><td class="info-label">Heure :</td><td class="info-value">$timeStr</td></tr>
+$cashierRow
+$serverRow
+<tr><td class="info-label">Table :</td><td class="info-value">$tableNum</td></tr>
+<tr><td class="info-label">Type :</td><td class="info-value">$orderType</td></tr>
+</table>
+<hr class="sep-dashed" />
+<div class="section-title">D&eacute;tails commande</div>
+<table class="items-table">
+<thead><tr><th class="item-name">Article</th><th class="item-qty">Qté</th><th class="item-price">P.U</th><th class="item-total">Total</th></tr></thead>
+<tbody>$itemsRows</tbody>
+</table>
+<hr class="sep-dashed" />
+<table class="totals-table">
+<tr class="subtotal-row"><td colspan="3">Sous-total :</td><td>$subTot F CFA</td></tr>
+$discountRow
+<tr class="total-row"><td colspan="3">Net à payer :</td><td>$tot F CFA</td></tr>
+</table>
+$qrBlock
+$footer
+$prtBtn
+</div>
+</body>
+</html>''';
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  //  FACTURE RÉGLÉE DÉFINITIVE — design Sankadio v2 (80mm)
+  //  Étape 2 : paiement complet avec mode, montant, monnaie.
   // ─────────────────────────────────────────────────────────────────────
   String _buildSettlementHtml({
     required Order order,
@@ -499,572 +626,101 @@ class PrintService {
     required double changeAmount,
     String? cashierName,
   }) {
-    final dateStr = _dateFmt.format(order.settledAt ?? DateTime.now());
-    final itemsHtml = order.items.map((item) =>
+    final settledDate = order.settledAt ?? DateTime.now();
+    final dateFmt2 = DateFormat('dd/MM/yyyy');
+    final timeFmt  = DateFormat('HH:mm');
+    final dateStr  = dateFmt2.format(settledDate);
+    final timeStr  = timeFmt.format(settledDate);
+
+    final itemsRows = order.items.map((item) =>
       '<tr>'
       '<td class="item-name">${_escape(item.productName)}</td>'
-      '<td class="item-qty" style="text-align:center">${item.quantity}</td>'
-      '<td class="item-price" style="text-align:right">${_fmt.format(item.unitPrice)} F</td>'
+      '<td class="item-qty">${item.quantity}</td>'
+      '<td class="item-price">${_fmt.format(item.unitPrice)} F</td>'
       '<td class="item-total">${_fmt.format(item.totalPrice)} F</td>'
       '</tr>'
     ).join('');
 
-    final cashierRow = cashierName != null
-        ? '<tr><td class="info-label">Caissier</td><td class="info-value">${_escape(cashierName)}</td></tr>'
+    final discountRow = order.discount > 0
+        ? '<tr class="discount-row"><td colspan="3">Remise</td><td>-${_fmt.format(order.discount)}</td></tr>'
         : '';
-    final serverRow = order.serverName != null
-        ? '<tr><td class="info-label">Serveur</td><td class="info-value">${_escape(order.serverName!)}</td></tr>'
-        : '';
+
     final cashoutRef = order.cashoutInvoiceNumber != null
-        ? '<tr><td class="info-label">Réf. encaiss.</td><td class="info-value">${_escape(order.cashoutInvoiceNumber!)}</td></tr>'
+        ? '<tr><td class="info-label">R&eacute;f. encaiss. :</td><td class="info-value">${_escape(order.cashoutInvoiceNumber!)}</td></tr>'
         : '';
-    final cashierSign = cashierName != null
-        ? '<p style="font-size:9px; text-align:center; margin:2px 0;">${_escape(cashierName)}</p>'
-        : '';
+
+    final qrData = 'N:$settlementInvoiceNumber|D:$dateStr|M:${_fmt.format(order.totalAmount)}|R:Sankadiokro';
+    final qrBlock = _qrScript(qrData);
+    final header  = _htmlHeader("FACTURE RÉGLÉE", "title-reglee");
+    final footer  = _htmlFooter;
+    final prtBtn  = _printButton;
+    final css     = _thermalCss();
+    final orderType  = order.isTakeaway ? 'À emporter' : 'Sur place';
+    final cashierRow = cashierName != null ? '<tr><td class="info-label">Caissier :</td><td class="info-value">${_escape(cashierName)}</td></tr>' : '';
+    final serverRow  = order.serverName != null ? '<tr><td class="info-label">Serveur :</td><td class="info-value">${_escape(order.serverName!)}</td></tr>' : '';
+    final tableNum = _escape(order.tableNumber);
+    final subTot   = _fmt.format(order.subtotal);
+    final tot      = _fmt.format(order.totalAmount);
+    final amtFmt   = _fmt.format(amountPaid);
+    final chgFmt   = _fmt.format(changeAmount);
+    final payMode  = _escape(paymentMethod);
 
     return '''<!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8">
-  <title>Facture Définitive #\${order.orderNumber}</title>
-  <style>
-    \${_thermalCss()}
-    .receipt-type { color: #2E7D32; border: 2px solid #2E7D32; padding: 3px 8px; border-radius: 4px; letter-spacing: 1px; }
-    .status-paid { display: inline-block; background: #1B5E20; color: #fff; font-weight: bold; font-size: 14px; padding: 5px 20px; border-radius: 4px; letter-spacing: 3px; margin: 8px 0; }
-    .big-amount { font-size: 17px; font-weight: bold; text-align: center; border: 2px solid #1B5E20; color: #1B5E20; padding: 6px; border-radius: 4px; margin: 6px 0; letter-spacing: 1px; }
-    .signature-box { border: 1px dashed #999; height: 40px; margin: 6px 0; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #999; font-size: 9px; }
-    .items-table thead tr th { font-size: 9px; font-weight: bold; padding: 2px 0; border-bottom: 1px solid #ccc; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Facture Réglée #$settlementInvoiceNumber</title>
+<style>$css</style>
 </head>
 <body>
-  <div class="receipt">
-    <div class="header">
-      <img src="\${_logoBase64()}" alt="Logo" class="logo-img" />
-      <div class="restaurant-name">RESTAURANT SANKADIOKRO</div>
-      <div class="restaurant-sub">Yopougon Millionnaire</div>
-      <div class="restaurant-sub">Abidjan - Côte d\'Ivoire</div>
-      <div class="restaurant-sub">Tél : 0757564300 / 0594114223</div>
-      <div class="divider-double"></div>
-      <div class="receipt-title receipt-type">FACTURE DÉFINITIVE</div>
-    </div>
-    <div style="text-align:center; margin: 6px 0;"><span class="status-paid">&#10003; PAYÉE</span></div>
-    <table class="info-table">
-      <tr><td class="info-label">N° Facture</td><td class="info-value">\$settlementInvoiceNumber</td></tr>
-      <tr><td class="info-label">N° Commande</td><td class="info-value">#\${order.orderNumber}</td></tr>
-      \$cashoutRef
-      <tr><td class="info-label">Table</td><td class="info-value">\${_escape(order.tableNumber)}</td></tr>
-      <tr><td class="info-label">Date / Heure</td><td class="info-value">\$dateStr</td></tr>
-      \$serverRow
-      \$cashierRow
-      <tr><td class="info-label">Mode paiement</td><td class="info-value">\${_escape(paymentMethod)}</td></tr>
-    </table>
-    <div class="divider"></div>
-    <div class="section-title">ARTICLES COMMANDÉS</div>
-    <table class="items-table">
-      <thead><tr><th class="item-name">Article</th><th class="item-qty">Qté</th><th class="item-price" style="text-align:right">P.U</th><th class="item-total">Total</th></tr></thead>
-      <tbody>\$itemsHtml</tbody>
-    </table>
-    <div class="divider"></div>
-    <div class="section-title">DÉTAIL DU RÈGLEMENT</div>
-    <table class="totals-table">
-      <tr><td colspan="3">Sous-total</td><td>\${_fmt.format(order.subtotal)} F CFA</td></tr>
-      \${order.discount > 0 ? '<tr class="discount-row"><td colspan="3">Remise</td><td>-\${_fmt.format(order.discount)} F CFA</td></tr>' : ''}
-      <tr class="total-row"><td colspan="3"><strong>MONTANT DÛ</strong></td><td><strong>\${_fmt.format(order.totalAmount)} F CFA</strong></td></tr>
-      <tr><td colspan="3">Montant versé</td><td>\${_fmt.format(amountPaid)} F CFA</td></tr>
-      <tr><td colspan="3">Monnaie rendue</td><td>\${_fmt.format(changeAmount)} F CFA</td></tr>
-    </table>
-    <div class="big-amount">TOTAL RÉGLÉ : \${_fmt.format(order.totalAmount)} F CFA</div>
-    <div class="divider"></div>
-    <div class="section-title">VISA CAISSIER(ÈRE)</div>
-    <div class="signature-box">Signature &amp; cachet caisse</div>
-    \$cashierSign
-    <div class="divider-double"></div>
-    <div class="footer">
-      <p class="merci">Merci pour votre confiance !</p>
-      <p>SANKADIOKRO — Restaurant Africain</p>
-      <p class="footer-small">— Facture définitive — Document de règlement —</p>
-    </div>
-  </div>
-</body>
-</html>''';
-  }
-  String _buildEncaissementHtml({
-    required Order order,
-    required double amountPaid,
-    required String receiptNumber,
-    String? cashierName,
-  }) {
-    final dateStr = _dateFmt.format(DateTime.now());
-    final change = (amountPaid - order.totalAmount).clamp(0.0, double.infinity);
-    final hasDiscount = order.discount > 0;
-    final hasAmountPaid = amountPaid > 0;
-
-    final itemsHtml = order.items.map((item) => '''
-      <tr>
-        <td class="item-name">${_escape(item.productName)}</td>
-        <td class="item-qty">×${item.quantity}</td>
-        <td class="item-price">${_fmt.format(item.unitPrice)} F</td>
-        <td class="item-total">${_fmt.format(item.totalPrice)} F</td>
-      </tr>
-    ''').join('');
-
-    final discountRow = hasDiscount
-        ? '<tr class="discount-row"><td colspan="3">Remise</td><td>-${_fmt.format(order.discount)} F</td></tr>'
-        : '';
-
-    final amountPaidRow = hasAmountPaid
-        ? '''
-      <tr><td colspan="3">Montant reçu</td><td>${_fmt.format(amountPaid)} F CFA</td></tr>
-      <tr><td colspan="3">Monnaie rendue</td><td>${_fmt.format(change)} F CFA</td></tr>
-    '''
-        : '';
-
-    return '''<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reçu d'Encaissement #${order.orderNumber}</title>
-  <style>
-    ${_thermalCss()}
-
-    /* Spécifique encaissement */
-    .receipt-type {
-      color: #1565C0;
-      border: 2px solid #1565C0;
-      padding: 3px 8px;
-      border-radius: 4px;
-      letter-spacing: 1px;
-    }
-  </style>
-</head>
-<body>
-  <div class="receipt">
-    <!-- ── EN-TÊTE OFFICIEL ── -->
-    <div class="header">
-      <img src="${_logoBase64()}" alt="Logo Sankadiokro" class="logo-img" />
-      <div class="restaurant-name">RESTAURANT SANKADIOKRO</div>
-      <div class="restaurant-sub">Yopougon Millionnaire</div>
-      <div class="restaurant-sub">Abidjan - Côte d'Ivoire</div>
-      <div class="restaurant-sub">Tél : 0757564300 / 0594114223</div>
-      <div class="divider-double"></div>
-      <div class="receipt-title receipt-type">REÇU D'ENCAISSEMENT</div>
-    </div>
-
-    <!-- ── INFOS REÇU ── -->
-    <table class="info-table">
-      <tr><td class="info-label">N° Reçu</td><td class="info-value">$receiptNumber</td></tr>
-      <tr><td class="info-label">N° Commande</td><td class="info-value">#${order.orderNumber}</td></tr>
-      <tr><td class="info-label">Table</td><td class="info-value">${_escape(order.tableNumber)}</td></tr>
-      <tr><td class="info-label">Date</td><td class="info-value">$dateStr</td></tr>
-      ${order.serverName != null ? '<tr><td class="info-label">Serveur</td><td class="info-value">${_escape(order.serverName!)}</td></tr>' : ''}
-      ${cashierName != null ? '<tr><td class="info-label">Caissier</td><td class="info-value">${_escape(cashierName)}</td></tr>' : ''}
-      <tr><td class="info-label">Paiement</td><td class="info-value">${_escape(order.paymentMethod ?? 'Espèces')}</td></tr>
-    </table>
-
-    <div class="divider"></div>
-
-    <!-- ── ARTICLES ── -->
-    <table class="items-table">
-      <thead>
-        <tr>
-          <th class="item-name">Article</th>
-          <th class="item-qty">Qté</th>
-          <th class="item-price">P.U</th>
-          <th class="item-total">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        $itemsHtml
-      </tbody>
-    </table>
-
-    <div class="divider"></div>
-
-    <!-- ── TOTAUX ── -->
-    <table class="totals-table">
-      <tr><td colspan="3">Sous-total</td><td>${_fmt.format(order.subtotal)} F CFA</td></tr>
-      $discountRow
-      <tr class="total-row"><td colspan="3"><strong>TOTAL ENCAISSÉ</strong></td><td><strong>${_fmt.format(order.totalAmount)} F CFA</strong></td></tr>
-      $amountPaidRow
-    </table>
-
-    <div class="divider-double"></div>
-
-    <!-- ── PIED ── -->
-    <div class="footer">
-      <p class="merci">Merci pour votre visite !</p>
-      <p>À bientôt chez SANKADIOKRO</p>
-      <p class="footer-small">— Ce reçu fait foi de paiement —</p>
-    </div>
-  </div>
-
-  <script>
-    window.onload = function() {
-      // L'impression est déclenchée par le code Dart via setTimeout
-    };
-  </script>
+<div class="receipt">
+$header
+<div class="badge-center"><span class="badge-paid">&#10003;&nbsp;PAYÉE</span></div>
+<hr class="sep-dashed" />
+<div class="section-title">Informations document</div>
+<table class="info-table">
+<tr><td class="info-label">N° :</td><td class="info-value">$settlementInvoiceNumber</td></tr>
+$cashoutRef
+<tr><td class="info-label">Date :</td><td class="info-value">$dateStr</td></tr>
+<tr><td class="info-label">Heure :</td><td class="info-value">$timeStr</td></tr>
+$cashierRow
+$serverRow
+<tr><td class="info-label">Table :</td><td class="info-value">$tableNum</td></tr>
+<tr><td class="info-label">Type :</td><td class="info-value">$orderType</td></tr>
+</table>
+<hr class="sep-dashed" />
+<div class="section-title">D&eacute;tails commande</div>
+<table class="items-table">
+<thead><tr><th class="item-name">Article</th><th class="item-qty">Qté</th><th class="item-price">P.U</th><th class="item-total">Total</th></tr></thead>
+<tbody>$itemsRows</tbody>
+</table>
+<hr class="sep-dashed" />
+<table class="totals-table">
+<tr class="subtotal-row"><td colspan="3">Sous-total :</td><td>$subTot F CFA</td></tr>
+$discountRow
+<tr class="total-row"><td colspan="3">Total TTC :</td><td>$tot F CFA</td></tr>
+</table>
+<hr class="sep-dashed" />
+<div class="section-title">Paiement</div>
+<div class="payment-block">
+<div class="payment-row"><span class="payment-label">Mode :</span><span class="payment-value">$payMode</span></div>
+<div class="payment-row"><span class="payment-label">Montant reçu :</span><span class="payment-value">$amtFmt F CFA</span></div>
+<div class="payment-row"><span class="payment-label">Monnaie rendue :</span><span class="payment-value change">$chgFmt F CFA</span></div>
+</div>
+<div class="big-total-box">
+<div class="big-total-label">Total réglé</div>
+<div class="big-total-amount">$tot F CFA</div>
+</div>
+$qrBlock
+$footer
+$prtBtn
+</div>
 </body>
 </html>''';
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  //  BUILD HTML — Reçu de Règlement Caisse (ticket thermique 80mm)
-  // ─────────────────────────────────────────────────────────────────────
-  String _buildReglementHtml({
-    required Order order,
-    required double amountPaid,
-    required String settlementNumber,
-    String? cashierName,
-  }) {
-    final dateStr = _dateFmt.format(DateTime.now());
-    final change = (amountPaid - order.totalAmount).clamp(0.0, double.infinity);
-    final hasAmountPaid = amountPaid > 0;
-
-    return '''<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reçu de Règlement #${order.orderNumber}</title>
-  <style>
-    ${_thermalCss()}
-
-    /* Spécifique règlement */
-    .receipt-type {
-      color: #E65100;
-      border: 2px solid #E65100;
-      padding: 3px 8px;
-      border-radius: 4px;
-      letter-spacing: 1px;
-    }
-    .status-paid {
-      display: inline-block;
-      background: #1B5E20;
-      color: #fff;
-      font-weight: bold;
-      font-size: 13px;
-      padding: 4px 16px;
-      border-radius: 4px;
-      letter-spacing: 2px;
-      margin: 6px 0;
-    }
-    .signature-box {
-      border: 1px dashed #999;
-      height: 40px;
-      margin: 6px 0;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #999;
-      font-size: 9px;
-    }
-    .big-amount {
-      font-size: 18px;
-      font-weight: bold;
-      text-align: center;
-      border: 2px solid #333;
-      padding: 6px;
-      border-radius: 4px;
-      margin: 6px 0;
-      letter-spacing: 1px;
-    }
-  </style>
-</head>
-<body>
-  <div class="receipt">
-    <!-- ── EN-TÊTE OFFICIEL ── -->
-    <div class="header">
-      <img src="${_logoBase64()}" alt="Logo Sankadiokro" class="logo-img" />
-      <div class="restaurant-name">RESTAURANT SANKADIOKRO</div>
-      <div class="restaurant-sub">Yopougon Millionnaire</div>
-      <div class="restaurant-sub">Abidjan - Côte d'Ivoire</div>
-      <div class="restaurant-sub">Tél : 0757564300 / 0594114223</div>
-      <div class="divider-double"></div>
-      <div class="receipt-title receipt-type">REÇU DE RÈGLEMENT CAISSE</div>
-    </div>
-
-    <!-- ── INFOS RÈGLEMENT ── -->
-    <table class="info-table">
-      <tr><td class="info-label">N° Règlement</td><td class="info-value">$settlementNumber</td></tr>
-      <tr><td class="info-label">N° Commande</td><td class="info-value">#${order.orderNumber}</td></tr>
-      <tr><td class="info-label">Table</td><td class="info-value">${_escape(order.tableNumber)}</td></tr>
-      <tr><td class="info-label">Date</td><td class="info-value">$dateStr</td></tr>
-      ${cashierName != null ? '<tr><td class="info-label">Caissier</td><td class="info-value">${_escape(cashierName)}</td></tr>' : ''}
-      <tr><td class="info-label">Mode paiement</td><td class="info-value">${_escape(order.paymentMethod ?? 'Espèces')}</td></tr>
-    </table>
-
-    <div class="divider"></div>
-
-    <!-- ── DÉTAIL PAIEMENT ── -->
-    <div class="section-title">DÉTAIL DU RÈGLEMENT</div>
-    <table class="totals-table">
-      <tr><td colspan="3">Montant à payer</td><td>${_fmt.format(order.totalAmount)} F CFA</td></tr>
-      ${hasAmountPaid ? '<tr><td colspan="3">Montant reçu</td><td>${_fmt.format(amountPaid)} F CFA</td></tr>' : ''}
-      ${hasAmountPaid ? '<tr><td colspan="3">Monnaie rendue</td><td>${_fmt.format(change)} F CFA</td></tr>' : ''}
-    </table>
-
-    <div class="divider"></div>
-
-    <!-- ── MONTANT TOTAL ENCAISSÉ ── -->
-    <div class="big-amount">TOTAL RÉGLÉ : ${_fmt.format(order.totalAmount)} F CFA</div>
-
-    <!-- ── STATUT ── -->
-    <div style="text-align:center; margin: 8px 0;">
-      <span class="status-paid">✓ RÉGLÉ</span>
-    </div>
-
-    <div class="divider"></div>
-
-    <!-- ── ARTICLES RÉSUMÉ ── -->
-    <div class="section-title">ARTICLES COMMANDÉS</div>
-    <table class="items-table">
-      <tbody>
-        ${order.items.map((item) => '<tr><td class="item-name">${_escape(item.productName)}</td><td class="item-qty" style="text-align:center">×${item.quantity}</td><td class="item-total">${_fmt.format(item.totalPrice)} F</td></tr>').join('')}
-      </tbody>
-    </table>
-
-    <div class="divider"></div>
-
-    <!-- ── SIGNATURE CAISSE ── -->
-    <div class="section-title">VISA CAISSIER(ÈRE)</div>
-    <div class="signature-box">Signature &amp; cachet caisse</div>
-    ${cashierName != null ? '<p style="font-size:9px; text-align:center; margin:2px 0;">$cashierName</p>' : ''}
-
-    <div class="divider-double"></div>
-
-    <!-- ── PIED ── -->
-    <div class="footer">
-      <p class="merci">Merci pour votre confiance !</p>
-      <p>SANKADIOKRO — Restaurant Africain</p>
-      <p class="footer-small">— Document de règlement caisse —</p>
-    </div>
-  </div>
-</body>
-</html>''';
-  }
-
-  // ─────────────────────────────────────────────────────────────────────
-  //  CSS COMMUN — Ticket thermique 80mm
-  // ─────────────────────────────────────────────────────────────────────
-  String _thermalCss() => '''
-    @page {
-      size: 80mm auto;
-      margin: 0;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 11px;
-      color: #000;
-      background: #fff;
-      width: 80mm;
-      max-width: 80mm;
-    }
-
-    .receipt {
-      width: 76mm;
-      margin: 0 auto;
-      padding: 4mm 0;
-    }
-
-    /* ── En-tête ── */
-    .header {
-      text-align: center;
-      margin-bottom: 6px;
-    }
-
-    .logo-img {
-      width: 60px;
-      height: 60px;
-      object-fit: contain;
-      display: block;
-      margin: 0 auto 4px auto;
-    }
-
-    .restaurant-name {
-      font-size: 14px;
-      font-weight: bold;
-      letter-spacing: 1px;
-      margin-bottom: 2px;
-    }
-
-    .restaurant-sub {
-      font-size: 10px;
-      color: #333;
-    }
-
-    .receipt-title {
-      font-size: 12px;
-      font-weight: bold;
-      margin-top: 6px;
-      display: inline-block;
-    }
-
-    /* ── Séparateurs ── */
-    .divider {
-      border-top: 1px dashed #666;
-      margin: 6px 0;
-    }
-
-    .divider-double {
-      border-top: 2px solid #000;
-      margin: 6px 0;
-    }
-
-    /* ── Tableau infos ── */
-    .info-table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    .info-table tr td {
-      padding: 1.5px 0;
-      font-size: 10.5px;
-      vertical-align: top;
-    }
-
-    .info-label {
-      color: #555;
-      width: 40%;
-    }
-
-    .info-value {
-      font-weight: bold;
-      text-align: right;
-    }
-
-    /* ── Tableau articles ── */
-    .items-table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    .items-table thead tr th {
-      font-size: 10px;
-      font-weight: bold;
-      padding: 2px 0;
-      border-bottom: 1px solid #ccc;
-      text-align: left;
-    }
-
-    .items-table tbody tr td {
-      padding: 2px 0;
-      font-size: 10.5px;
-      vertical-align: top;
-    }
-
-    .item-name {
-      width: 38%;
-    }
-
-    .item-qty {
-      width: 10%;
-      text-align: center;
-    }
-
-    .item-price {
-      width: 22%;
-      text-align: right;
-    }
-
-    .item-total {
-      width: 30%;
-      text-align: right;
-      font-weight: bold;
-    }
-
-    /* ── Tableau totaux ── */
-    .totals-table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    .totals-table tr td {
-      padding: 2px 0;
-      font-size: 10.5px;
-    }
-
-    .totals-table tr td:last-child {
-      text-align: right;
-      font-weight: bold;
-    }
-
-    .total-row td {
-      font-size: 13px;
-      padding: 3px 0;
-    }
-
-    .discount-row td {
-      color: #B71C1C;
-    }
-
-    /* ── Section titre ── */
-    .section-title {
-      font-size: 9px;
-      font-weight: bold;
-      color: #555;
-      letter-spacing: 1px;
-      margin: 4px 0 2px 0;
-      text-transform: uppercase;
-    }
-
-    /* ── Pied ── */
-    .footer {
-      text-align: center;
-      margin-top: 8px;
-    }
-
-    .merci {
-      font-size: 12px;
-      font-weight: bold;
-      margin-bottom: 3px;
-    }
-
-    .footer-small {
-      font-size: 9px;
-      color: #777;
-      margin-top: 3px;
-    }
-
-    /* ── Masquer tout sauf le reçu en impression ── */
-    @media screen {
-      body {
-        background: #f5f5f5;
-        display: flex;
-        justify-content: center;
-        padding: 20px;
-      }
-      .receipt {
-        background: #fff;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-        padding: 16px;
-      }
-    }
-
-    @media print {
-      body {
-        background: #fff;
-        width: 80mm;
-      }
-      .receipt {
-        box-shadow: none;
-      }
-    }
-  ''';
-
-  // ─────────────────────────────────────────────────────────────────────
-  //  Utilitaires
-  // ─────────────────────────────────────────────────────────────────────
-
-  /// Génère un numéro de facture d'encaissement au format Sankadio : HHMMSS-OOOO
+    /// Génère un numéro de facture d'encaissement au format Sankadio : HHMMSS-OOOO
   /// Exemple : 194156-4546  (heure 19:41:56 + orderNumber 4546)
   static String generateReceiptNumber(int orderNumber) {
     final now = DateTime.now();

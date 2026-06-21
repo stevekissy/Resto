@@ -21,15 +21,19 @@ enum CoachMode { doux, normal, pression }
 /// Configuration persistante de l'assistant vocal cuisine
 class KitchenVoiceSettings {
   bool enabled;
-  double volume;         // 0.0 – 1.0
-  int intervalMinutes;   // 1, 2, 3 ou 5
+  double volume;           // 0.0 – 1.0
+  int intervalMinutes;     // 1, 2, 3 ou 5
   CoachMode coachMode;
+  double speechRate;       // 0.6 – 1.2 (défaut 0.88 — débit féminin africain naturel)
+  String voiceName;        // Nom exact de la voix choisie ('' = auto-sélection)
 
   KitchenVoiceSettings({
     this.enabled = true,
     this.volume = 1.0,
     this.intervalMinutes = 2,
     this.coachMode = CoachMode.normal,
+    this.speechRate = 0.88,
+    this.voiceName = '',
   });
 
   KitchenVoiceSettings copyWith({
@@ -37,11 +41,15 @@ class KitchenVoiceSettings {
     double? volume,
     int? intervalMinutes,
     CoachMode? coachMode,
+    double? speechRate,
+    String? voiceName,
   }) => KitchenVoiceSettings(
     enabled: enabled ?? this.enabled,
     volume: volume ?? this.volume,
     intervalMinutes: intervalMinutes ?? this.intervalMinutes,
     coachMode: coachMode ?? this.coachMode,
+    speechRate: speechRate ?? this.speechRate,
+    voiceName: voiceName ?? this.voiceName,
   );
 }
 
@@ -81,19 +89,43 @@ class TtsService {
   // ====================================================================
   static const _kKitchenEnabled  = 'tts_kitchen_enabled';
   static const _kCashierEnabled  = 'tts_cashier_enabled';
+  static const _kSpeechRate      = 'tts_speech_rate';
+  static const _kVoiceName       = 'tts_voice_name';
 
   /// Charge l'état persisté depuis SharedPreferences.
   /// À appeler au démarrage de l'application (ou des écrans cuisine/caisse).
   Future<void> loadPersistedState() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      settings.enabled = prefs.getBool(_kKitchenEnabled) ?? true;
+      settings.enabled     = prefs.getBool(_kKitchenEnabled)    ?? true;
+      settings.speechRate  = prefs.getDouble(_kSpeechRate)      ?? 0.88;
+      settings.voiceName   = prefs.getString(_kVoiceName)       ?? '';
       _cashierEnabledPersisted = prefs.getBool(_kCashierEnabled) ?? false;
       if (kDebugMode) {
-        debugPrint('[TTS] État chargé — cuisine: ${settings.enabled}, caisse: $_cashierEnabledPersisted');
+        debugPrint('[TTS] État chargé — cuisine: ${settings.enabled}, rate: ${settings.speechRate}, voix: "${settings.voiceName}", caisse: $_cashierEnabledPersisted');
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[TTS] loadPersistedState erreur: $e');
+    }
+  }
+
+  /// Sauvegarde vitesse de parole et nom de voix.
+  Future<void> saveVoiceSettings({
+    required double speechRate,
+    required String voiceName,
+  }) async {
+    settings.speechRate = speechRate;
+    settings.voiceName  = voiceName;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_kSpeechRate, speechRate);
+      await prefs.setString(_kVoiceName, voiceName);
+      // Appliquer immédiatement la config JS sur web
+      if (kIsWeb) {
+        tts_web.setTTSConfig(voiceName, speechRate, _pitchForMode(), settings.volume);
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[TTS] saveVoiceSettings erreur: $e');
     }
   }
 
@@ -233,12 +265,26 @@ class TtsService {
     _speakNow(next);
   }
 
+  /// Calcule le pitch en fonction du mode coach.
+  /// Mode doux → voix plus douce (pitch légèrement plus haut)
+  /// Mode pression → voix plus incisive (pitch légèrement plus bas)
+  double _pitchForMode() {
+    switch (settings.coachMode) {
+      case CoachMode.doux:
+        return 1.35;
+      case CoachMode.pression:
+        return 1.10;
+      case CoachMode.normal:
+        return 1.22;
+    }
+  }
+
   /// Effectue la parole réelle (sans file).
   Future<void> _speakNow(String text) async {
     if (!_isInitialized) await init();
     try {
       if (kIsWeb) {
-        tts_web.africanSpeak(text, 0.82, 1.2, settings.volume);
+        tts_web.africanSpeak(text, settings.speechRate, _pitchForMode(), settings.volume);
         lastAudioError = null; // Succès : effacer toute erreur précédente
         // Sur Web, on ne peut pas détecter la fin → estimation basée sur longueur
         final durationMs = (text.length * 65).clamp(1500, 15000);
@@ -300,24 +346,24 @@ class TtsService {
         ? order.specialInstructions!
         : '';
 
-    // Phrase motivante variée
+    // Phrase motivante variée — ton ivoirien professionnel
     final motivations = [
-      'Allez cuisine, on assure !',
-      'En avant l\'équipe, service rapide !',
-      'Cuisine en action, on y va !',
-      'On accélère, chaque minute compte !',
-      'Top départ cuisine, c\'est parti !',
-      'L\'équipe est prête, on démarre !',
+      'Allez l\'équipe, on garde le rythme !',
+      'C\'est parti cuisine, on fait du bon boulot !',
+      'Chaque commande est une fierté, on assure !',
+      'On est chauds, l\'équipe est au top !',
+      'En avant cuisine, le client attend avec confiance !',
+      'On ne lâche pas, c\'est notre force !',
     ];
     final motivation = motivations[_coachPhraseIndex % motivations.length];
     _coachPhraseIndex++;
 
     String message;
     if (order.isUrgent) {
-      message = 'Commande urgente numéro ${order.orderNumber}, table ${order.tableNumber}. '
-          'Préparez immédiatement : $items.';
+      message = 'Attention cuisine ! Commande urgente numéro ${order.orderNumber}, table ${order.tableNumber}. '
+          'On s\'occupe de ça tout de suite : $items.';
     } else {
-      message = 'Nouvelle commande numéro ${order.orderNumber}, table ${order.tableNumber}. '
+      message = 'Nouvelle commande en cuisine, numéro ${order.orderNumber}, table ${order.tableNumber}. '
           'Au menu : $items.';
     }
 
@@ -409,28 +455,29 @@ class TtsService {
   // PHRASES COACH PAR MODE
   // ====================================================================
 
+  // Phrases coach — ton ivoirien professionnel, jeune et chaleureux
   static const _coachDoux = [
-    'Merci à toute l\'équipe, continuez comme ça.',
-    'Très bien cuisine, on reste concentré.',
-    'Beau travail, chaque commande compte.',
-    'L\'équipe fait du bon travail, on continue.',
-    'Courage à tous, le service avance bien.',
+    'Merci à toute l\'équipe, vous faites un travail formidable.',
+    'Très bien cuisine, on reste concentré et on se fait plaisir.',
+    'Beau boulot les amis, chaque commande est une réussite.',
+    'L\'équipe cuisine, vous êtes au top. On continue comme ça.',
+    'Courage à tous, le service avance bien et les clients sont contents.',
   ];
 
   static const _coachNormal = [
-    'Allez l\'équipe cuisine, on garde le rythme.',
-    'Objectif service rapide, chaque minute compte.',
-    'On reste sur les rails, chaque commande est importante.',
-    'L\'équipe en cuisine, on maintient la cadence.',
-    'Bonne énergie cuisine, on continue sur cette lancée.',
+    'Allez l\'équipe, on garde le rythme, c\'est notre force !',
+    'Cuisine en action ! Chaque minute compte, on s\'organise bien.',
+    'On reste sur les rails, chaque commande mérite le meilleur.',
+    'L\'équipe cuisine, on maintient la cadence, c\'est du bon travail.',
+    'Bonne énergie cuisine, on continue sur cette lancée, c\'est ça le Sankadio !',
   ];
 
   static const _coachPression = [
-    'Cuisine, on accélère, il y a du monde à table !',
-    'Pas de relâche, les clients attendent. On fonce !',
-    'C\'est le coup de feu, tout le monde sur le pont !',
-    'Chaque seconde compte, maximum d\'efficacité !',
-    'On ne lâche rien, les commandes s\'accumulent !',
+    'Cuisine, on accélère, il y a du monde à table, tout le monde est en attente !',
+    'Pas de relâche les amis, les clients attendent. On fonce, c\'est notre moment !',
+    'C\'est le coup de feu ! Tout le monde sur le pont, on assure jusqu\'au bout !',
+    'Chaque seconde compte, maximum d\'efficacité, on est les meilleurs !',
+    'On ne lâche rien, les commandes arrivent. C\'est notre heure de gloire !',
   ];
 
   String _getCoachPhrase() {
@@ -546,13 +593,39 @@ class TtsService {
 
   Future<void> testVoice() async {
     await stop();
-    enqueue('Bonjour cuisine ! L\'assistant vocal est opérationnel. Bonne journée à toute l\'équipe !');
+    // Appliquer la config vocale avant le test
+    if (kIsWeb) {
+      tts_web.setTTSConfig(
+        settings.voiceName,
+        settings.speechRate,
+        _pitchForMode(),
+        settings.volume,
+      );
+    }
+    enqueue(
+      'Bonjour à toute l\'équipe ! '
+      'Votre assistante vocale Sankadio est opérationnelle. '
+      'Nouvelle commande en cuisine, table quatre. '
+      'Allez l\'équipe, on garde le rythme !',
+    );
   }
 
   /// Test voix pour la caisse
   Future<void> testCashierVoice() async {
     await stop();
-    enqueue('Bonjour caisse ! L\'assistant vocal est opérationnel. Bonne journée !');
+    if (kIsWeb) {
+      tts_web.setTTSConfig(
+        settings.voiceName,
+        settings.speechRate,
+        _pitchForMode(),
+        settings.volume,
+      );
+    }
+    enqueue(
+      'Bonjour caisse ! '
+      'L\'assistante vocale Sankadio est prête. '
+      'Bonne journée et bon service à toute l\'équipe !',
+    );
   }
 
   // ====================================================================
@@ -561,6 +634,23 @@ class TtsService {
 
   bool get isQueueEmpty => _speechQueue.isEmpty && !_isSpeaking;
   int get queueLength => _speechQueue.length + (_isSpeaking ? 1 : 0);
+
+  /// Retourne la liste JSON des voix françaises disponibles (web uniquement).
+  /// Format : [{"name":"...", "lang":"..."}]
+  String getVoiceListJson() {
+    if (kIsWeb) {
+      return tts_web.getTTSVoiceList();
+    }
+    return '[]';
+  }
+
+  /// Retourne true si une voix africaine francophone est disponible (web uniquement).
+  bool isAfricanVoiceAvailable() {
+    if (kIsWeb) {
+      return tts_web.isTTSAfricanAvailable();
+    }
+    return false;
+  }
 
   // ====================================================================
   // UTILITAIRES

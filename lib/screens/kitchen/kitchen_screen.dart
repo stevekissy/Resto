@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
@@ -382,23 +383,67 @@ class _KitchenVoiceSettingsDialogState
   late double _volume;
   late int _intervalMinutes;
   late CoachMode _coachMode;
+  late double _speechRate;
+  late String _voiceName;
+
+  // Voix disponibles (chargées depuis JS au démarrage du dialog)
+  List<Map<String, String>> _availableVoices = [];
+  bool _africanAvailable = false;
+  bool _voicesLoaded = false;
 
   @override
   void initState() {
     super.initState();
     final s = widget.tts.settings;
-    _enabled = s.enabled;
-    _volume = s.volume;
+    _enabled         = s.enabled;
+    _volume          = s.volume;
     _intervalMinutes = s.intervalMinutes;
-    _coachMode = s.coachMode;
+    _coachMode       = s.coachMode;
+    _speechRate      = s.speechRate;
+    _voiceName       = s.voiceName;
+
+    // Charger la liste des voix après le premier frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadVoices();
+    });
+  }
+
+  void _loadVoices() {
+    try {
+      // Appel au service TTS via sa méthode publique
+      final raw = widget.tts.getVoiceListJson();
+      final jsonList = jsonDecode(raw) as List<dynamic>;
+      final voices = jsonList.map((e) {
+        final m = e as Map<String, dynamic>;
+        return <String, String>{
+          'name': m['name']?.toString() ?? '',
+          'lang': m['lang']?.toString() ?? '',
+        };
+      }).where((v) => v['name']!.isNotEmpty).toList();
+
+      setState(() {
+        _availableVoices = voices;
+        _africanAvailable = widget.tts.isAfricanVoiceAvailable();
+        _voicesLoaded = true;
+      });
+    } catch (e) {
+      setState(() {
+        _voicesLoaded = true;
+      });
+    }
   }
 
   void _apply() {
-    widget.tts.settings.volume = _volume;
+    widget.tts.settings.volume          = _volume;
     widget.tts.settings.intervalMinutes = _intervalMinutes;
-    widget.tts.settings.coachMode = _coachMode;
+    widget.tts.settings.coachMode       = _coachMode;
     // Sauvegarder et appliquer le nouvel état enabled
     widget.tts.saveKitchenEnabled(_enabled);
+    // Sauvegarder la config vocale (speechRate + voiceName) → écrit en prefs + appelle setTTSConfig JS
+    widget.tts.saveVoiceSettings(
+      speechRate: _speechRate,
+      voiceName: _voiceName,
+    );
     // Redémarrer les rappels avec les nouveaux paramètres
     widget.tts.restartReminders(widget.provider);
     widget.onChanged();
@@ -578,6 +623,165 @@ class _KitchenVoiceSettingsDialogState
                   ),
                 ],
               ),
+              const _SettingsDivider(),
+
+              // ══════════════════════════════════════════
+              // ── Section Voix ──
+              // ══════════════════════════════════════════
+
+              // Bannière voix africaine non disponible
+              if (_voicesLoaded && !_africanAvailable)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2D1A00),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFFF9800).withValues(alpha: 0.6)),
+                  ),
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline, color: Color(0xFFFF9800), size: 16),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Voix africaine native non disponible sur ce navigateur, voix féminine française utilisée.',
+                          style: TextStyle(
+                            color: Color(0xFFFFB74D),
+                            fontSize: 11,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Vitesse de parole
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.speed, color: AppTheme.primary, size: 18),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'Vitesse de parole',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                      const Spacer(),
+                      Text(
+                        _speechRate < 0.75
+                            ? 'Lente'
+                            : _speechRate > 1.0
+                                ? 'Rapide'
+                                : 'Normale',
+                        style: const TextStyle(
+                          color: AppTheme.primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      activeTrackColor: AppTheme.primary,
+                      inactiveTrackColor: AppTheme.primary.withValues(alpha: 0.2),
+                      thumbColor: AppTheme.primary,
+                      overlayColor: AppTheme.primary.withValues(alpha: 0.1),
+                    ),
+                    child: Slider(
+                      value: _speechRate,
+                      min: 0.6,
+                      max: 1.2,
+                      divisions: 6,
+                      onChanged: (v) => setState(() {
+                        _speechRate = double.parse(v.toStringAsFixed(2));
+                        _apply();
+                      }),
+                    ),
+                  ),
+                  // Étiquettes min/max
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Douce', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                        Text('Dynamique', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              // Choix de la voix
+              const _SettingsLabel(icon: Icons.record_voice_over, label: 'Choisir la voix'),
+              const SizedBox(height: 10),
+              if (!_voicesLoaded)
+                const Center(
+                  child: SizedBox(
+                    height: 24,
+                    width: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppTheme.primary,
+                    ),
+                  ),
+                )
+              else if (_availableVoices.isEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF2A2A5A)),
+                  ),
+                  child: const Text(
+                    'Aucune voix française détectée dans ce navigateur.',
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                  ),
+                )
+              else
+                // Option "Auto" + liste des voix
+                Column(
+                  children: [
+                    // Option auto
+                    _VoiceChip(
+                      label: 'Auto (meilleure voix féminine)',
+                      sublabel: _africanAvailable ? 'Voix africaine détectée ✓' : 'Voix fr-FR',
+                      selected: _voiceName == '',
+                      isAfrican: _africanAvailable,
+                      onTap: () => setState(() { _voiceName = ''; _apply(); }),
+                    ),
+                    const SizedBox(height: 6),
+                    // Liste des voix disponibles
+                    ..._availableVoices.map((v) {
+                      final name = v['name']!;
+                      final lang = v['lang'] ?? '';
+                      final isAfrican = lang.startsWith('fr-CI') ||
+                          lang.startsWith('fr-SN') || lang.startsWith('fr-CM') ||
+                          lang.startsWith('fr-MG') || lang.startsWith('fr-BF') ||
+                          lang.startsWith('fr-ML') || lang.startsWith('fr-GN') ||
+                          lang.startsWith('fr-TG') || lang.startsWith('fr-BJ') ||
+                          lang.startsWith('fr-CD');
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: _VoiceChip(
+                          label: name,
+                          sublabel: lang,
+                          selected: _voiceName == name,
+                          isAfrican: isAfrican,
+                          onTap: () => setState(() { _voiceName = name; _apply(); }),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+
               const SizedBox(height: 20),
 
               // ── Bouton test voix ──
@@ -768,6 +972,99 @@ class _CoachModeOption extends StatelessWidget {
             ),
             if (selected)
               Icon(Icons.check_circle, color: color, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ======================================================================
+// VOICE CHIP — item de sélection dans la liste des voix
+// ======================================================================
+
+class _VoiceChip extends StatelessWidget {
+  final String label;
+  final String sublabel;
+  final bool selected;
+  final bool isAfrican;
+  final VoidCallback onTap;
+
+  const _VoiceChip({
+    required this.label,
+    required this.sublabel,
+    required this.selected,
+    required this.isAfrican,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = isAfrican
+        ? const Color(0xFF4CAF50)
+        : selected
+            ? AppTheme.primary
+            : const Color(0xFF2A2A5A);
+    final bgColor = selected
+        ? (isAfrican
+            ? const Color(0xFF4CAF50).withValues(alpha: 0.15)
+            : AppTheme.primary.withValues(alpha: 0.15))
+        : AppTheme.surfaceLight;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: borderColor, width: selected ? 2 : 1),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isAfrican ? Icons.public : Icons.mic_none,
+              color: isAfrican
+                  ? const Color(0xFF4CAF50)
+                  : selected
+                      ? AppTheme.primary
+                      : AppTheme.textSecondary,
+              size: 16,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected
+                          ? (isAfrican ? const Color(0xFF4CAF50) : AppTheme.primary)
+                          : Colors.white,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (sublabel.isNotEmpty)
+                    Text(
+                      sublabel,
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 10,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (selected)
+              Icon(
+                Icons.check_circle,
+                color: isAfrican ? const Color(0xFF4CAF50) : AppTheme.primary,
+                size: 16,
+              ),
           ],
         ),
       ),
