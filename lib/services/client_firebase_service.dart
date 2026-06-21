@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
 import '../models/client_models.dart';
 import '../models/models.dart';
+// ignore: unused_import
+import 'package:flutter/foundation.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENT FIREBASE SERVICE
@@ -410,5 +412,92 @@ class ClientFirebaseService {
     } catch (_) {
       return [];
     }
+  }
+
+  // ── Notifications client ───────────────────────────────────────────────
+
+  Future<ClientNotificationSettings> getNotificationSettings(String clientId) async {
+    try {
+      final doc = await _db.collection('client_notifications').doc(clientId).get();
+      if (!doc.exists || doc.data() == null) {
+        return ClientNotificationSettings.defaults(clientId);
+      }
+      return ClientNotificationSettings.fromMap(doc.data()!);
+    } catch (_) {
+      return ClientNotificationSettings.defaults(clientId);
+    }
+  }
+
+  Future<void> saveNotificationSettings(ClientNotificationSettings settings) async {
+    await _db
+        .collection('client_notifications')
+        .doc(settings.clientId)
+        .set(settings.toMap());
+  }
+
+  // ── Tickets support ───────────────────────────────────────────────────
+
+  Stream<List<ClientSupportTicket>> streamSupportTickets(String clientId) {
+    return _db
+        .collection('client_support_tickets')
+        .where('clientId', isEqualTo: clientId)
+        .snapshots()
+        .map((snap) {
+      final tickets = snap.docs
+          .map((d) => ClientSupportTicket.fromMap(d.data()))
+          .toList();
+      tickets.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return tickets;
+    });
+  }
+
+  Future<String> createSupportTicket(ClientSupportTicket ticket) async {
+    final id = _uuid.v4();
+    final data = ticket.toMap();
+    data['id'] = id;
+    await _db.collection('client_support_tickets').doc(id).set(data);
+    return id;
+  }
+
+  // ── Sécurité / Auth avancée ────────────────────────────────────────────
+
+  Future<void> updateEmail(String newEmail) async {
+    await _auth.currentUser?.verifyBeforeUpdateEmail(newEmail);
+  }
+
+  Future<void> updatePassword(String newPassword) async {
+    await _auth.currentUser?.updatePassword(newPassword);
+  }
+
+  Future<void> reauthenticate(String email, String password) async {
+    final credential = EmailAuthProvider.credential(
+      email: email,
+      password: password,
+    );
+    await _auth.currentUser?.reauthenticateWithCredential(credential);
+  }
+
+  Future<void> deleteAccount() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    // Supprimer données Firestore
+    await _db.collection('clients').doc(uid).delete();
+    // Supprimer adresses
+    final addrSnap = await _db
+        .collection('client_addresses')
+        .where('clientId', isEqualTo: uid)
+        .get();
+    for (final d in addrSnap.docs) {
+      await d.reference.delete();
+    }
+    // Supprimer compte Auth
+    await _auth.currentUser?.delete();
+  }
+
+  Future<void> signOutAllDevices() async {
+    // Firebase Auth n'a pas de "signout all devices" natif côté client.
+    // On renouvelle le token en forçant un refresh, puis déconnecte localement.
+    await _auth.currentUser?.getIdToken(true);
+    await _auth.signOut();
   }
 }

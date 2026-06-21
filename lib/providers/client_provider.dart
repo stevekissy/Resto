@@ -441,8 +441,93 @@ class ClientProvider extends ChangeNotifier {
     return _svc.getAllClientsRaw();
   }
 
+  // ── Notifications ───────────────────────────────────────────────────────
+
+  ClientNotificationSettings? _notifSettings;
+  ClientNotificationSettings get notifSettings =>
+      _notifSettings ?? ClientNotificationSettings.defaults(_client?.id ?? '');
+
+  Future<void> loadNotifSettings() async {
+    if (_client == null) return;
+    _notifSettings = await _svc.getNotificationSettings(_client!.id);
+    notifyListeners();
+  }
+
+  Future<void> saveNotifSettings(ClientNotificationSettings settings) async {
+    await _svc.saveNotificationSettings(settings);
+    _notifSettings = settings;
+    notifyListeners();
+  }
+
+  // ── Support tickets ─────────────────────────────────────────────────────
+
+  List<ClientSupportTicket> _tickets = [];
+  List<ClientSupportTicket> get tickets => _tickets;
+  StreamSubscription? _ticketsSubscription;
+
+  void startTicketsStream() {
+    if (_client == null) return;
+    _ticketsSubscription?.cancel();
+    _ticketsSubscription = _svc.streamSupportTickets(_client!.id).listen((t) {
+      _tickets = t;
+      notifyListeners();
+    });
+  }
+
+  Future<String> createTicket(ClientSupportTicket ticket) async {
+    return _svc.createSupportTicket(ticket);
+  }
+
+  // ── Sécurité avancée ────────────────────────────────────────────────────
+
+  Future<void> reauthenticate(String email, String password) async {
+    await _svc.reauthenticate(email, password);
+  }
+
+  Future<void> updatePassword(String newPassword) async {
+    await _svc.updatePassword(newPassword);
+  }
+
+  Future<void> updateEmail(String newEmail) async {
+    await _svc.updateEmail(newEmail);
+    if (_client != null) {
+      await _svc.updateClientProfile(_client!.id, {'email': newEmail});
+    }
+  }
+
+  Future<void> signOutAllDevices() async {
+    _cancelStreams();
+    _client = null;
+    _orders = [];
+    _addresses = [];
+    _promotions = [];
+    _products = [];
+    _categories = [];
+    _loyaltyHistory = [];
+    _cart.clear();
+    _selectedPromotion = null;
+    await _svc.signOutAllDevices();
+    notifyListeners();
+  }
+
+  Future<void> deleteAccount() async {
+    _cancelStreams();
+    _client = null;
+    _orders = [];
+    _addresses = [];
+    _promotions = [];
+    _products = [];
+    _categories = [];
+    _loyaltyHistory = [];
+    _cart.clear();
+    _selectedPromotion = null;
+    await _svc.deleteAccount();
+    notifyListeners();
+  }
+
   @override
   void dispose() {
+    _ticketsSubscription?.cancel();
     _cancelStreams();
     super.dispose();
   }

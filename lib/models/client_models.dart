@@ -660,3 +660,136 @@ class OnlineOrderSettings {
 
   static OnlineOrderSettings get defaults => OnlineOrderSettings();
 }
+
+// ── ClientNotificationSettings ─────────────────────────────────────────────
+
+class ClientNotificationSettings {
+  final String clientId;
+  bool orderNotifications;
+  bool paymentNotifications;
+  bool deliveryNotifications;
+  bool promoNotifications;
+  bool soundEnabled;
+  bool vibrationEnabled;
+  DateTime updatedAt;
+
+  ClientNotificationSettings({
+    required this.clientId,
+    this.orderNotifications = true,
+    this.paymentNotifications = true,
+    this.deliveryNotifications = true,
+    this.promoNotifications = true,
+    this.soundEnabled = true,
+    this.vibrationEnabled = true,
+    DateTime? updatedAt,
+  }) : updatedAt = updatedAt ?? DateTime.now();
+
+  Map<String, dynamic> toMap() => {
+    'clientId': clientId,
+    'orderNotifications': orderNotifications,
+    'paymentNotifications': paymentNotifications,
+    'deliveryNotifications': deliveryNotifications,
+    'promoNotifications': promoNotifications,
+    'soundEnabled': soundEnabled,
+    'vibrationEnabled': vibrationEnabled,
+    'updatedAt': updatedAt.millisecondsSinceEpoch,
+  };
+
+  factory ClientNotificationSettings.fromMap(Map<String, dynamic> m) =>
+      ClientNotificationSettings(
+        clientId: m['clientId'] as String? ?? '',
+        orderNotifications: m['orderNotifications'] as bool? ?? true,
+        paymentNotifications: m['paymentNotifications'] as bool? ?? true,
+        deliveryNotifications: m['deliveryNotifications'] as bool? ?? true,
+        promoNotifications: m['promoNotifications'] as bool? ?? true,
+        soundEnabled: m['soundEnabled'] as bool? ?? true,
+        vibrationEnabled: m['vibrationEnabled'] as bool? ?? true,
+        updatedAt: m['updatedAt'] is int
+            ? DateTime.fromMillisecondsSinceEpoch(m['updatedAt'] as int)
+            : DateTime.now(),
+      );
+
+  factory ClientNotificationSettings.defaults(String clientId) =>
+      ClientNotificationSettings(clientId: clientId);
+}
+
+// ── ClientSupportTicket ────────────────────────────────────────────────────
+
+enum SupportTicketStatus { open, inProgress, resolved, closed }
+
+extension SupportTicketStatusExt on SupportTicketStatus {
+  String get label {
+    switch (this) {
+      case SupportTicketStatus.open:       return 'Ouvert';
+      case SupportTicketStatus.inProgress: return 'En cours';
+      case SupportTicketStatus.resolved:   return 'Résolu';
+      case SupportTicketStatus.closed:     return 'Fermé';
+    }
+  }
+  Color get color {
+    switch (this) {
+      case SupportTicketStatus.open:       return const Color(0xFFFFC107);
+      case SupportTicketStatus.inProgress: return const Color(0xFF2196F3);
+      case SupportTicketStatus.resolved:   return const Color(0xFF4CAF50);
+      case SupportTicketStatus.closed:     return const Color(0xFF9E9E9E);
+    }
+  }
+}
+
+class ClientSupportTicket {
+  final String id;
+  final String clientId;
+  final String clientName;
+  final String subject;
+  final String message;
+  SupportTicketStatus status;
+  final String? orderId;
+  final DateTime createdAt;
+  DateTime? updatedAt;
+  String? adminResponse;
+
+  ClientSupportTicket({
+    required this.id,
+    required this.clientId,
+    required this.clientName,
+    required this.subject,
+    required this.message,
+    this.status = SupportTicketStatus.open,
+    this.orderId,
+    DateTime? createdAt,
+    this.updatedAt,
+    this.adminResponse,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'clientId': clientId,
+    'clientName': clientName,
+    'subject': subject,
+    'message': message,
+    'status': status.index,
+    'orderId': orderId,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'updatedAt': updatedAt?.millisecondsSinceEpoch,
+    'adminResponse': adminResponse,
+  };
+
+  factory ClientSupportTicket.fromMap(Map<String, dynamic> m) =>
+      ClientSupportTicket(
+        id: m['id'] as String? ?? '',
+        clientId: m['clientId'] as String? ?? '',
+        clientName: m['clientName'] as String? ?? '',
+        subject: m['subject'] as String? ?? '',
+        message: m['message'] as String? ?? '',
+        status: SupportTicketStatus
+            .values[(m['status'] as num?)?.toInt() ?? 0],
+        orderId: m['orderId'] as String?,
+        createdAt: m['createdAt'] is int
+            ? DateTime.fromMillisecondsSinceEpoch(m['createdAt'] as int)
+            : DateTime.now(),
+        updatedAt: m['updatedAt'] is int
+            ? DateTime.fromMillisecondsSinceEpoch(m['updatedAt'] as int)
+            : null,
+        adminResponse: m['adminResponse'] as String?,
+      );
+}
