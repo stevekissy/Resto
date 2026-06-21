@@ -5,6 +5,7 @@ import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../../models/models.dart';
+import 'inventory_screen.dart';
 
 class StockScreen extends StatefulWidget {
   const StockScreen({super.key});
@@ -19,7 +20,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -43,6 +44,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
               tabs: const [
                 Tab(text: 'Stocks', icon: Icon(Icons.inventory, size: 16)),
                 Tab(text: 'Produits Disponibles', icon: Icon(Icons.restaurant_menu, size: 16)),
+                Tab(text: 'Inventaire', icon: Icon(Icons.playlist_add_check, size: 16)),
               ],
             ),
           ),
@@ -52,6 +54,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
               children: const [
                 _StockTab(),
                 _AvailableProductsTab(),
+                InventoryTab(),
               ],
             ),
           ),

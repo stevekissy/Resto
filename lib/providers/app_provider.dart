@@ -1466,6 +1466,46 @@ class AppProvider extends ChangeNotifier {
     return _rolePermissions[role]?[module] ?? FirebaseService.defaultPermissions(role)[module] ?? false;
   }
 
+  // =================== INVENTORY ===================
+
+  Future<InventorySession> createInventorySession({
+    required String site,
+  }) async {
+    final user = currentUser;
+    return _firebase.createInventorySession(
+      responsibleId: user?.id ?? '',
+      responsibleName: user?.name ?? 'Inconnu',
+      site: site,
+      stockItems: _stockItems,
+    );
+  }
+
+  Future<List<InventorySession>> fetchInventorySessions() =>
+      _firebase.fetchInventorySessions();
+
+  Future<List<InventoryItem>> fetchInventoryItems(String sessionId) =>
+      _firebase.fetchInventoryItems(sessionId);
+
+  Future<void> saveInventoryLine(InventoryItem line) =>
+      _firebase.saveInventoryLine(line);
+
+  Future<void> completeInventorySession(
+    String sessionId,
+    List<InventoryItem> items,
+  ) => _firebase.completeInventorySession(sessionId, items);
+
+  Future<void> applyInventoryCorrections({
+    required String sessionId,
+    required List<InventoryItem> items,
+  }) => _firebase.applyInventoryCorrections(
+    sessionId: sessionId,
+    items: items,
+    validatedByName: currentUser?.name ?? 'Inconnu',
+  );
+
+  Future<void> deleteInventorySession(String sessionId) =>
+      _firebase.deleteInventorySession(sessionId);
+
   @override
   void dispose() {
     _stopFirebaseStreams();

@@ -991,3 +991,173 @@ class CallParticipant {
         : DateTime.now(),
   );
 }
+
+// =================== INVENTORY MODELS ===================
+
+enum InventoryStatus { inProgress, completed, cancelled }
+
+extension InventoryStatusX on InventoryStatus {
+  String get label {
+    switch (this) {
+      case InventoryStatus.inProgress:  return 'En cours';
+      case InventoryStatus.completed:   return 'Terminé';
+      case InventoryStatus.cancelled:   return 'Annulé';
+    }
+  }
+  String get key {
+    switch (this) {
+      case InventoryStatus.inProgress:  return 'in_progress';
+      case InventoryStatus.completed:   return 'completed';
+      case InventoryStatus.cancelled:   return 'cancelled';
+    }
+  }
+  static InventoryStatus fromKey(String k) {
+    switch (k) {
+      case 'completed':   return InventoryStatus.completed;
+      case 'cancelled':   return InventoryStatus.cancelled;
+      default:            return InventoryStatus.inProgress;
+    }
+  }
+}
+
+/// Statut d'un article d'inventaire
+enum InventoryItemStatus { notCounted, compliant, missing, surplus }
+
+extension InventoryItemStatusX on InventoryItemStatus {
+  String get label {
+    switch (this) {
+      case InventoryItemStatus.notCounted: return 'Non compté';
+      case InventoryItemStatus.compliant:  return 'Conforme';
+      case InventoryItemStatus.missing:    return 'Manquant';
+      case InventoryItemStatus.surplus:    return 'Surplus';
+    }
+  }
+  static InventoryItemStatus compute(double? counted, double theoretical) {
+    if (counted == null) return InventoryItemStatus.notCounted;
+    final diff = counted - theoretical;
+    if (diff.abs() < 0.001) return InventoryItemStatus.compliant;
+    return diff < 0 ? InventoryItemStatus.missing : InventoryItemStatus.surplus;
+  }
+}
+
+/// Session d'inventaire (collection Firestore : inventory_sessions)
+class InventorySession {
+  final String id;
+  final DateTime date;
+  final String responsibleId;
+  final String responsibleName;
+  final String site;
+  InventoryStatus status;
+  final int totalProducts;
+  final int totalCounted;
+  final int totalMissing;
+  final int totalSurplus;
+  final DateTime? completedAt;
+
+  InventorySession({
+    required this.id,
+    required this.date,
+    required this.responsibleId,
+    required this.responsibleName,
+    required this.site,
+    this.status = InventoryStatus.inProgress,
+    this.totalProducts = 0,
+    this.totalCounted = 0,
+    this.totalMissing = 0,
+    this.totalSurplus = 0,
+    this.completedAt,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'date': date.millisecondsSinceEpoch,
+    'responsibleId': responsibleId,
+    'responsibleName': responsibleName,
+    'site': site,
+    'status': status.key,
+    'totalProducts': totalProducts,
+    'totalCounted': totalCounted,
+    'totalMissing': totalMissing,
+    'totalSurplus': totalSurplus,
+    'completedAt': completedAt?.millisecondsSinceEpoch,
+  };
+
+  factory InventorySession.fromMap(Map<String, dynamic> m, String docId) =>
+      InventorySession(
+        id: docId,
+        date: m['date'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(m['date'] as int)
+            : DateTime.now(),
+        responsibleId:   m['responsibleId']   as String? ?? '',
+        responsibleName: m['responsibleName'] as String? ?? '',
+        site:            m['site']            as String? ?? '',
+        status: InventoryStatusX.fromKey(m['status'] as String? ?? ''),
+        totalProducts: (m['totalProducts'] as num?)?.toInt() ?? 0,
+        totalCounted:  (m['totalCounted']  as num?)?.toInt() ?? 0,
+        totalMissing:  (m['totalMissing']  as num?)?.toInt() ?? 0,
+        totalSurplus:  (m['totalSurplus']  as num?)?.toInt() ?? 0,
+        completedAt: m['completedAt'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(m['completedAt'] as int)
+            : null,
+      );
+}
+
+/// Article d'inventaire (collection Firestore : inventory_items)
+class InventoryItem {
+  final String id;
+  final String sessionId;
+  final String stockItemId;
+  final String stockItemName;
+  final String category;
+  final String unit;
+  final double theoreticalQty;
+  double? countedQty;         // null = pas encore compté
+  String comment;
+  final double unitCost;
+
+  InventoryItem({
+    required this.id,
+    required this.sessionId,
+    required this.stockItemId,
+    required this.stockItemName,
+    required this.category,
+    required this.unit,
+    required this.theoreticalQty,
+    this.countedQty,
+    this.comment = '',
+    this.unitCost = 0,
+  });
+
+  double get gap => countedQty != null ? countedQty! - theoreticalQty : 0;
+  double get gapValue => gap * unitCost;
+
+  InventoryItemStatus get status =>
+      InventoryItemStatusX.compute(countedQty, theoreticalQty);
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'sessionId': sessionId,
+    'stockItemId': stockItemId,
+    'stockItemName': stockItemName,
+    'category': category,
+    'unit': unit,
+    'theoreticalQty': theoreticalQty,
+    'countedQty': countedQty,
+    'comment': comment,
+    'unitCost': unitCost,
+  };
+
+  factory InventoryItem.fromMap(Map<String, dynamic> m, String docId) =>
+      InventoryItem(
+        id:             docId,
+        sessionId:      m['sessionId']      as String? ?? '',
+        stockItemId:    m['stockItemId']    as String? ?? '',
+        stockItemName:  m['stockItemName']  as String? ?? '',
+        category:       m['category']       as String? ?? '',
+        unit:           m['unit']           as String? ?? '',
+        theoreticalQty: (m['theoreticalQty'] as num?)?.toDouble() ?? 0,
+        countedQty:     (m['countedQty']     as num?)?.toDouble(),
+        comment:        m['comment']        as String? ?? '',
+        unitCost:       (m['unitCost']       as num?)?.toDouble() ?? 0,
+      );
+}

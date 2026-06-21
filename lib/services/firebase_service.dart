@@ -1621,6 +1621,152 @@ class FirebaseService {
     }
     await batch.commit();
   }
+
+  // =================== INVENTORY ===================
+
+  /// Crée une nouvelle session d'inventaire et génère les lignes depuis le stock actif
+  Future<InventorySession> createInventorySession({
+    required String responsibleId,
+    required String responsibleName,
+    required String site,
+    required List<StockItem> stockItems,
+  }) async {
+    final sessionId = const Uuid().v4();
+    final session = InventorySession(
+      id: sessionId,
+      date: DateTime.now(),
+      responsibleId: responsibleId,
+      responsibleName: responsibleName,
+      site: site,
+      status: InventoryStatus.inProgress,
+      totalProducts: stockItems.length,
+    );
+
+    final batch = _db.batch();
+    // Créer la session
+    batch.set(_db.collection('inventory_sessions').doc(sessionId), session.toMap());
+
+    // Créer une ligne par article de stock actif
+    for (final item in stockItems) {
+      final lineId = const Uuid().v4();
+      final line = InventoryItem(
+        id: lineId,
+        sessionId: sessionId,
+        stockItemId: item.id,
+        stockItemName: item.name,
+        category: item.category,
+        unit: item.unit,
+        theoreticalQty: item.currentQuantity,
+        unitCost: item.unitCost,
+      );
+      batch.set(_db.collection('inventory_items').doc(lineId), line.toMap());
+    }
+
+    await batch.commit();
+    return session;
+  }
+
+  /// Liste des sessions triées par date desc
+  Future<List<InventorySession>> fetchInventorySessions() async {
+    final snap = await _db
+        .collection('inventory_sessions')
+        .orderBy('date', descending: true)
+        .get();
+    return snap.docs
+        .map((d) => InventorySession.fromMap(d.data(), d.id))
+        .toList();
+  }
+
+  /// Lignes d'une session donnée
+  Future<List<InventoryItem>> fetchInventoryItems(String sessionId) async {
+    final snap = await _db
+        .collection('inventory_items')
+        .where('sessionId', isEqualTo: sessionId)
+        .get();
+    final items = snap.docs
+        .map((d) => InventoryItem.fromMap(d.data(), d.id))
+        .toList()
+      ..sort((a, b) => a.stockItemName.compareTo(b.stockItemName));
+    return items;
+  }
+
+  /// Met à jour une ligne (quantité comptée + commentaire)
+  Future<void> saveInventoryLine(InventoryItem line) async {
+    await _db.collection('inventory_items').doc(line.id).update({
+      'countedQty': line.countedQty,
+      'comment': line.comment,
+    });
+  }
+
+  /// Termine la session et calcule les totaux
+  Future<void> completeInventorySession(
+    String sessionId,
+    List<InventoryItem> items,
+  ) async {
+    final counted  = items.where((i) => i.countedQty != null).length;
+    final missing  = items.where((i) => i.status == InventoryItemStatus.missing).length;
+    final surplus  = items.where((i) => i.status == InventoryItemStatus.surplus).length;
+
+    await _db.collection('inventory_sessions').doc(sessionId).update({
+      'status': InventoryStatus.completed.key,
+      'totalCounted': counted,
+      'totalMissing': missing,
+      'totalSurplus': surplus,
+      'completedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// Applique les corrections de stock après validation admin
+  /// Crée des mouvements stock_movements pour traçabilité
+  Future<void> applyInventoryCorrections({
+    required String sessionId,
+    required List<InventoryItem> items,
+    required String validatedByName,
+  }) async {
+    final batch = _db.batch();
+
+    for (final item in items) {
+      if (item.countedQty == null) continue;
+      final gap = item.gap;
+      if (gap.abs() < 0.001) continue; // pas d'écart
+
+      // Mettre à jour le stock
+      final stockRef = _db.collection('stock').doc(item.stockItemId);
+      batch.update(stockRef, {'currentQuantity': item.countedQty});
+
+      // Mouvement de stock
+      final mvtId = const Uuid().v4();
+      batch.set(_db.collection('stock_movements').doc(mvtId), {
+        'id': mvtId,
+        'stockItemId': item.stockItemId,
+        'stockItemName': item.stockItemName,
+        'type': gap > 0 ? 'inventory_surplus' : 'inventory_shortage',
+        'quantity': gap.abs(),
+        'delta': gap,
+        'unit': item.unit,
+        'note': 'Correction inventaire session $sessionId — validé par $validatedByName',
+        'date': DateTime.now().millisecondsSinceEpoch,
+        'createdBy': validatedByName,
+      });
+    }
+
+    await batch.commit();
+  }
+
+  /// Supprime une session et ses lignes
+  Future<void> deleteInventorySession(String sessionId) async {
+    // Supprimer les lignes
+    final itemsSnap = await _db
+        .collection('inventory_items')
+        .where('sessionId', isEqualTo: sessionId)
+        .get();
+    final batch = _db.batch();
+    for (final doc in itemsSnap.docs) {
+      batch.delete(doc.reference);
+    }
+    batch.delete(_db.collection('inventory_sessions').doc(sessionId));
+    await batch.commit();
+  }
 }
 
 // ── Helpers privés pour les transactions stock ─────────────────────────────
