@@ -301,14 +301,20 @@ class ClientFirebaseService {
       // Écrite dans la collection 'notifications' pour que l'admin la voie
       // même s'il se connecte après la commande (persistant).
       try {
+        final clientName    = clientOrderData['clientName'] as String? ?? 'Client';
+        final orderNum      = clientOrderData['orderNumber'] as String? ?? '';
+        final depositPaid   = clientOrderData['depositPaid'] as bool? ?? false;
+        final depositAmount = (clientOrderData['depositAmount'] as num?)?.toDouble() ?? 0;
+        final orderTypeIdx  = (clientOrderData['orderType'] as num?)?.toInt() ?? 0;
+        final orderTypeLabel= orderTypeIdx == 0 ? 'Livraison Yango' : 'À emporter';
+
+        // 1. Notification nouvelle commande
         final notifId = _uuid.v4();
-        final clientName = clientOrderData['clientName'] as String? ?? 'Client';
-        final orderNum   = clientOrderData['orderNumber'] as String? ?? '';
         await _db.collection('notifications').doc(notifId).set({
           'id': notifId,
           'type': 'online_order',
-          'title': 'Nouvelle commande en ligne',
-          'message': 'NOUVELLE COMMANDE EN LIGNE $orderNum — $clientName à traiter',
+          'title': '📱 Nouvelle commande en ligne',
+          'message': 'NOUVELLE COMMANDE $orderNum — $clientName ($orderTypeLabel)',
           'orderId': internalOrderId,
           'clientOrderId': clientOrderId,
           'clientId': clientOrderData['clientId'],
@@ -317,6 +323,25 @@ class ClientFirebaseService {
           'read': false,
           'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
         });
+
+        // 2. Notification acompte reçu (si l'acompte est payé à la commande)
+        if (depositPaid && depositAmount > 0) {
+          final depositNotifId = _uuid.v4();
+          await _db.collection('notifications').doc(depositNotifId).set({
+            'id': depositNotifId,
+            'type': 'deposit_paid',
+            'title': '💰 Acompte reçu',
+            'message': 'Acompte reçu pour commande $orderNum — $clientName : ${depositAmount.toStringAsFixed(0)} F CFA',
+            'orderId': internalOrderId,
+            'clientOrderId': clientOrderId,
+            'clientId': clientOrderData['clientId'],
+            'clientName': clientName,
+            'amount': depositAmount,
+            'createdAt': FieldValue.serverTimestamp(),
+            'read': false,
+            'targetRoles': ['admin', 'manager', 'cashier'],
+          });
+        }
       } catch (e) {
         debugPrintOrder('Erreur création notification admin: $e');
       }
@@ -332,10 +357,127 @@ class ClientFirebaseService {
   void debugPrintOrder(String msg) {}
 
   Future<void> updateOrderStatus(String orderId, ClientOrderStatus status) async {
-    await _db.collection('client_orders').doc(orderId).update({
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final update = <String, dynamic>{
       'status': status.index,
-      'updatedAt': DateTime.now().millisecondsSinceEpoch,
-    });
+      'updatedAt': now,
+    };
+
+    // Écrire les timestamps de workflow selon le nouveau statut
+    switch (status) {
+      case ClientOrderStatus.confirmed:
+        update['confirmedAt'] = now;
+        break;
+      case ClientOrderStatus.preparing:
+        update['sentToKitchenAt'] = now;
+        break;
+      case ClientOrderStatus.ready:
+        update['readyAt'] = now;
+        break;
+      case ClientOrderStatus.delivered:
+        update['deliveredAt'] = now;
+        update['settledAt'] = now;
+        update['paymentStatus'] = ClientPaymentStatus.fullyPaid.index;
+        break;
+      default:
+        break;
+    }
+
+    await _db.collection('client_orders').doc(orderId).update(update);
+
+    // Synchroniser aussi dans la collection 'orders' (cuisine/caisse)
+    try {
+      final snap = await _db.collection('orders')
+          .where('clientOrderId', isEqualTo: orderId)
+          .limit(1)
+          .get();
+      if (snap.docs.isNotEmpty) {
+        final orderUpdate = <String, dynamic>{'clientOrderStatus': status.index};
+        if (status == ClientOrderStatus.preparing) {
+          orderUpdate['status'] = 1; // OrderStatus.preparing
+        } else if (status == ClientOrderStatus.ready) {
+          orderUpdate['status'] = 2; // OrderStatus.ready
+        } else if (status == ClientOrderStatus.delivered) {
+          orderUpdate['status'] = 3; // OrderStatus.served
+          orderUpdate['paymentStatus'] = 'paid';
+          orderUpdate['settlementStatus'] = 'completed';
+        } else if (status == ClientOrderStatus.cancelled) {
+          orderUpdate['status'] = 4; // OrderStatus.cancelled
+        }
+        await snap.docs.first.reference.update(orderUpdate);
+      }
+    } catch (_) {}
+
+    // ── Notifications Firestore selon statut ──────────────────────────
+    try {
+      // Lire les infos de la commande pour construire le message
+      final orderDoc = await _db.collection('client_orders').doc(orderId).get();
+      if (orderDoc.exists) {
+        final data = orderDoc.data()!;
+        final clientName  = data['clientName'] as String? ?? 'Client';
+        final orderNumber = data['orderNumber'] as String? ?? '';
+        final remaining   = (data['remainingAmount'] as num?)?.toDouble() ?? 0;
+
+        String? notifTitle;
+        String? notifMessage;
+        String notifType = 'order_status';
+
+        switch (status) {
+          case ClientOrderStatus.confirmed:
+            notifTitle   = 'Commande confirmée';
+            notifMessage = 'Commande $orderNumber de $clientName confirmée — envoyée en cuisine';
+            notifType    = 'order_confirmed';
+            break;
+          case ClientOrderStatus.preparing:
+            notifTitle   = 'Commande en cuisine';
+            notifMessage = 'Commande $orderNumber de $clientName en préparation';
+            notifType    = 'order_preparing';
+            break;
+          case ClientOrderStatus.ready:
+            notifTitle   = 'Commande prête';
+            notifMessage = 'Commande $orderNumber de $clientName est PRÊTE — appeler Yango';
+            notifType    = 'order_ready';
+            break;
+          case ClientOrderStatus.delivering:
+            notifTitle   = 'En livraison';
+            notifMessage = 'Commande $orderNumber — Yango en route vers $clientName';
+            notifType    = 'order_delivering';
+            break;
+          case ClientOrderStatus.delivered:
+            notifTitle   = 'Solde à encaisser';
+            notifMessage = remaining > 0
+                ? 'Commande $orderNumber livrée — solde à encaisser'
+                : 'Commande $orderNumber livrée et soldée ✓';
+            notifType    = 'order_settled';
+            break;
+          case ClientOrderStatus.cancelled:
+            notifTitle   = 'Commande annulée';
+            notifMessage = 'Commande $orderNumber de $clientName annulée';
+            notifType    = 'order_cancelled';
+            break;
+          default:
+            break;
+        }
+
+        if (notifTitle != null) {
+          final notifId = _uuid.v4();
+          await _db.collection('notifications').doc(notifId).set({
+            'id': notifId,
+            'type': notifType,
+            'title': notifTitle,
+            'message': notifMessage,
+            'orderId': orderId,
+            'clientOrderId': orderId,
+            'clientName': clientName,
+            'createdAt': FieldValue.serverTimestamp(),
+            'read': false,
+            'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
+          });
+        }
+      }
+    } catch (_) {
+      // Notifications non bloquantes
+    }
   }
 
   Future<void> cancelOrder(String orderId) async {

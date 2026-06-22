@@ -1204,58 +1204,114 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
               color: order.statusColor.withValues(alpha: 0.1),
               borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      '#${order.orderNumber}',
-                      style: TextStyle(
-                        color: order.statusColor,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 18,
-                      ),
-                    ),
-                    Text(
-                      order.tableLabel,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    if (order.isUrgent)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: AppTheme.error,
-                          borderRadius: BorderRadius.circular(8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              '#${order.orderNumber}',
+                              style: TextStyle(
+                                color: order.statusColor,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 18,
+                              ),
+                            ),
+                            // Badge EN LIGNE
+                            if (order.isOnlineOrder) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF3F51B5).withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(5),
+                                  border: Border.all(color: const Color(0xFF3F51B5).withValues(alpha: 0.6)),
+                                ),
+                                child: const Text('📱 EN LIGNE',
+                                    style: TextStyle(color: Color(0xFF7986CB), fontSize: 9, fontWeight: FontWeight.w900)),
+                              ),
+                            ],
+                          ],
                         ),
-                        child: const Text(
-                          '🚨 URGENT',
-                          style: TextStyle(
+                        Text(
+                          order.tableLabel,
+                          style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
                           ),
                         ),
-                      ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Passé à $_exactTime',
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+                        // Infos client (commande en ligne)
+                        if (order.isOnlineOrder && (order.clientPhone?.isNotEmpty ?? false)) ...[
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              const Icon(Icons.phone_outlined, size: 10, color: Color(0xFF7986CB)),
+                              const SizedBox(width: 3),
+                              Text(
+                                order.clientPhone!,
+                                style: const TextStyle(color: Color(0xFF7986CB), fontSize: 10, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
                     ),
-                    StatusBadge(
-                      label: order.statusLabel,
-                      color: order.statusColor,
-                      fontSize: 10,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        if (order.isUrgent)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: AppTheme.error,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              '🚨 URGENT',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Passé à $_exactTime',
+                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+                        ),
+                        StatusBadge(
+                          label: order.statusLabel,
+                          color: order.statusColor,
+                          fontSize: 10,
+                        ),
+                        // Type : livraison / emporter
+                        if (order.isOnlineOrder) ...[
+                          const SizedBox(height: 2),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: order.isTakeaway
+                                  ? AppTheme.success.withValues(alpha: 0.15)
+                                  : const Color(0xFFF57C00).withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              order.isTakeaway ? '🏃 Emporter' : '🚗 Livraison',
+                              style: TextStyle(
+                                color: order.isTakeaway ? AppTheme.success : const Color(0xFFF57C00),
+                                fontSize: 9, fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),

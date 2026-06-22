@@ -1,20 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../providers/client_provider.dart';
+import '../../providers/app_provider.dart';
 import '../../models/client_models.dart';
+import '../../services/notification_service.dart';
 import '../../utils/app_theme.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PANNEAU ADMIN — Commandes en ligne
+// PANNEAU ADMIN — Commandes en ligne (refonte complète)
 // Accès : admin et manager uniquement
-// Fonctions :
-//   • Activer/désactiver les commandes en ligne
-//   • Voir toutes les commandes clients
-//   • Mettre à jour les statuts des commandes
-//   • Configurer acompte %, frais livraison, zones
-//   • Gérer les promotions
-//   • Voir les comptes clients
+// Workflow : Reçue → Confirmée → En cuisine → En préparation → Prête →
+//            Yango appelé → En livraison → Livrée → Payée/clôturée
 // ═══════════════════════════════════════════════════════════════════════════
 
 class OnlineOrdersAdminScreen extends StatefulWidget {
@@ -29,11 +28,6 @@ class _OnlineOrdersAdminScreenState extends State<OnlineOrdersAdminScreen>
   late TabController _tabController;
   bool _settingsLoaded = false;
 
-  // Contrôleurs pour la config
-  final _depositCtrl = TextEditingController();
-  final _deliveryFeeCtrl = TextEditingController();
-  final _minOrderCtrl = TextEditingController();
-
   @override
   void initState() {
     super.initState();
@@ -43,7 +37,6 @@ class _OnlineOrdersAdminScreenState extends State<OnlineOrdersAdminScreen>
 
   Future<void> _initProvider() async {
     final prov = context.read<ClientProvider>();
-    // Charger les paramètres si pas encore chargé
     if (!_settingsLoaded) {
       await prov.initSettingsOnly();
       if (mounted) setState(() => _settingsLoaded = true);
@@ -53,9 +46,6 @@ class _OnlineOrdersAdminScreenState extends State<OnlineOrdersAdminScreen>
   @override
   void dispose() {
     _tabController.dispose();
-    _depositCtrl.dispose();
-    _deliveryFeeCtrl.dispose();
-    _minOrderCtrl.dispose();
     super.dispose();
   }
 
@@ -63,19 +53,37 @@ class _OnlineOrdersAdminScreenState extends State<OnlineOrdersAdminScreen>
   Widget build(BuildContext context) {
     final provider = context.watch<ClientProvider>();
     final settings = provider.settings;
+    final pendingCount = provider.orders
+        .where((o) => o.status == ClientOrderStatus.pending)
+        .length;
 
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
         backgroundColor: AppTheme.surface,
-        title: const Text('Commandes en Ligne',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+        title: Row(
+          children: [
+            const Text('Commandes en Ligne',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+            if (pendingCount > 0) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppTheme.error,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text('$pendingCount', style: const TextStyle(
+                    color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900)),
+              ),
+            ],
+          ],
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          // Toggle ON/OFF rapide
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: Row(
@@ -142,9 +150,7 @@ class _OnlineOrdersAdminScreenState extends State<OnlineOrdersAdminScreen>
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(enabled
-              ? 'Commandes en ligne activées ✓'
-              : 'Commandes en ligne désactivées'),
+          content: Text(enabled ? 'Commandes en ligne activées ✓' : 'Commandes en ligne désactivées'),
           backgroundColor: enabled ? AppTheme.success : AppTheme.error,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -154,37 +160,302 @@ class _OnlineOrdersAdminScreenState extends State<OnlineOrdersAdminScreen>
   }
 }
 
-// ── Onglet Commandes ─────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// ONGLET COMMANDES — avec recherche + filtres + cartes complètes
+// ══════════════════════════════════════════════════════════════════════════════
 
-class _OrdersTab extends StatelessWidget {
+class _OrdersTab extends StatefulWidget {
   final ClientProvider provider;
   const _OrdersTab({required this.provider});
 
   @override
-  Widget build(BuildContext context) {
-    final orders = provider.orders
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  State<_OrdersTab> createState() => _OrdersTabState();
+}
 
-    if (orders.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.receipt_long, color: AppTheme.textSecondary, size: 56),
-            SizedBox(height: 16),
-            Text('Aucune commande en ligne', style: TextStyle(color: AppTheme.textSecondary, fontSize: 15)),
-          ],
-        ),
-      );
+class _OrdersTabState extends State<_OrdersTab> {
+  final _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+  ClientOrderStatus? _filterStatus; // null = tous
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<ClientOrder> get _filteredOrders {
+    var orders = List<ClientOrder>.from(widget.provider.orders);
+    orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    // Filtre par statut
+    if (_filterStatus != null) {
+      orders = orders.where((o) => o.status == _filterStatus).toList();
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
-      itemCount: orders.length,
-      itemBuilder: (ctx, i) => _AdminOrderCard(order: orders[i]),
+    // Filtre par recherche
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      orders = orders.where((o) {
+        return (o.clientName.toLowerCase().contains(q)) ||
+               (o.clientPhone.contains(q)) ||
+               ((o.orderNumber ?? o.id).toLowerCase().contains(q)) ||
+               (o.id.toLowerCase().contains(q));
+      }).toList();
+    }
+
+    return orders;
+  }
+
+  // Compteurs par statut
+  int _countByStatus(ClientOrderStatus s) =>
+      widget.provider.orders.where((o) => o.status == s).length;
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filteredOrders;
+    final total = widget.provider.orders.length;
+
+    return Column(
+      children: [
+        // ── Stats rapides ──────────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          color: AppTheme.surface,
+          child: Row(
+            children: [
+              _QuickStat(label: 'Total', value: '$total', color: AppTheme.primary),
+              const SizedBox(width: 8),
+              _QuickStat(label: 'Reçues', value: '${_countByStatus(ClientOrderStatus.pending)}', color: AppTheme.warning),
+              const SizedBox(width: 8),
+              _QuickStat(label: 'Cuisine', value: '${_countByStatus(ClientOrderStatus.preparing)}', color: AppTheme.preparing),
+              const SizedBox(width: 8),
+              _QuickStat(label: 'Prêtes', value: '${_countByStatus(ClientOrderStatus.ready)}', color: AppTheme.success),
+              const SizedBox(width: 8),
+              _QuickStat(label: 'Livraison', value: '${_countByStatus(ClientOrderStatus.delivering)}', color: const Color(0xFFF57C00)),
+            ],
+          ),
+        ),
+
+        // ── Barre de recherche ─────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+          child: TextField(
+            controller: _searchCtrl,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            onChanged: (v) => setState(() => _searchQuery = v.trim()),
+            decoration: InputDecoration(
+              hintText: 'Rechercher par nom, téléphone ou numéro…',
+              hintStyle: TextStyle(color: AppTheme.textSecondary.withValues(alpha: 0.6), fontSize: 13),
+              prefixIcon: const Icon(Icons.search, color: AppTheme.primary, size: 20),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, color: AppTheme.textSecondary, size: 18),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: AppTheme.cardBg,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppTheme.primary.withValues(alpha: 0.3)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: Color(0xFF2A2A5A)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppTheme.primary.withValues(alpha: 0.6)),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+          ),
+        ),
+
+        // ── Chips de filtres ───────────────────────────────────────────
+        SizedBox(
+          height: 44,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+            children: [
+              _FilterChip(
+                label: 'Toutes',
+                count: total,
+                selected: _filterStatus == null,
+                color: AppTheme.primary,
+                onTap: () => setState(() => _filterStatus = null),
+              ),
+              const SizedBox(width: 6),
+              _FilterChip(
+                label: 'Reçues',
+                count: _countByStatus(ClientOrderStatus.pending),
+                selected: _filterStatus == ClientOrderStatus.pending,
+                color: AppTheme.warning,
+                onTap: () => setState(() => _filterStatus = ClientOrderStatus.pending),
+              ),
+              const SizedBox(width: 6),
+              _FilterChip(
+                label: 'Confirmées',
+                count: _countByStatus(ClientOrderStatus.confirmed),
+                selected: _filterStatus == ClientOrderStatus.confirmed,
+                color: AppTheme.success,
+                onTap: () => setState(() => _filterStatus = ClientOrderStatus.confirmed),
+              ),
+              const SizedBox(width: 6),
+              _FilterChip(
+                label: 'Cuisine',
+                count: _countByStatus(ClientOrderStatus.preparing),
+                selected: _filterStatus == ClientOrderStatus.preparing,
+                color: const Color(0xFFFF6B00),
+                onTap: () => setState(() => _filterStatus = ClientOrderStatus.preparing),
+              ),
+              const SizedBox(width: 6),
+              _FilterChip(
+                label: 'Prêtes',
+                count: _countByStatus(ClientOrderStatus.ready),
+                selected: _filterStatus == ClientOrderStatus.ready,
+                color: const Color(0xFF4CAF50),
+                onTap: () => setState(() => _filterStatus = ClientOrderStatus.ready),
+              ),
+              const SizedBox(width: 6),
+              _FilterChip(
+                label: 'Livraison',
+                count: _countByStatus(ClientOrderStatus.delivering),
+                selected: _filterStatus == ClientOrderStatus.delivering,
+                color: const Color(0xFFF57C00),
+                onTap: () => setState(() => _filterStatus = ClientOrderStatus.delivering),
+              ),
+              const SizedBox(width: 6),
+              _FilterChip(
+                label: 'Livrées',
+                count: _countByStatus(ClientOrderStatus.delivered),
+                selected: _filterStatus == ClientOrderStatus.delivered,
+                color: AppTheme.success,
+                onTap: () => setState(() => _filterStatus = ClientOrderStatus.delivered),
+              ),
+              const SizedBox(width: 6),
+              _FilterChip(
+                label: 'Annulées',
+                count: _countByStatus(ClientOrderStatus.cancelled),
+                selected: _filterStatus == ClientOrderStatus.cancelled,
+                color: AppTheme.error,
+                onTap: () => setState(() => _filterStatus = ClientOrderStatus.cancelled),
+              ),
+            ],
+          ),
+        ),
+
+        // ── Liste des commandes ────────────────────────────────────────
+        Expanded(
+          child: filtered.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.receipt_long, color: AppTheme.textSecondary, size: 56),
+                      const SizedBox(height: 16),
+                      Text(
+                        _searchQuery.isNotEmpty || _filterStatus != null
+                            ? 'Aucune commande trouvée'
+                            : 'Aucune commande en ligne',
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 15),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 30),
+                  itemCount: filtered.length,
+                  itemBuilder: (ctx, i) => _AdminOrderCard(order: filtered[i]),
+                ),
+        ),
+      ],
     );
   }
 }
+
+// ── Widget stats rapides ──────────────────────────────────────────────────
+class _QuickStat extends StatelessWidget {
+  final String label, value;
+  final Color color;
+  const _QuickStat({required this.label, required this.value, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Column(
+          children: [
+            Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 14)),
+            Text(label, style: TextStyle(color: color.withValues(alpha: 0.8), fontSize: 9)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Chip filtre ──────────────────────────────────────────────────────────
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final int count;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+  const _FilterChip({required this.label, required this.count, required this.selected,
+      required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? color.withValues(alpha: 0.2) : AppTheme.cardBg,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: selected ? color : const Color(0xFF2A2A5A), width: selected ? 1.5 : 1),
+        ),
+        child: Row(
+          children: [
+            Text(label, style: TextStyle(
+              color: selected ? color : AppTheme.textSecondary,
+              fontSize: 11, fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+            )),
+            if (count > 0) ...[
+              const SizedBox(width: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: selected ? color.withValues(alpha: 0.3) : AppTheme.textSecondary.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text('$count', style: TextStyle(
+                  color: selected ? color : AppTheme.textSecondary,
+                  fontSize: 10, fontWeight: FontWeight.w700,
+                )),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CARTE COMMANDE ADMIN — complète avec toutes les actions
+// ══════════════════════════════════════════════════════════════════════════════
 
 class _AdminOrderCard extends StatefulWidget {
   final ClientOrder order;
@@ -196,24 +467,305 @@ class _AdminOrderCard extends StatefulWidget {
 
 class _AdminOrderCardState extends State<_AdminOrderCard> {
   bool _expanded = false;
+  bool _processing = false;
+
+  final _fmt = NumberFormat('#,###', 'fr_FR');
+  final _fmtDate = DateFormat('dd/MM HH:mm', 'fr_FR');
+
+  // ── Workflow des statuts ─────────────────────────────────────────────
+  List<ClientOrderStatus> _nextStatuses(ClientOrderStatus current) {
+    switch (current) {
+      case ClientOrderStatus.pending:
+        return [ClientOrderStatus.confirmed, ClientOrderStatus.cancelled];
+      case ClientOrderStatus.confirmed:
+        return [ClientOrderStatus.preparing, ClientOrderStatus.cancelled];
+      case ClientOrderStatus.preparing:
+        return [ClientOrderStatus.ready];
+      case ClientOrderStatus.ready:
+        return [ClientOrderStatus.delivering, ClientOrderStatus.delivered];
+      case ClientOrderStatus.delivering:
+        return [ClientOrderStatus.delivered];
+      default:
+        return [];
+    }
+  }
+
+  String _statusActionLabel(ClientOrderStatus s) {
+    switch (s) {
+      case ClientOrderStatus.confirmed:   return 'Confirmer';
+      case ClientOrderStatus.preparing:   return 'Envoyer en cuisine';
+      case ClientOrderStatus.ready:       return 'Marquer Prête';
+      case ClientOrderStatus.delivering:  return 'En livraison';
+      case ClientOrderStatus.delivered:   return 'Marquer Livrée';
+      case ClientOrderStatus.cancelled:   return 'Annuler';
+      default:                            return s.label;
+    }
+  }
+
+  IconData _statusActionIcon(ClientOrderStatus s) {
+    switch (s) {
+      case ClientOrderStatus.confirmed:   return Icons.check_circle_outline;
+      case ClientOrderStatus.preparing:   return Icons.restaurant;
+      case ClientOrderStatus.ready:       return Icons.done_all;
+      case ClientOrderStatus.delivering:  return Icons.delivery_dining;
+      case ClientOrderStatus.delivered:   return Icons.where_to_vote;
+      case ClientOrderStatus.cancelled:   return Icons.cancel_outlined;
+      default:                            return Icons.arrow_forward;
+    }
+  }
+
+  // ── Label mode de paiement ────────────────────────────────────────────
+  String _paymentMethodLabel(ClientPaymentMethod method) {
+    switch (method) {
+      case ClientPaymentMethod.cashOnDelivery: return 'Espèces à la livraison';
+      case ClientPaymentMethod.orangeMoney:    return 'Orange Money';
+      case ClientPaymentMethod.mtnMoney:       return 'MTN Money';
+      case ClientPaymentMethod.moovMoney:      return 'Moov Money';
+      case ClientPaymentMethod.wave:           return 'Wave';
+      case ClientPaymentMethod.card:           return 'Carte bancaire';
+    }
+  }
+
+  // ── Actions ──────────────────────────────────────────────────────────
+
+  Future<void> _updateStatus(ClientOrderStatus newStatus) async {
+    if (_processing) return;
+    
+    // Confirmation pour annulation
+    if (newStatus == ClientOrderStatus.cancelled) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(children: [
+            Icon(Icons.warning_amber, color: AppTheme.error),
+            SizedBox(width: 8),
+            Text('Annuler la commande ?', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ]),
+          content: Text(
+            'La commande #${widget.order.orderNumber ?? widget.order.id.substring(0, 8)} de ${widget.order.clientName} sera annulée.',
+            style: const TextStyle(color: AppTheme.textSecondary),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Non')),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+              child: const Text('Annuler la commande'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+
+    setState(() => _processing = true);
+    try {
+      await context.read<ClientProvider>().updateOrderStatus(widget.order.id, newStatus);
+      
+      // Notifier selon le statut
+      final notifSvc = NotificationService();
+      if (newStatus == ClientOrderStatus.confirmed) {
+        notifSvc.trigger(NotifEvent.nouvelleCommande,
+            message: 'Commande #${widget.order.orderNumber} confirmée — envoi en cuisine');
+      } else if (newStatus == ClientOrderStatus.ready) {
+        notifSvc.trigger(NotifEvent.commandePrete,
+            message: 'Commande #${widget.order.orderNumber} prête — appeler Yango');
+      } else if (newStatus == ClientOrderStatus.delivered) {
+        notifSvc.trigger(NotifEvent.paiementEnregistre,
+            message: 'Commande #${widget.order.orderNumber} livrée — encaissement');
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('✓ Statut mis à jour : ${newStatus.label}'),
+          backgroundColor: newStatus.color,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 2),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Erreur : $e'), backgroundColor: AppTheme.error));
+      }
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
+
+  Future<void> _updateYangoStatus(YangoDeliveryStatus yangoStatus) async {
+    await context.read<ClientProvider>().updateYangoStatus(widget.order.id, yangoStatus);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Yango : ${yangoStatus.label}'),
+        backgroundColor: yangoStatus.color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 2),
+      ));
+    }
+  }
+
+  Future<void> _callClient() async {
+    final phone = widget.order.clientPhone.replaceAll(RegExp(r'[^\d+]'), '');
+    final uri = Uri.parse('tel:$phone');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      _copyToClipboard(widget.order.clientPhone, 'Téléphone copié');
+    }
+  }
+
+  void _copyToClipboard(String text, String msg) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('📋 $msg'),
+      backgroundColor: AppTheme.surface,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  Future<void> _openGps() async {
+    final geo = widget.order.geoLocation;
+    final addr = widget.order.deliveryAddress?.address ?? '';
+    if (geo != null && geo.isNotEmpty && geo.contains(',')) {
+      final parts = geo.split(',');
+      final lat = parts[0].trim();
+      final lng = parts[1].trim();
+      final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
+      }
+    }
+    if (addr.isNotEmpty) {
+      final encoded = Uri.encodeComponent(addr);
+      final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$encoded');
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    }
+  }
+
+  Future<void> _encaisserSolde() async {
+    final order = widget.order;
+    final remaining = order.remainingAmount;
+    if (remaining <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('✓ Commande déjà soldée'), backgroundColor: AppTheme.success));
+      return;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(Icons.account_balance_wallet, color: AppTheme.success),
+          SizedBox(width: 8),
+          Text('Encaisser le solde', style: TextStyle(color: Colors.white, fontSize: 16)),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Client : ${order.clientName}',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            if (order.depositPaid && order.depositAmount > 0) ...[
+              _EncaissRow('Acompte payé', '${_fmt.format(order.depositAmount)} F', AppTheme.success),
+              const SizedBox(height: 4),
+            ],
+            _EncaissRow(
+              'Solde à encaisser',
+              '${_fmt.format(remaining)} F',
+              AppTheme.warning,
+              bold: true,
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.success.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.success.withValues(alpha: 0.3)),
+              ),
+              child: const Text(
+                'Après encaissement : statut Payé / Clôturé\nPoints fidélité attribués automatiquement.',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.check, size: 16),
+            label: const Text('Encaisser'),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    setState(() => _processing = true);
+    try {
+      // Marquer payée + livrée (déclenche attribution points fidélité)
+      await context.read<ClientProvider>().updateOrderStatus(
+          widget.order.id, ClientOrderStatus.delivered);
+      
+      // Notifier caisse
+      NotificationService().trigger(NotifEvent.paiementEnregistre,
+          message: 'Solde encaissé : commande #${order.orderNumber} — ${_fmt.format(remaining)} F');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('✓ Solde encaissé — ${_fmt.format(remaining)} F'),
+          backgroundColor: AppTheme.success,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final fmt = NumberFormat('#,###', 'fr_FR');
-    final fmtDate = DateFormat('dd/MM HH:mm', 'fr_FR');
-    final status = widget.order.status;
     final order = widget.order;
+    final status = order.status;
+    final nextStatuses = _nextStatuses(status);
+    final isDelivery = order.orderType == OrderType.delivery;
+    final isClosed = status == ClientOrderStatus.delivered ||
+                     status == ClientOrderStatus.cancelled;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: AppTheme.cardBg,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: status.color.withValues(alpha: 0.4)),
+        border: Border.all(
+          color: status == ClientOrderStatus.pending
+              ? AppTheme.warning.withValues(alpha: 0.7)
+              : status.color.withValues(alpha: 0.35),
+          width: status == ClientOrderStatus.pending ? 1.5 : 1,
+        ),
+        boxShadow: status == ClientOrderStatus.pending
+            ? [BoxShadow(color: AppTheme.warning.withValues(alpha: 0.15), blurRadius: 12)]
+            : null,
       ),
       child: Column(
         children: [
-          // ── En-tête ───────────────────────────────────────────────────
+          // ── En-tête cliquable ────────────────────────────────────────
           GestureDetector(
             onTap: () => setState(() => _expanded = !_expanded),
             child: Padding(
@@ -223,8 +775,9 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                 children: [
                   Row(
                     children: [
+                      // Icône statut
                       Container(
-                        width: 36, height: 36,
+                        width: 38, height: 38,
                         decoration: BoxDecoration(
                           color: status.color.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(10),
@@ -236,22 +789,41 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
+                            Wrap(
+                              spacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 Text(order.orderNumber ?? order.id.substring(0, 8),
                                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
-                                const SizedBox(width: 6),
-                                // Badge source EN LIGNE
+                                // Badge EN LIGNE
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                                   decoration: BoxDecoration(
                                     color: AppTheme.primary.withValues(alpha: 0.2),
-                                    borderRadius: BorderRadius.circular(6),
+                                    borderRadius: BorderRadius.circular(5),
+                                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.5)),
                                   ),
-                                  child: const Text('EN LIGNE',
-                                      style: TextStyle(color: AppTheme.primary, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+                                  child: const Text('📱 EN LIGNE',
+                                      style: TextStyle(color: AppTheme.primary, fontSize: 9, fontWeight: FontWeight.w900)),
                                 ),
-                                const SizedBox(width: 6),
+                                // Badge type (livraison / emporter)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: isDelivery
+                                        ? const Color(0xFFF57C00).withValues(alpha: 0.15)
+                                        : AppTheme.success.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(5),
+                                  ),
+                                  child: Text(
+                                    isDelivery ? '🚗 Livraison' : '🏃 Emporter',
+                                    style: TextStyle(
+                                      color: isDelivery ? const Color(0xFFF57C00) : AppTheme.success,
+                                      fontSize: 9, fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                // Badge statut
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                   decoration: BoxDecoration(
@@ -259,21 +831,33 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(status.label,
-                                      style: TextStyle(color: status.color, fontSize: 10, fontWeight: FontWeight.w700)),
+                                      style: TextStyle(color: status.color, fontSize: 9, fontWeight: FontWeight.w700)),
                                 ),
                               ],
                             ),
-                            Text('${order.clientName} • ${order.clientPhone}',
-                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                const Icon(Icons.person_outline, size: 11, color: AppTheme.textSecondary),
+                                const SizedBox(width: 3),
+                                Text(order.clientName,
+                                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                                const SizedBox(width: 8),
+                                const Icon(Icons.phone_outlined, size: 11, color: AppTheme.textSecondary),
+                                const SizedBox(width: 3),
+                                Text(order.clientPhone,
+                                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                              ],
+                            ),
                           ],
                         ),
                       ),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Text('${fmt.format(order.totalAmount)} F',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
-                          Text(fmtDate.format(order.createdAt),
+                          Text('${_fmt.format(order.totalAmount)} F',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15)),
+                          Text(_fmtDate.format(order.createdAt),
                               style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
                           Icon(_expanded ? Icons.expand_less : Icons.expand_more,
                               color: AppTheme.textSecondary, size: 16),
@@ -281,10 +865,11 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
+                  // Résumé articles
                   Text(
                     order.items.map((i) => '${i.quantity}× ${i.productName}').join(' • '),
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
                     maxLines: _expanded ? null : 1,
                     overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
                   ),
@@ -293,7 +878,7 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
             ),
           ),
 
-          // ── Détails expandés ──────────────────────────────────────────
+          // ── Détails expandés ─────────────────────────────────────────
           if (_expanded) ...[
             const Divider(height: 1, color: Color(0xFF2A2A5A)),
             Padding(
@@ -301,49 +886,189 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Adresse livraison Yango
-                  if (order.orderType == OrderType.delivery) ...[
-                    _InfoRow(
-                      icon: Icons.location_on_outlined,
-                      label: 'Adresse',
-                      value: order.deliveryAddress?.address ?? 'Non renseignée',
+
+                  // ── Articles détaillés ──────────────────────────────
+                  const _SectionTitle(icon: Icons.restaurant_menu, label: 'Articles'),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surface.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    if (order.deliveryNote != null && order.deliveryNote!.isNotEmpty)
-                      _InfoRow(
-                        icon: Icons.note_alt_outlined,
-                        label: 'Note livreur',
-                        value: order.deliveryNote!,
-                      ),
-                    // Bloc Yango
-                    const SizedBox(height: 8),
+                    child: Column(
+                      children: [
+                        ...order.items.map((item) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 22, height: 22,
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primary.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Center(
+                                  child: Text('${item.quantity}',
+                                      style: const TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w900)),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(item.productName,
+                                        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                                    if (item.comment != null && item.comment!.isNotEmpty)
+                                      Text('💬 ${item.comment}',
+                                          style: const TextStyle(color: Colors.amber, fontSize: 10)),
+                                  ],
+                                ),
+                              ),
+                              Text('${_fmt.format(item.totalPrice)} F',
+                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                            ],
+                          ),
+                        )),
+                        const Divider(height: 10, color: Color(0xFF2A2A5A)),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Total commande', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
+                            Text('${_fmt.format(order.totalAmount)} F',
+                                style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w900, fontSize: 13)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // ── Financier : Acompte + Solde ─────────────────────
+                  const _SectionTitle(icon: Icons.account_balance_wallet_outlined, label: 'Paiement'),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surface.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      children: [
+                        _FinRow(
+                          label: 'Acompte exigé',
+                          value: order.depositRequired
+                              ? '${_fmt.format(order.depositAmount)} F'
+                              : 'Non requis',
+                          color: order.depositRequired ? AppTheme.warning : AppTheme.textSecondary,
+                        ),
+                        if (order.depositRequired) ...[
+                          const SizedBox(height: 4),
+                          _FinRow(
+                            label: 'Acompte reçu',
+                            value: order.depositPaid
+                                ? '${_fmt.format(order.depositAmount)} F ✓'
+                                : 'En attente ⏳',
+                            color: order.depositPaid ? AppTheme.success : AppTheme.error,
+                          ),
+                          const SizedBox(height: 4),
+                          _FinRow(
+                            label: 'Solde restant',
+                            value: '${_fmt.format(order.remainingAmount)} F',
+                            color: order.remainingAmount > 0 ? AppTheme.warning : AppTheme.success,
+                            bold: true,
+                          ),
+                        ],
+                        if (order.loyaltyPointsUsed > 0) ...[
+                          const SizedBox(height: 4),
+                          _FinRow(
+                            label: 'Points utilisés',
+                            value: '${order.loyaltyPointsUsed} pts → -${_fmt.format(order.loyaltyDiscountAmount)} F',
+                            color: Colors.amber,
+                          ),
+                        ],
+                        const SizedBox(height: 4),
+                        _FinRow(
+                          label: 'Mode de paiement',
+                          value: _paymentMethodLabel(order.paymentMethod),
+                          color: Colors.white,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // ── Livraison Yango ─────────────────────────────────
+                  if (isDelivery) ...[
+                    const _SectionTitle(icon: Icons.delivery_dining, label: 'Livraison Yango'),
+                    const SizedBox(height: 6),
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF57C00).withValues(alpha: 0.08),
+                        color: const Color(0xFFF57C00).withValues(alpha: 0.06),
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFF57C00).withValues(alpha: 0.4)),
+                        border: Border.all(color: const Color(0xFFF57C00).withValues(alpha: 0.35)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Adresse
                           Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('🚗', style: TextStyle(fontSize: 14)),
+                              const Icon(Icons.location_on, color: Color(0xFFF57C00), size: 14),
                               const SizedBox(width: 6),
-                              const Text('Livraison : Yango',
-                                  style: TextStyle(color: Color(0xFFF57C00), fontWeight: FontWeight.w800, fontSize: 12)),
-                              const Spacer(),
-                              Text('Frais : payés au livreur',
-                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 10)),
+                              Expanded(
+                                child: Text(
+                                  order.deliveryAddress?.address ?? 'Adresse non renseignée',
+                                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                                ),
+                              ),
                             ],
                           ),
-                          const SizedBox(height: 6),
-                          // Statut livraison Yango
+                          if (order.geoLocation != null && order.geoLocation!.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                const Icon(Icons.gps_fixed, color: AppTheme.success, size: 12),
+                                const SizedBox(width: 4),
+                                Text('GPS : ${order.geoLocation}',
+                                    style: const TextStyle(color: AppTheme.success, fontSize: 10)),
+                              ],
+                            ),
+                          ],
+                          if (order.deliveryNote != null && order.deliveryNote!.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text('📝 ${order.deliveryNote}',
+                                style: const TextStyle(color: Colors.amber, fontSize: 11, fontStyle: FontStyle.italic)),
+                          ],
+                          const SizedBox(height: 8),
+                          // Info Yango frais
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF57C00).withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Row(
+                              children: [
+                                Text('🚗', style: TextStyle(fontSize: 12)),
+                                SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'Partenaire : Yango • Frais à payer directement au livreur',
+                                    style: TextStyle(color: Color(0xFFF57C00), fontSize: 10, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          // Statut Yango actuel
                           Row(
                             children: [
-                              const Text('Statut livraison :',
-                                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-                              const SizedBox(width: 6),
+                              const Text('Statut Yango : ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                 decoration: BoxDecoration(
@@ -363,30 +1088,32 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                             ],
                           ),
                           const SizedBox(height: 8),
-                          // Boutons mise à jour statut Yango
+                          // Boutons mise à jour Yango
                           Wrap(
                             spacing: 6,
-                            runSpacing: 6,
+                            runSpacing: 4,
                             children: YangoDeliveryStatus.values.map((ys) {
                               final isActive = order.yangoStatus == ys;
                               return GestureDetector(
-                                onTap: () => _updateYangoStatus(context, order, ys),
+                                onTap: () => _updateYangoStatus(ys),
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                                   decoration: BoxDecoration(
-                                    color: isActive ? ys.color.withValues(alpha: 0.25) : AppTheme.cardBg,
+                                    color: isActive ? ys.color.withValues(alpha: 0.22) : AppTheme.cardBg,
                                     borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: isActive ? ys.color : const Color(0xFF2A2A5A),
-                                      width: isActive ? 1.5 : 1,
-                                    ),
+                                    border: Border.all(color: isActive ? ys.color : const Color(0xFF2A2A5A), width: isActive ? 1.5 : 1),
                                   ),
-                                  child: Text(ys.label,
-                                      style: TextStyle(
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(ys.icon, color: isActive ? ys.color : AppTheme.textSecondary, size: 12),
+                                      const SizedBox(width: 4),
+                                      Text(ys.label, style: TextStyle(
                                         color: isActive ? ys.color : AppTheme.textSecondary,
-                                        fontSize: 11,
-                                        fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+                                        fontSize: 11, fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
                                       )),
+                                    ],
+                                  ),
                                 ),
                               );
                             }).toList(),
@@ -394,113 +1121,251 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                   ],
 
-                  // Acompte
-                  _InfoRow(
-                    icon: Icons.account_balance_wallet_outlined,
-                    label: 'Acompte',
-                    value: order.depositPaid
-                        ? '${fmt.format(order.depositAmount)} F — Payé ✓'
-                        : (order.depositRequired ? '${fmt.format(order.depositAmount)} F — EN ATTENTE ⚠️' : 'Non requis'),
-                    valueColor: order.depositPaid
-                        ? AppTheme.success
-                        : (order.depositRequired ? AppTheme.warning : AppTheme.textSecondary),
-                  ),
-
-                  // Fidélité
-                  if (order.loyaltyPointsUsed > 0)
-                    _InfoRow(
-                      icon: Icons.stars_rounded,
-                      label: 'Points utilisés',
-                      value: '${order.loyaltyPointsUsed} pts → -${fmt.format(order.loyaltyDiscountAmount)} F',
-                      valueColor: Colors.amber,
+                  // ── Notes client ────────────────────────────────────
+                  if (order.notes != null && order.notes!.isNotEmpty) ...[
+                    const _SectionTitle(icon: Icons.note_outlined, label: 'Instructions client'),
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+                      ),
+                      child: Text('💬 ${order.notes!}',
+                          style: const TextStyle(color: Colors.amber, fontSize: 12, fontStyle: FontStyle.italic)),
                     ),
+                    const SizedBox(height: 12),
+                  ],
 
-                  if (order.notes != null && order.notes!.isNotEmpty)
-                    _InfoRow(icon: Icons.note_outlined, label: 'Note', value: order.notes!),
+                  // ── Timestamps ──────────────────────────────────────
+                  const _SectionTitle(icon: Icons.schedule, label: 'Historique'),
+                  const SizedBox(height: 6),
+                  _TimestampRow('Reçue', order.createdAt),
+                  if (order.confirmedAt != null) _TimestampRow('Confirmée', order.confirmedAt!),
+                  if (order.sentToKitchenAt != null) _TimestampRow('Envoyée en cuisine', order.sentToKitchenAt!),
+                  if (order.readyAt != null) _TimestampRow('Prête', order.readyAt!),
+                  if (order.deliveredAt != null) _TimestampRow('Livrée', order.deliveredAt!),
+                  if (order.settledAt != null) _TimestampRow('Soldée', order.settledAt!),
+
+                  // ── Actions utilitaires ─────────────────────────────
+                  const SizedBox(height: 12),
+                  const _SectionTitle(icon: Icons.touch_app, label: 'Actions'),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      // Appeler client
+                      _ActionBtn(
+                        icon: Icons.call,
+                        label: 'Appeler',
+                        color: AppTheme.success,
+                        onTap: _callClient,
+                      ),
+                      // Copier téléphone
+                      _ActionBtn(
+                        icon: Icons.copy,
+                        label: 'Copier tél.',
+                        color: AppTheme.primary,
+                        onTap: () => _copyToClipboard(order.clientPhone, 'Téléphone copié : ${order.clientPhone}'),
+                      ),
+                      // Copier adresse
+                      if (isDelivery && (order.deliveryAddress?.address ?? '').isNotEmpty)
+                        _ActionBtn(
+                          icon: Icons.content_copy,
+                          label: 'Copier adresse',
+                          color: AppTheme.primary,
+                          onTap: () => _copyToClipboard(
+                              order.deliveryAddress!.address, 'Adresse copiée'),
+                        ),
+                      // Ouvrir GPS
+                      if (isDelivery)
+                        _ActionBtn(
+                          icon: Icons.map,
+                          label: 'Ouvrir GPS',
+                          color: const Color(0xFFF57C00),
+                          onTap: _openGps,
+                        ),
+                      // Encaisser solde
+                      if (!isClosed && order.remainingAmount > 0 &&
+                          (order.status == ClientOrderStatus.delivering || order.status == ClientOrderStatus.delivered))
+                        _ActionBtn(
+                          icon: Icons.attach_money,
+                          label: 'Encaisser solde',
+                          color: Colors.amber,
+                          onTap: _encaisserSolde,
+                        ),
+                    ],
+                  ),
                 ],
               ),
             ),
             const Divider(height: 1, color: Color(0xFF2A2A5A)),
           ],
 
-          // ── Boutons de statut ─────────────────────────────────────────
-          if (order.status != ClientOrderStatus.delivered &&
-              order.status != ClientOrderStatus.cancelled)
+          // ── Boutons workflow de statut ────────────────────────────────
+          if (!isClosed && nextStatuses.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: _nextStatuses(order.status).map((s) {
-                  return GestureDetector(
-                    onTap: () => _updateStatus(context, order, s),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: s.color.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: s.color.withValues(alpha: 0.4)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(s.icon, color: s.color, size: 14),
-                          const SizedBox(width: 4),
-                          Text(s.label, style: TextStyle(color: s.color, fontSize: 12, fontWeight: FontWeight.w700)),
-                        ],
-                      ),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              child: _processing
+                  ? const Center(child: SizedBox(width: 24, height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2)))
+                  : Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: nextStatuses.map((s) {
+                        final isCancel = s == ClientOrderStatus.cancelled;
+                        return GestureDetector(
+                          onTap: () => _updateStatus(s),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: s.color.withValues(alpha: isCancel ? 0.08 : 0.15),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: s.color.withValues(alpha: isCancel ? 0.3 : 0.5)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(_statusActionIcon(s), color: s.color, size: 14),
+                                const SizedBox(width: 5),
+                                Text(_statusActionLabel(s),
+                                    style: TextStyle(color: s.color, fontSize: 12, fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
                     ),
-                  );
-                }).toList(),
-              ),
             )
-          else
-            const SizedBox(height: 14),
+          else if (isClosed)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              child: Row(
+                children: [
+                  Icon(status == ClientOrderStatus.delivered ? Icons.check_circle : Icons.cancel,
+                      color: status.color, size: 14),
+                  const SizedBox(width: 6),
+                  Text(
+                    status == ClientOrderStatus.delivered ? '✓ Commande clôturée' : '✗ Commande annulée',
+                    style: TextStyle(color: status.color, fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
   }
+}
 
-  List<ClientOrderStatus> _nextStatuses(ClientOrderStatus current) {
-    switch (current) {
-      case ClientOrderStatus.pending:
-        return [ClientOrderStatus.confirmed, ClientOrderStatus.cancelled];
-      case ClientOrderStatus.confirmed:
-        return [ClientOrderStatus.preparing];
-      case ClientOrderStatus.preparing:
-        return [ClientOrderStatus.ready];
-      case ClientOrderStatus.ready:
-        return [ClientOrderStatus.delivering, ClientOrderStatus.delivered];
-      case ClientOrderStatus.delivering:
-        return [ClientOrderStatus.delivered];
-      default:
-        return [];
-    }
+// ── Widgets helpers de la carte ──────────────────────────────────────────
+class _SectionTitle extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _SectionTitle({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: AppTheme.primary, size: 13),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+      ],
+    );
   }
+}
 
-  void _updateStatus(BuildContext context, ClientOrder order, ClientOrderStatus newStatus) {
-    context.read<ClientProvider>().updateOrderStatus(order.id, newStatus);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Statut mis à jour : ${newStatus.label}'),
-        backgroundColor: newStatus.color,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+class _FinRow extends StatelessWidget {
+  final String label, value;
+  final Color color;
+  final bool bold;
+  const _FinRow({required this.label, required this.value, required this.color, this.bold = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+        Text(value, style: TextStyle(color: color, fontSize: 12, fontWeight: bold ? FontWeight.w800 : FontWeight.w600)),
+      ],
+    );
+  }
+}
+
+class _EncaissRow extends StatelessWidget {
+  final String label, value;
+  final Color color;
+  final bool bold;
+  const _EncaissRow(this.label, this.value, this.color, {this.bold = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+        Text(value, style: TextStyle(color: color, fontSize: 13, fontWeight: bold ? FontWeight.w800 : FontWeight.w600)),
+      ],
+    );
+  }
+}
+
+class _TimestampRow extends StatelessWidget {
+  final String label;
+  final DateTime dt;
+  const _TimestampRow(this.label, this.dt);
+
+  @override
+  Widget build(BuildContext context) {
+    final fmt = DateFormat('dd/MM/yyyy HH:mm', 'fr_FR');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        children: [
+          const Icon(Icons.circle, size: 5, color: AppTheme.primary),
+          const SizedBox(width: 6),
+          Text('$label : ', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+          Text(fmt.format(dt), style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+        ],
       ),
     );
   }
+}
 
-  void _updateYangoStatus(BuildContext context, ClientOrder order, YangoDeliveryStatus yangoStatus) {
-    context.read<ClientProvider>().updateYangoStatus(order.id, yangoStatus);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Livraison Yango : ${yangoStatus.label}'),
-        backgroundColor: yangoStatus.color,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+class _ActionBtn extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _ActionBtn({required this.icon, required this.label, required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 13),
+            const SizedBox(width: 4),
+            Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+          ],
+        ),
       ),
     );
   }
@@ -524,12 +1389,10 @@ class _InfoRow extends StatelessWidget {
           const SizedBox(width: 6),
           Text('$label : ', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
           Expanded(
-            child: Text(value,
-                style: TextStyle(
-                  color: valueColor ?? Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                )),
+            child: Text(value, style: TextStyle(
+              color: valueColor ?? Colors.white,
+              fontSize: 12, fontWeight: FontWeight.w600,
+            )),
           ),
         ],
       ),
@@ -537,7 +1400,9 @@ class _InfoRow extends StatelessWidget {
   }
 }
 
-// ── Onglet Configuration ──────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// ONGLET CONFIGURATION — inchangé
+// ══════════════════════════════════════════════════════════════════════════════
 
 class _ConfigTab extends StatefulWidget {
   final OnlineOrderSettings settings;
@@ -563,16 +1428,16 @@ class _ConfigTabState extends State<_ConfigTab> {
   @override
   void initState() {
     super.initState();
-    _depositRequired     = widget.settings.depositRequired;
-    _depositType         = widget.settings.depositType;
-    _depositPct          = widget.settings.depositPercentage;
-    _depositFixed        = widget.settings.depositFixedAmount ?? 5000;
-    _minOrder            = widget.settings.minimumOrderAmount;
-    _estDelivery         = widget.settings.estimatedDeliveryMinutes;
-    _estTakeaway         = widget.settings.estimatedTakeawayMinutes;
-    _loyaltyPointValue   = widget.settings.loyaltyPointValue;
+    _depositRequired      = widget.settings.depositRequired;
+    _depositType          = widget.settings.depositType;
+    _depositPct           = widget.settings.depositPercentage;
+    _depositFixed         = widget.settings.depositFixedAmount ?? 5000;
+    _minOrder             = widget.settings.minimumOrderAmount;
+    _estDelivery          = widget.settings.estimatedDeliveryMinutes;
+    _estTakeaway          = widget.settings.estimatedTakeawayMinutes;
+    _loyaltyPointValue    = widget.settings.loyaltyPointValue;
     _loyaltyPointsPerFCFA = widget.settings.loyaltyPointsPerFCFA;
-    _minLoyaltyPoints    = widget.settings.minLoyaltyPointsToUse;
+    _minLoyaltyPoints     = widget.settings.minLoyaltyPointsToUse;
     _depositFixedCtrl.text = _depositFixed.toStringAsFixed(0);
   }
 
@@ -589,8 +1454,7 @@ class _ConfigTabState extends State<_ConfigTab> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
       children: [
-
-        // ── Acompte obligatoire ───────────────────────────────────────
+        // ── Acompte ──────────────────────────────────────────────────
         _ConfigCard(
           icon: Icons.account_balance_wallet_outlined,
           title: 'Acompte avant commande',
@@ -655,8 +1519,7 @@ class _ConfigTabState extends State<_ConfigTab> {
                       style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w700, fontSize: 16)),
                   Slider(
                     value: _depositPct,
-                    min: 5, max: 100,
-                    divisions: 19,
+                    min: 5, max: 100, divisions: 19,
                     activeColor: AppTheme.warning,
                     onChanged: (v) => setState(() => _depositPct = v),
                   ),
@@ -690,43 +1553,38 @@ class _ConfigTabState extends State<_ConfigTab> {
         _ConfigCard(
           icon: Icons.delivery_dining,
           title: 'Livraison — Partenaire Yango',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF57C00).withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFF57C00).withValues(alpha: 0.4)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF57C00).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFF57C00).withValues(alpha: 0.4)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
                   children: [
-                    const Row(
-                      children: [
-                        Text('🚗', style: TextStyle(fontSize: 16)),
-                        SizedBox(width: 8),
-                        Text('Livraison gérée par Yango',
-                            style: TextStyle(color: Color(0xFFF57C00), fontWeight: FontWeight.w800, fontSize: 13)),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '• Les frais de livraison sont définis par Yango\n'
-                      '• Le client paie directement le livreur\n'
-                      '• Le restaurant encaisse uniquement la commande + acompte',
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 11, height: 1.5),
-                    ),
+                    Text('🚗', style: TextStyle(fontSize: 16)),
+                    SizedBox(width: 8),
+                    Text('Livraison gérée par Yango',
+                        style: TextStyle(color: Color(0xFFF57C00), fontWeight: FontWeight.w800, fontSize: 13)),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 6),
+                Text(
+                  '• Les frais de livraison sont définis par Yango\n'
+                  '• Le client paie directement le livreur\n'
+                  '• Le restaurant encaisse uniquement la commande + acompte',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 11, height: 1.5),
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 14),
 
-        // ── Programme fidélité ────────────────────────────────────────
+        // ── Programme fidélité ─────────────────────────────────────────
         _ConfigCard(
           icon: Icons.stars_rounded,
           title: 'Programme fidélité',
@@ -742,8 +1600,7 @@ class _ConfigTabState extends State<_ConfigTab> {
               ),
               Slider(
                 value: _loyaltyPointValue.toDouble(),
-                min: 1, max: 50,
-                divisions: 49,
+                min: 1, max: 50, divisions: 49,
                 activeColor: Colors.amber,
                 onChanged: (v) => setState(() => _loyaltyPointValue = v.toInt()),
               ),
@@ -758,8 +1615,7 @@ class _ConfigTabState extends State<_ConfigTab> {
               ),
               Slider(
                 value: _loyaltyPointsPerFCFA.toDouble(),
-                min: 10, max: 1000,
-                divisions: 99,
+                min: 10, max: 1000, divisions: 99,
                 activeColor: Colors.amber,
                 onChanged: (v) => setState(() => _loyaltyPointsPerFCFA = v.toInt()),
               ),
@@ -774,8 +1630,7 @@ class _ConfigTabState extends State<_ConfigTab> {
               ),
               Slider(
                 value: _minLoyaltyPoints.toDouble(),
-                min: 1, max: 100,
-                divisions: 99,
+                min: 1, max: 100, divisions: 99,
                 activeColor: Colors.amber,
                 onChanged: (v) => setState(() => _minLoyaltyPoints = v.toInt()),
               ),
@@ -807,8 +1662,7 @@ class _ConfigTabState extends State<_ConfigTab> {
                   style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 16)),
               Slider(
                 value: _minOrder,
-                min: 0, max: 20000,
-                divisions: 40,
+                min: 0, max: 20000, divisions: 40,
                 activeColor: AppTheme.primary,
                 onChanged: (v) => setState(() => _minOrder = v),
               ),
@@ -833,8 +1687,7 @@ class _ConfigTabState extends State<_ConfigTab> {
               ),
               Slider(
                 value: _estDelivery.toDouble(),
-                min: 10, max: 120,
-                divisions: 22,
+                min: 10, max: 120, divisions: 22,
                 activeColor: AppTheme.primary,
                 onChanged: (v) => setState(() => _estDelivery = v.toInt()),
               ),
@@ -848,8 +1701,7 @@ class _ConfigTabState extends State<_ConfigTab> {
               ),
               Slider(
                 value: _estTakeaway.toDouble(),
-                min: 5, max: 60,
-                divisions: 11,
+                min: 5, max: 60, divisions: 11,
                 activeColor: AppTheme.success,
                 onChanged: (v) => setState(() => _estTakeaway = v.toInt()),
               ),
@@ -880,7 +1732,7 @@ class _ConfigTabState extends State<_ConfigTab> {
       depositType: _depositType,
       depositPercentage: _depositPct,
       depositFixedAmount: _depositType == DepositType.fixedAmount ? _depositFixed : null,
-      deliveryFeeBase: 0,  // Yango gère les frais
+      deliveryFeeBase: 0,
       minimumOrderAmount: _minOrder,
       estimatedDeliveryMinutes: _estDelivery,
       estimatedTakeawayMinutes: _estTakeaway,
@@ -935,7 +1787,9 @@ class _ConfigCard extends StatelessWidget {
   }
 }
 
-// ── Onglet Promotions ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// ONGLET PROMOTIONS — inchangé
+// ══════════════════════════════════════════════════════════════════════════════
 
 class _PromotionsTab extends StatelessWidget {
   final ClientProvider provider;
@@ -1025,8 +1879,7 @@ class _PromoAdminCard extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 4),
-                Text(promo.description,
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                Text(promo.description, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
                 if (promo.code != null) ...[
                   const SizedBox(height: 4),
                   Text('Code : ${promo.code}',
@@ -1035,11 +1888,7 @@ class _PromoAdminCard extends StatelessWidget {
               ],
             ),
           ),
-          Switch(
-            value: promo.isActive,
-            onChanged: (v) {},
-            activeColor: AppTheme.success,
-          ),
+          Switch(value: promo.isActive, onChanged: (v) {}, activeColor: AppTheme.success),
         ],
       ),
     );
@@ -1103,7 +1952,6 @@ class _AddPromoSheetState extends State<_AddPromoSheet> {
             decoration: const InputDecoration(labelText: 'Description'),
           ),
           const SizedBox(height: 10),
-          // Type
           Row(
             children: PromotionType.values.map((t) {
               final label = t == PromotionType.percentage ? '% Réduction'
@@ -1152,7 +2000,8 @@ class _AddPromoSheetState extends State<_AddPromoSheet> {
             child: ElevatedButton(
               onPressed: _isLoading ? null : _save,
               child: _isLoading
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  ? const SizedBox(width: 20, height: 20,
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                   : const Text('Créer la promotion'),
             ),
           ),
@@ -1165,8 +2014,6 @@ class _AddPromoSheetState extends State<_AddPromoSheet> {
     if (_titleCtrl.text.isEmpty) return;
     setState(() => _isLoading = true);
     try {
-      // Création de la promotion via ClientFirebaseService directement
-      // (on utilise le provider ici pour simplifier)
       if (mounted) Navigator.pop(context);
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -1174,7 +2021,9 @@ class _AddPromoSheetState extends State<_AddPromoSheet> {
   }
 }
 
-// ── Onglet Clients ────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// ONGLET CLIENTS — inchangé
+// ══════════════════════════════════════════════════════════════════════════════
 
 class _ClientsTab extends StatelessWidget {
   final ClientProvider provider;
@@ -1182,7 +2031,6 @@ class _ClientsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // On utilise un FutureBuilder car les clients admin ne sont pas dans le stream par défaut
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: provider.getAllClients(),
       builder: (ctx, snap) {

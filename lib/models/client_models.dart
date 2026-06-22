@@ -405,6 +405,13 @@ class ClientOrder {
   bool loyaltyPointsAwarded;        // true = points déjà crédités (idempotence)
   DateTime? loyaltyPointsAwardedAt; // timestamp de l'attribution
 
+  // ── Timestamps workflow ─────────────────────────────────────────────────
+  DateTime? confirmedAt;     // admin confirme la commande
+  DateTime? sentToKitchenAt; // envoyée en cuisine
+  DateTime? readyAt;         // prête à livrer
+  DateTime? deliveredAt;     // livrée au client
+  DateTime? settledAt;       // solde encaissé (clôturée)
+
   ClientOrder({
     required this.id,
     required this.clientId,
@@ -444,6 +451,11 @@ class ClientOrder {
     this.orderNumber,
     this.loyaltyPointsAwarded = false,
     this.loyaltyPointsAwardedAt,
+    this.confirmedAt,
+    this.sentToKitchenAt,
+    this.readyAt,
+    this.deliveredAt,
+    this.settledAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get grandTotal => totalAmount + deliveryFee;
@@ -498,6 +510,11 @@ class ClientOrder {
     orderNumber: orderNumber ?? this.orderNumber,
     loyaltyPointsAwarded: loyaltyPointsAwarded ?? this.loyaltyPointsAwarded,
     loyaltyPointsAwardedAt: loyaltyPointsAwardedAt ?? this.loyaltyPointsAwardedAt,
+    confirmedAt: this.confirmedAt,
+    sentToKitchenAt: this.sentToKitchenAt,
+    readyAt: this.readyAt,
+    deliveredAt: this.deliveredAt,
+    settledAt: this.settledAt,
   );
 
   Map<String, dynamic> toMap() => {
@@ -539,6 +556,11 @@ class ClientOrder {
     'orderNumber': orderNumber,
     'loyaltyPointsAwarded': loyaltyPointsAwarded,
     'loyaltyPointsAwardedAt': loyaltyPointsAwardedAt?.millisecondsSinceEpoch,
+    'confirmedAt': confirmedAt?.millisecondsSinceEpoch,
+    'sentToKitchenAt': sentToKitchenAt?.millisecondsSinceEpoch,
+    'readyAt': readyAt?.millisecondsSinceEpoch,
+    'deliveredAt': deliveredAt?.millisecondsSinceEpoch,
+    'settledAt': settledAt?.millisecondsSinceEpoch,
     'source': 'online',
   };
 
@@ -595,6 +617,21 @@ class ClientOrder {
     loyaltyPointsAwardedAt: m['loyaltyPointsAwardedAt'] is int
         ? DateTime.fromMillisecondsSinceEpoch(m['loyaltyPointsAwardedAt'] as int)
         : null,
+    confirmedAt: m['confirmedAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['confirmedAt'] as int)
+        : (m['confirmedAt'] is Timestamp ? (m['confirmedAt'] as Timestamp).toDate() : null),
+    sentToKitchenAt: m['sentToKitchenAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['sentToKitchenAt'] as int)
+        : (m['sentToKitchenAt'] is Timestamp ? (m['sentToKitchenAt'] as Timestamp).toDate() : null),
+    readyAt: m['readyAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['readyAt'] as int)
+        : (m['readyAt'] is Timestamp ? (m['readyAt'] as Timestamp).toDate() : null),
+    deliveredAt: m['deliveredAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['deliveredAt'] as int)
+        : (m['deliveredAt'] is Timestamp ? (m['deliveredAt'] as Timestamp).toDate() : null),
+    settledAt: m['settledAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['settledAt'] as int)
+        : (m['settledAt'] is Timestamp ? (m['settledAt'] as Timestamp).toDate() : null),
   );
 }
 

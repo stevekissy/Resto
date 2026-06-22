@@ -401,18 +401,54 @@ class _CaisseTabState extends State<_CaisseTab> {
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text(
-                                      '#${order.orderNumber} - ${order.tableLabel}',
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 15)),
-                                  Text(
-                                      '${_fmt.format(order.totalAmount)} F CFA',
-                                      style: const TextStyle(
-                                          color: AppTheme.primary,
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 16)),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Text(
+                                                '#${order.orderNumber} - ${order.tableLabel}',
+                                                style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w700,
+                                                    fontSize: 14)),
+                                            // Badge EN LIGNE
+                                            if (order.isOnlineOrder) ...[
+                                              const SizedBox(width: 6),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFF3F51B5).withValues(alpha: 0.2),
+                                                  borderRadius: BorderRadius.circular(5),
+                                                  border: Border.all(color: const Color(0xFF3F51B5).withValues(alpha: 0.5)),
+                                                ),
+                                                child: const Text('📱 EN LIGNE',
+                                                    style: TextStyle(color: Color(0xFF7986CB), fontSize: 9, fontWeight: FontWeight.w900)),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                        // Téléphone client (commandes en ligne)
+                                        if (order.isOnlineOrder && (order.clientPhone?.isNotEmpty ?? false))
+                                          Text(
+                                            order.clientPhone!,
+                                            style: const TextStyle(color: Color(0xFF7986CB), fontSize: 11),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                          '${_fmt.format(order.totalAmount)} F CFA',
+                                          style: const TextStyle(
+                                              color: AppTheme.primary,
+                                              fontWeight: FontWeight.w800,
+                                              fontSize: 16)),
+                                    ],
+                                  ),
                                 ],
                               ),
                               const SizedBox(height: 6),
@@ -426,6 +462,64 @@ class _CaisseTabState extends State<_CaisseTab> {
                                                 AppTheme.textSecondary,
                                             fontSize: 12)),
                                   )),
+                              // Section acompte / solde pour commandes EN LIGNE
+                              if (order.isOnlineOrder) ...[
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF3F51B5).withValues(alpha: 0.08),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: const Color(0xFF3F51B5).withValues(alpha: 0.3)),
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      // Acompte payé
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          const Text('Acompte payé',
+                                              style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                                          Text(
+                                            // Chercher l'acompte dans les métadonnées
+                                            order.cashoutInvoiceNumber != null
+                                                ? 'Voir historique'
+                                                : 'À vérifier',
+                                            style: const TextStyle(color: AppTheme.success, fontSize: 11, fontWeight: FontWeight.w600),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      // Mode paiement
+                                      if (order.paymentMethod != null)
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            const Text('Mode paiement',
+                                                style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                                            Text(
+                                              order.paymentMethod ?? 'Non renseigné',
+                                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                                            ),
+                                          ],
+                                        ),
+                                      const SizedBox(height: 4),
+                                      // Solde à encaisser
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          const Text('Solde à encaisser',
+                                              style: TextStyle(color: AppTheme.warning, fontSize: 11, fontWeight: FontWeight.w700)),
+                                          Text(
+                                            '${_fmt.format(order.totalAmount)} F CFA',
+                                            style: const TextStyle(color: AppTheme.warning, fontSize: 13, fontWeight: FontWeight.w900),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 8),
                               SizedBox(
                                 width: double.infinity,
@@ -437,12 +531,13 @@ class _CaisseTabState extends State<_CaisseTab> {
                                   icon: const Icon(
                                       Icons.receipt_long,
                                       size: 16),
-                                  label: const Text('Encaisser',
-                                      style: TextStyle(
-                                          fontWeight:
-                                              FontWeight.w700)),
+                                  label: Text(
+                                    order.isOnlineOrder
+                                        ? 'Encaisser le solde'
+                                        : 'Encaisser',
+                                    style: const TextStyle(fontWeight: FontWeight.w700)),
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppTheme.success,
+                                    backgroundColor: order.isOnlineOrder ? AppTheme.warning : AppTheme.success,
                                     foregroundColor: Colors.white,
                                     padding: const EdgeInsets
                                         .symmetric(vertical: 10),
@@ -599,12 +694,44 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text(
-                                      '#${order.orderNumber} - ${order.tableLabel}',
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 15)),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Flexible(
+                                              child: Text(
+                                                '#${order.orderNumber} - ${order.tableLabel}',
+                                                style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w700,
+                                                    fontSize: 14)),
+                                            ),
+                                            // Badge EN LIGNE
+                                            if (order.isOnlineOrder) ...[
+                                              const SizedBox(width: 5),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFF3F51B5).withValues(alpha: 0.2),
+                                                  borderRadius: BorderRadius.circular(5),
+                                                  border: Border.all(color: const Color(0xFF3F51B5).withValues(alpha: 0.5)),
+                                                ),
+                                                child: const Text('📱 EN LIGNE',
+                                                    style: TextStyle(color: Color(0xFF7986CB), fontSize: 9, fontWeight: FontWeight.w900)),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                        if (order.isOnlineOrder && (order.clientPhone?.isNotEmpty ?? false))
+                                          Text(
+                                            order.clientPhone!,
+                                            style: const TextStyle(color: Color(0xFF7986CB), fontSize: 10),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
                                   Container(
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 7, vertical: 2),
@@ -649,8 +776,9 @@ class _FacturesEnAttenteTabState extends State<_FacturesEnAttenteTab> {
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
-                                  const Text('Montant dû',
-                                      style: TextStyle(
+                                  Text(
+                                    order.isOnlineOrder ? 'Solde restant dû' : 'Montant dû',
+                                    style: const TextStyle(
                                           color: AppTheme.textSecondary,
                                           fontSize: 12)),
                                   Text(
