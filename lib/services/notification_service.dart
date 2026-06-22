@@ -221,6 +221,12 @@ class NotificationService extends ChangeNotifier {
   final Set<String> _knownFirestoreIds = {};
   bool _firestoreListenerActive = false;
 
+  // ── Horodatage login admin ────────────────────────────────────────────
+  // Enregistré au moment du init() (= connexion admin).
+  // Un son n'est joué QUE si notification.createdAt > _adminLoginAt.
+  // Les notifications antérieures au login sont chargées silencieusement.
+  DateTime? _adminLoginAt;
+
   // ── Getters sons ──────────────────────────────────────────────────────
   bool   get soundEnabled         => _soundEnabled;
   double get volume               => _volume;
@@ -259,9 +265,16 @@ class NotificationService extends ChangeNotifier {
   // ── Initialisation ────────────────────────────────────────────────────
 
   Future<void> init() async {
+    // Enregistrer l'heure de connexion AVANT de démarrer le listener.
+    // Toute notification dont createdAt ≤ _adminLoginAt sera silencieuse.
+    _adminLoginAt = DateTime.now();
+    _knownFirestoreIds.clear(); // réinitialiser à chaque login
     await _loadPrefs();
     _startFirestoreListener();
   }
+
+  /// Expose l'heure de connexion (pour debug / tests)
+  DateTime? get adminLoginAt => _adminLoginAt;
 
   // ── Listener Firestore temps réel ─────────────────────────────────────
 
@@ -297,31 +310,55 @@ class NotificationService extends ChangeNotifier {
     for (final change in snapshot.docChanges) {
       if (change.type == DocumentChangeType.added) {
         final docId = change.doc.id;
-        // Éviter les doublons lors de l'initialisation du listener
+        // Éviter les doublons
         if (_knownFirestoreIds.contains(docId)) continue;
         _knownFirestoreIds.add(docId);
 
         final data = change.doc.data() as Map<String, dynamic>?;
         if (data == null) continue;
 
-        // Mapper le type Firestore vers NotifEvent
+        // ── Timestamp de la notification ──────────────────────────────
+        // Firestore peut stocker 'createdAt' (nouveau) ou 'created_at' (ancien)
+        final notifCreatedAt = _parseFirestoreDate(
+          data['createdAt'] ?? data['created_at'],
+        );
+
+        // ── Mapper le type Firestore vers NotifEvent ──────────────────
         final eventType = data['type'] as String? ?? 'systeme';
         final message   = data['message'] as String? ?? '';
         final event     = _firestoreTypeToEvent(eventType);
 
-        // Créer la notification locale
+        // ── Créer la notification locale (toujours, pour l'historique) ─
         final notif = AppNotification(
           id:       docId,
           event:    event,
           message:  message,
-          dateTime: _parseFirestoreDate(data['created_at']),
+          dateTime: notifCreatedAt,
           isRead:   false,
         );
         _history.insert(0, notif);
         if (_history.length > 200) _history.removeRange(200, _history.length);
 
-        // Déclencher son + vocal
-        _playForEvent(event);
+        // ── Son : uniquement pour les notifications APRÈS le login ─────
+        // Règle : notification.createdAt > adminLoginAt  → son joué
+        //         notification.createdAt ≤ adminLoginAt  → silencieux
+        //         (notification existait avant la connexion)
+        final loginAt = _adminLoginAt;
+        final isNewSinceLogin = loginAt != null &&
+            notifCreatedAt.isAfter(loginAt);
+
+        if (isNewSinceLogin) {
+          _playForEvent(event);
+        } else {
+          if (kDebugMode) {
+            debugPrint(
+              '[NotifSvc] 🔕 Silencieux (avant login) : $docId'
+              ' | notif=${notifCreatedAt.toIso8601String()}'
+              ' | login=${loginAt?.toIso8601String()}',
+            );
+          }
+        }
+
         notifyListeners();
       }
     }
@@ -362,6 +399,10 @@ class NotificationService extends ChangeNotifier {
   void restartFirestoreListener() {
     stopFirestoreListener();
     _firestoreListenerActive = false;
+    // Réinitialiser le timestamp de login et les IDs connus
+    // pour que les nouvelles notifications soient correctement filtrées
+    _adminLoginAt = DateTime.now();
+    _knownFirestoreIds.clear();
     _startFirestoreListener();
   }
 
