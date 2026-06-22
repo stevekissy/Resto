@@ -208,36 +208,44 @@ class ClientFirebaseService {
         .where('orderSource', isEqualTo: 'online')
         .snapshots()
         .map((snap) {
-      final list = snap.docs.map((d) {
-        final data = Map<String, dynamic>.from(d.data());
-        // Normaliser les champs pour que ClientOrder.fromMap() fonctionne
-        // La collection orders utilise status string ('pending') → mapper en int
-        final statusRaw = data['status'];
-        if (statusRaw is String) {
-          data['status'] = _clientStatusFromString(statusRaw);
+      final list = <ClientOrder>[];
+      for (final d in snap.docs) {
+        try {
+          final data = Map<String, dynamic>.from(d.data());
+          // Normaliser status string → int
+          final statusRaw = data['status'];
+          if (statusRaw is String) {
+            data['status'] = _clientStatusFromString(statusRaw);
+          }
+          // orderType null → calculer depuis tableNumber
+          final tableNum = data['tableNumber'] as String? ?? '';
+          if (data['orderType'] == null) {
+            data['orderType'] = tableNum.contains('Emporter') ? 1 : 0;
+          }
+          // paymentMethod string → int
+          final pmRaw = data['paymentMethod'];
+          if (pmRaw is String) {
+            data['paymentMethod'] = _paymentMethodFromString(pmRaw);
+          }
+          // paymentStatus string → int
+          final psRaw = data['paymentStatus'];
+          if (psRaw is String) {
+            data['paymentStatus'] = _paymentStatusFromString(psRaw);
+          }
+          // id = clientOrderId (pour que updateOrderStatus() cible le bon doc client)
+          data['id'] = data['clientOrderId'] as String? ?? d.id;
+          data['internalOrderId'] = d.id;
+          // deliveryAddress : si c'est une String (anciens docs), on la met à null
+          // pour éviter un TypeError dans ClientOrder.fromMap()
+          final da = data['deliveryAddress'];
+          if (da is String) {
+            data['deliveryAddress'] = null;
+          }
+          list.add(ClientOrder.fromMap(data));
+        } catch (e) {
+          debugPrint('[streamAdminOnlineOrders] doc ${d.id} ignoré — erreur: $e');
         }
-        // orderType est stocké comme string dans orders
-        final orderTypeRaw = data['tableNumber'] as String? ?? '';
-        if (data['orderType'] == null) {
-          data['orderType'] = orderTypeRaw.contains('Emporter') ? 1 : 0;
-        }
-        // paymentMethod et paymentStatus peuvent être int ou string
-        final pmRaw = data['paymentMethod'];
-        if (pmRaw is String) {
-          data['paymentMethod'] = _paymentMethodFromString(pmRaw);
-        }
-        final psRaw = data['paymentStatus'];
-        if (psRaw is String) {
-          data['paymentStatus'] = _paymentStatusFromString(psRaw);
-        }
-        // L'id du document admin est internalOrderId — l'admin le gère via clientOrderId
-        // On expose clientOrderId comme 'id' pour que updateOrderStatus() fonctionne
-        data['id'] = data['clientOrderId'] as String? ?? d.id;
-        data['internalOrderId'] = d.id;
-        // S'assurer que createdAt est bien présent (Timestamp Firestore)
-        // ClientOrder.fromMap sait gérer int et Timestamp
-        return ClientOrder.fromMap(data);
-      }).toList();
+      }
       list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return list;
     });
@@ -359,8 +367,10 @@ class ClientFirebaseService {
         // Statuts admin/cuisine — requis pour le filtrage admin
         'adminStatus': 'received',
         'kitchenStatus': 'pending',
-        // Adresse livraison
-        'deliveryAddress': deliveryAddr?['address'] ?? '',
+        // Adresse livraison — stocker le Map complet ou null (jamais une String)
+        // ClientOrder.fromMap() attend un Map<String,dynamic> ou null pour deliveryAddress.
+        // Stocker une String vide '' provoque un TypeError silencieux dans le stream.
+        'deliveryAddress': deliveryAddr,
         'geoLocation': clientOrderData['geoLocation'],
         // Acompte
         'depositRequired': clientOrderData['depositRequired'] ?? true,

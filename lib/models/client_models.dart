@@ -340,9 +340,15 @@ class CartItem {
 
   factory CartItem.fromMap(Map<String, dynamic> m) => CartItem(
     productId: m['productId'] as String? ?? '',
-    productName: m['productName'] as String? ?? '',
+    // Lire 'productName' en priorité, fallback sur alias 'name' (anciens docs orders)
+    productName: (m['productName'] as String?)?.isNotEmpty == true
+        ? m['productName'] as String
+        : (m['name'] as String? ?? ''),
     categoryName: m['categoryName'] as String?,
-    unitPrice: (m['unitPrice'] as num?)?.toDouble() ?? 0,
+    // Lire 'unitPrice' en priorité, fallback sur alias 'price' (anciens docs orders)
+    unitPrice: (m['unitPrice'] as num?)?.toDouble()
+        ?? (m['price'] as num?)?.toDouble()
+        ?? 0,
     quantity: (m['quantity'] as num?)?.toInt() ?? 1,
     comment: m['comment'] as String?,
     imageUrl: m['imageUrl'] as String?,
