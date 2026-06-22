@@ -117,21 +117,35 @@ void main() async {
     return;
   }
 
-  // ── 7. Résoudre l'état auth — authStateChanges().first ──
-  // Cette étape EST LE CŒUR du fix : on attend que Firebase Auth
-  // ait restauré la session depuis localStorage avant de lancer l'UI.
-  // checkExistingSession() appelle resolveAuthState() en interne.
+  // ── 7. Résoudre l'état auth EN ARRIÈRE-PLAN ──
+  // On ne bloque PLUS runApp() sur checkExistingSession().
+  // L'app démarre immédiatement sur ClientMainScreen (espace client public).
+  // Si une session Firebase existe, _AuthGate la détecte dans initState()
+  // et redirige vers MainScreen sans intervention de l'utilisateur.
+  //
+  // Avantage : zéro spinner bloquant au démarrage, affichage instantané.
   bool hasSession = false;
   if (firebaseOk) {
     try {
-      hasSession = await provider.checkExistingSession();
-      debugPrint('[main] ✅ Auth résolu — session: $hasSession');
+      // Vérification rapide SYNCHRONE (currentUser déjà disponible si
+      // Firebase Auth a restauré la session depuis localStorage)
+      hasSession = FirebaseAuth.instance.currentUser != null;
+      debugPrint('[main] Auth rapide — currentUser présent: $hasSession');
+      // Si session trouvée, initialiser le provider en arrière-plan
+      if (hasSession) {
+        provider.checkExistingSession().then((ok) {
+          debugPrint('[main] ✅ Session confirmée: $ok');
+        }).catchError((e) {
+          debugPrint('[main] ⚠ checkExistingSession: $e');
+        });
+      }
     } catch (e) {
-      debugPrint('[main] ⚠ checkExistingSession: $e');
+      debugPrint('[main] ⚠ Auth check: $e');
+      hasSession = false;
     }
   }
 
-  // ── 8. runApp — avec état auth connu et définitif ──
+  // ── 8. runApp — démarrage immédiat ──
   runApp(SankadiokroApp(
     provider: provider,
     firebaseError: firebaseError,
@@ -278,23 +292,21 @@ class _AuthGateState extends State<_AuthGate> {
 
   @override
   Widget build(BuildContext context) {
-    // Cas improbable mais sécurisé : état encore inconnu → spinner
-    if (_authenticated == null) {
-      return const _SplashScreen();
-    }
-
-    if (_authenticated == true) {
-      // Session restaurée → détecter le rôle (client vs staff)
-      return _RoleRouter(
-        firebaseError: widget.firebaseError,
-        onRoleResolved: (role) {},
+    // _authenticated peut être null uniquement si Firebase n'a pas encore
+    // émis d'événement authStateChanges — afficher ClientMainScreen immédiatement
+    // plutôt qu'un spinner bloquant.
+    if (_authenticated == null || _authenticated == false) {
+      // Aucune session confirmée → Espace Client public par défaut.
+      // Le bouton "Passer en mode gestion" permet d'accéder au login staff.
+      return const ClientMainScreen(
+        showManagementButton: true,
       );
     }
 
-    // Aucune session → afficher l'Espace Client par défaut.
-    // Le bouton "Passer en mode gestion" ouvre LoginScreen sans connexion auto.
-    return ClientMainScreen(
-      showManagementButton: true,
+    // Session active confirmée → détecter le rôle (client vs staff)
+    return _RoleRouter(
+      firebaseError: widget.firebaseError,
+      onRoleResolved: (role) {},
     );
   }
 }
@@ -337,7 +349,17 @@ class _RoleRouterState extends State<_RoleRouter> {
         if (mounted) setState(() => _role = 'staff');
         return;
       }
-      final isClient = await ClientFirebaseService().isClientUser(uid);
+      // Timeout 4s : si Firestore met trop de temps, on route vers staff
+      // pour éviter un spinner bloquant indéfini.
+      final isClient = await ClientFirebaseService()
+          .isClientUser(uid)
+          .timeout(
+            const Duration(seconds: 4),
+            onTimeout: () {
+              debugPrint('[RoleRouter] Timeout Firestore → fallback staff');
+              return false;
+            },
+          );
       if (mounted) {
         setState(() => _role = isClient ? 'client' : 'staff');
         widget.onRoleResolved?.call(_role!);
@@ -364,16 +386,20 @@ class _RoleRouterState extends State<_RoleRouter> {
   @override
   Widget build(BuildContext context) {
     if (_role == null) {
-      // Détection en cours
+      // Détection en cours (max 4s grâce au timeout dans _detectRole)
+      // On utilise un splash léger — jamais bloquant indéfiniment.
       return const _SplashScreen();
     }
     if (_role == 'client') {
       if (!_clientInitialized) {
+        // Initialisation ClientProvider en cours (très rapide)
         return const _SplashScreen();
       }
-      return const ClientMainScreen();
+      // Client connecté → Espace Client sans bouton mode gestion
+      // (il est déjà dans son espace, pas besoin de basculer)
+      return const ClientMainScreen(showManagementButton: false);
     }
-    // Staff
+    // Staff/Admin → interface de gestion
     return const MainScreen();
   }
 }
@@ -394,6 +420,7 @@ class _SplashScreenState extends State<_SplashScreen>
   late AnimationController _controller;
   late Animation<double> _fadeAnim;
   late Animation<double> _scaleAnim;
+  Timer? _safetyTimer;
 
   @override
   void initState() {
@@ -409,10 +436,25 @@ class _SplashScreenState extends State<_SplashScreen>
       CurvedAnimation(parent: _controller, curve: Curves.elasticOut),
     );
     _controller.forward();
+
+    // Sécurité anti-blocage : si le splash reste affiché plus de 6s,
+    // basculer vers ClientMainScreen pour ne jamais bloquer l'utilisateur.
+    _safetyTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted) {
+        debugPrint('[SplashScreen] ⚠ Timeout 6s — basculement forcé vers ClientMainScreen');
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => const ClientMainScreen(showManagementButton: true),
+          ),
+          (route) => false,
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
+    _safetyTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
