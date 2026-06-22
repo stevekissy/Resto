@@ -331,5 +331,32 @@
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>
+  <!-- Badge version admin — discret, coin bas-droit, visible uniquement si URL contient ?admin ou ?v= -->
+  <div id="sk-version-badge" style="
+    display:none;
+    position:fixed;
+    bottom:8px;
+    right:8px;
+    background:rgba(0,0,0,0.72);
+    color:#4fc3f7;
+    font-size:10px;
+    font-family:monospace;
+    padding:4px 8px;
+    border-radius:6px;
+    border:1px solid rgba(79,195,247,0.3);
+    z-index:999999;
+    pointer-events:none;
+    letter-spacing:0.3px;">
+    VERSION LIVE : dd74a3d &bull; 2026-06-22
+  </div>
+  <script>
+    // Afficher le badge uniquement si URL contient ?v= ou ?admin ou #admin
+    (function(){
+      var u = window.location.href;
+      if(u.indexOf('?v=') > -1 || u.indexOf('?admin') > -1 || u.indexOf('#admin') > -1){
+        document.getElementById('sk-version-badge').style.display = 'block';
+      }
+    })();
+  </script>
 </body>
 </html>
