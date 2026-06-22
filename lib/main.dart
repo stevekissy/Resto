@@ -293,14 +293,12 @@ class _AuthGateState extends State<_AuthGate> {
   @override
   Widget build(BuildContext context) {
     // _authenticated peut être null uniquement si Firebase n'a pas encore
-    // émis d'événement authStateChanges — afficher ClientMainScreen immédiatement
+    // émis d'événement authStateChanges — afficher LoginScreen immédiatement
     // plutôt qu'un spinner bloquant.
     if (_authenticated == null || _authenticated == false) {
-      // Aucune session confirmée → Espace Client public par défaut.
-      // Le bouton "Passer en mode gestion" permet d'accéder au login staff.
-      return const ClientMainScreen(
-        showManagementButton: true,
-      );
+      // Aucune session → écran de connexion Gestion par défaut.
+      // Le bouton "Vous êtes client ? Commander en ligne" navigue vers ClientAuthScreen.
+      return LoginScreen(firebaseInitError: widget.firebaseError);
     }
 
     // Session active confirmée → détecter le rôle (client vs staff)
@@ -438,13 +436,13 @@ class _SplashScreenState extends State<_SplashScreen>
     _controller.forward();
 
     // Sécurité anti-blocage : si le splash reste affiché plus de 6s,
-    // basculer vers ClientMainScreen pour ne jamais bloquer l'utilisateur.
+    // basculer vers LoginScreen pour ne jamais bloquer l'utilisateur.
     _safetyTimer = Timer(const Duration(seconds: 6), () {
       if (mounted) {
-        debugPrint('[SplashScreen] ⚠ Timeout 6s — basculement forcé vers ClientMainScreen');
+        debugPrint('[SplashScreen] ⚠ Timeout 6s — basculement forcé vers LoginScreen');
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => const ClientMainScreen(showManagementButton: true),
+            builder: (_) => const LoginScreen(),
           ),
           (route) => false,
         );
