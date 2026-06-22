@@ -287,15 +287,15 @@ class _AuthGateState extends State<_AuthGate> {
       // Session restaurée → détecter le rôle (client vs staff)
       return _RoleRouter(
         firebaseError: widget.firebaseError,
-        onRoleResolved: (role) {
-
-        },
+        onRoleResolved: (role) {},
       );
     }
 
-    // Pas de session → formulaire de connexion
-    // Proposer les deux portails : staff et client
-    return LoginScreen(firebaseInitError: widget.firebaseError);
+    // Aucune session → afficher l'Espace Client par défaut.
+    // Le bouton "Passer en mode gestion" ouvre LoginScreen sans connexion auto.
+    return ClientMainScreen(
+      showManagementButton: true,
+    );
   }
 }
 

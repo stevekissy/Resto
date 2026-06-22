@@ -7,6 +7,7 @@ import 'home/client_home_screen.dart';
 import 'menu/client_menu_screen.dart';
 import 'orders/client_orders_screen.dart';
 import 'profile/client_profile_screen.dart';
+import '../login_screen.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENT MAIN SCREEN — Navigation principale de l'espace client
@@ -15,7 +16,14 @@ import 'profile/client_profile_screen.dart';
 
 class ClientMainScreen extends StatefulWidget {
   final bool isSandbox;
-  const ClientMainScreen({super.key, this.isSandbox = false});
+  /// Affiche le bouton discret "Passer en mode gestion" dans la barre de navigation.
+  /// Utilisé uniquement quand l'app démarre sans session (première ouverture).
+  final bool showManagementButton;
+  const ClientMainScreen({
+    super.key,
+    this.isSandbox = false,
+    this.showManagementButton = false,
+  });
 
   @override
   State<ClientMainScreen> createState() => _ClientMainScreenState();
@@ -54,61 +62,126 @@ class _ClientMainScreenState extends State<ClientMainScreen> {
         index: _currentIndex,
         children: _screens,
       ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: AppTheme.surface,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
-              blurRadius: 20,
-              offset: const Offset(0, -4),
-            ),
-          ],
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _NavItem(
-                  icon: Icons.home_outlined,
-                  activeIcon: Icons.home,
-                  label: 'Accueil',
-                  index: 0,
-                  currentIndex: _currentIndex,
-                  onTap: () => setState(() => _currentIndex = 0),
-                ),
-                _NavItem(
-                  icon: Icons.restaurant_menu_outlined,
-                  activeIcon: Icons.restaurant_menu,
-                  label: 'Menu',
-                  index: 1,
-                  currentIndex: _currentIndex,
-                  badge: cartCount > 0 ? cartCount.toString() : null,
-                  badgeColor: AppTheme.warning,
-                  onTap: () => setState(() => _currentIndex = 1),
-                ),
-                _NavItem(
-                  icon: Icons.receipt_long_outlined,
-                  activeIcon: Icons.receipt_long,
-                  label: 'Commandes',
-                  index: 2,
-                  currentIndex: _currentIndex,
-                  badge: activeOrders > 0 ? activeOrders.toString() : null,
-                  badgeColor: AppTheme.success,
-                  onTap: () => setState(() => _currentIndex = 2),
-                ),
-                _NavItem(
-                  icon: Icons.person_outline,
-                  activeIcon: Icons.person,
-                  label: 'Profil',
-                  index: 3,
-                  currentIndex: _currentIndex,
-                  onTap: () => setState(() => _currentIndex = 3),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Bouton discret "Passer en mode gestion" (première ouverture uniquement) ──
+          if (widget.showManagementButton && !widget.isSandbox)
+            _ManagementModeButton(),
+          // ── Barre de navigation principale (design inchangé) ──────────────────
+          Container(
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 20,
+                  offset: const Offset(0, -4),
                 ),
               ],
             ),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _NavItem(
+                      icon: Icons.home_outlined,
+                      activeIcon: Icons.home,
+                      label: 'Accueil',
+                      index: 0,
+                      currentIndex: _currentIndex,
+                      onTap: () => setState(() => _currentIndex = 0),
+                    ),
+                    _NavItem(
+                      icon: Icons.restaurant_menu_outlined,
+                      activeIcon: Icons.restaurant_menu,
+                      label: 'Menu',
+                      index: 1,
+                      currentIndex: _currentIndex,
+                      badge: cartCount > 0 ? cartCount.toString() : null,
+                      badgeColor: AppTheme.warning,
+                      onTap: () => setState(() => _currentIndex = 1),
+                    ),
+                    _NavItem(
+                      icon: Icons.receipt_long_outlined,
+                      activeIcon: Icons.receipt_long,
+                      label: 'Commandes',
+                      index: 2,
+                      currentIndex: _currentIndex,
+                      badge: activeOrders > 0 ? activeOrders.toString() : null,
+                      badgeColor: AppTheme.success,
+                      onTap: () => setState(() => _currentIndex = 2),
+                    ),
+                    _NavItem(
+                      icon: Icons.person_outline,
+                      activeIcon: Icons.person,
+                      label: 'Profil',
+                      index: 3,
+                      currentIndex: _currentIndex,
+                      onTap: () => setState(() => _currentIndex = 3),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOUTON DISCRET « PASSER EN MODE GESTION »
+// Affiché uniquement lors de la première ouverture (aucune session active).
+// Ouvre LoginScreen sans connecter automatiquement.
+// ─────────────────────────────────────────────────────────────────────────────
+class _ManagementModeButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppTheme.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const LoginScreen(
+              fromClientSpace: true,
+            ),
+          ),
+        ),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.admin_panel_settings_outlined,
+                size: 13,
+                color: AppTheme.textSecondary.withValues(alpha: 0.6),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'Passer en mode gestion',
+                style: TextStyle(
+                  color: AppTheme.textSecondary.withValues(alpha: 0.6),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
           ),
         ),
       ),
