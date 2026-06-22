@@ -347,7 +347,9 @@ class ClientProvider extends ChangeNotifier {
 
       final orderId = await _svc.createOrder(order);
 
-      // Débiter les points fidélité utilisés
+      // ── Points fidélité UTILISÉS (débit immédiat — réduction appliquée) ──
+      // Le débit des points utilisés est immédiat car la réduction est déjà
+      // déduite du total de la commande.
       if (loyaltyPointsUsed > 0) {
         await _svc.addLoyaltyTransaction(LoyaltyTransaction(
           id: '',
@@ -361,17 +363,10 @@ class ClientProvider extends ChangeNotifier {
         _client!.loyaltyPoints -= loyaltyPointsUsed;
       }
 
-      // Créditer les points fidélité gagnés
-      if (loyaltyPointsToEarn > 0) {
-        await _svc.addLoyaltyTransaction(LoyaltyTransaction(
-          id: '',
-          clientId: _client!.id,
-          type: LoyaltyType.earn,
-          points: loyaltyPointsToEarn,
-          description: 'Points gagnés sur commande',
-          orderId: orderId,
-        ));
-      }
+      // ── Points fidélité GAGNÉS (crédit différé — APRÈS livraison) ───────
+      // NE PAS créditer ici. L'attribution se fait dans updateOrderStatus()
+      // quand le statut passe à 'delivered', via awardLoyaltyPoints().
+      // Raison : si la commande est annulée/refusée, aucun point ne doit être attribué.
 
       clearCart();
       return orderId;
@@ -477,6 +472,31 @@ class ClientProvider extends ChangeNotifier {
 
   Future<void> updateOrderStatus(String orderId, ClientOrderStatus newStatus) async {
     await _svc.updateOrderStatus(orderId, newStatus);
+
+    // ── Attribution des points fidélité après livraison ─────────────────
+    // Les points sont crédités UNIQUEMENT quand la commande est marquée
+    // "livrée" (delivered). awardLoyaltyPoints() garantit l'idempotence
+    // via le champ loyaltyPointsAwarded.
+    if (newStatus == ClientOrderStatus.delivered) {
+      try {
+        // Récupérer la commande pour obtenir clientId et loyaltyPointsEarned
+        final order = _orders.firstWhere(
+          (o) => o.id == orderId,
+          orElse: () => throw Exception('Commande $orderId non trouvée dans le cache'),
+        );
+        if (order.loyaltyPointsEarned > 0 && order.clientId.isNotEmpty) {
+          await _svc.awardLoyaltyPoints(
+            clientOrderId: orderId,
+            clientId: order.clientId,
+            pointsToAward: order.loyaltyPointsEarned,
+          );
+        }
+      } catch (e) {
+        // Non bloquant : le statut a déjà été mis à jour, l'attribution
+        // peut être rejouée manuellement si nécessaire.
+        debugPrint('[ClientProvider] awardLoyaltyPoints erreur: $e');
+      }
+    }
   }
 
   // ── Admin : récupérer tous les clients ──────────────────────────────────

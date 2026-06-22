@@ -298,6 +298,32 @@ class ClientFirebaseService {
       await _db.collection('client_orders').doc(clientOrderId).update({
         'internalOrderId': internalOrderId,
       });
+
+      // ── Notification admin/cuisine Firestore ────────────────────────
+      // Écrite dans la collection 'notifications' pour que l'admin la voie
+      // même s'il se connecte après la commande (persistant).
+      try {
+        final notifId = _uuid.v4();
+        final clientName = clientOrderData['clientName'] as String? ?? 'Client';
+        final orderNum   = clientOrderData['orderNumber'] as String? ?? '';
+        await _db.collection('notifications').doc(notifId).set({
+          'id': notifId,
+          'type': 'online_order',
+          'title': 'Nouvelle commande en ligne',
+          'message': 'NOUVELLE COMMANDE EN LIGNE $orderNum — $clientName à traiter',
+          'orderId': internalOrderId,
+          'clientOrderId': clientOrderId,
+          'clientId': clientOrderData['clientId'],
+          'clientName': clientName,
+          'createdAt': FieldValue.serverTimestamp(),
+          'read': false,
+          'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
+        });
+      } catch (e) {
+        debugPrintOrder('Erreur création notification admin: $e');
+      }
+      // ────────────────────────────────────────────────────────────────
+
     } catch (e) {
       // Non bloquant — la commande client a déjà été créée
       debugPrintOrder('Erreur création commande interne: $e');
@@ -427,6 +453,56 @@ class ClientFirebaseService {
     await _db.collection('clients').doc(tx.clientId).update({
       'loyaltyPoints': FieldValue.increment(delta),
     });
+  }
+
+  // ── Attribution sécurisée des points fidélité (après paiement) ────────
+  //
+  // Règle : les points ne sont attribués QU'UNE SEULE FOIS, uniquement
+  // après livraison/paiement complet. Le champ loyaltyPointsAwarded
+  // garantit l'idempotence (pas de double crédit si appelé deux fois).
+  //
+  // Appelé par updateOrderStatus() quand newStatus == delivered.
+  Future<void> awardLoyaltyPoints({
+    required String clientOrderId,
+    required String clientId,
+    required int pointsToAward,
+  }) async {
+    if (pointsToAward <= 0) return;
+
+    // Vérification idempotence : ne pas re-créditer si déjà attribués
+    final orderDoc = await _db.collection('client_orders').doc(clientOrderId).get();
+    if (!orderDoc.exists) return;
+    final alreadyAwarded = orderDoc.data()?['loyaltyPointsAwarded'] as bool? ?? false;
+    if (alreadyAwarded) {
+      debugPrintOrder('[loyalty] Points déjà attribués pour $clientOrderId — skip');
+      return;
+    }
+
+    // Marquer l'ordre AVANT d'écrire la transaction (protection crash)
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.collection('client_orders').doc(clientOrderId).update({
+      'loyaltyPointsAwarded': true,
+      'loyaltyPointsAwardedAt': now,
+    });
+
+    // Créer la transaction fidélité
+    final txId = _uuid.v4();
+    await _db.collection('loyalty_transactions').doc(txId).set({
+      'id': txId,
+      'clientId': clientId,
+      'type': LoyaltyType.earn.index,
+      'points': pointsToAward,
+      'description': 'Points fidélité — commande livrée',
+      'orderId': clientOrderId,
+      'createdAt': now,
+    });
+
+    // Incrémenter le solde du client
+    await _db.collection('clients').doc(clientId).update({
+      'loyaltyPoints': FieldValue.increment(pointsToAward),
+    });
+
+    debugPrintOrder('[loyalty] ✅ $pointsToAward points attribués → client $clientId');
   }
 
   // ── Menu produits (lecture seule — collection partagée) ────────────────

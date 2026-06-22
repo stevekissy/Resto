@@ -401,6 +401,9 @@ class ClientOrder {
   // Réf interne (lien avec commande cuisine dans collection orders)
   String? internalOrderId;
   String? orderNumber;     // numéro lisible ex: #1042
+  // Points fidélité — attribués uniquement après paiement confirmé
+  bool loyaltyPointsAwarded;        // true = points déjà crédités (idempotence)
+  DateTime? loyaltyPointsAwardedAt; // timestamp de l'attribution
 
   ClientOrder({
     required this.id,
@@ -439,6 +442,8 @@ class ClientOrder {
     this.yangoStatus = YangoDeliveryStatus.waiting,
     this.internalOrderId,
     this.orderNumber,
+    this.loyaltyPointsAwarded = false,
+    this.loyaltyPointsAwardedAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get grandTotal => totalAmount + deliveryFee;
@@ -452,6 +457,8 @@ class ClientOrder {
     String? orderNumber,
     DateTime? updatedAt,
     ClientPaymentStatus? paymentStatus,
+    bool? loyaltyPointsAwarded,
+    DateTime? loyaltyPointsAwardedAt,
   }) => ClientOrder(
     id: id ?? this.id,
     clientId: clientId,
@@ -489,6 +496,8 @@ class ClientOrder {
     yangoStatus: yangoStatus ?? this.yangoStatus,
     internalOrderId: internalOrderId ?? this.internalOrderId,
     orderNumber: orderNumber ?? this.orderNumber,
+    loyaltyPointsAwarded: loyaltyPointsAwarded ?? this.loyaltyPointsAwarded,
+    loyaltyPointsAwardedAt: loyaltyPointsAwardedAt ?? this.loyaltyPointsAwardedAt,
   );
 
   Map<String, dynamic> toMap() => {
@@ -528,6 +537,8 @@ class ClientOrder {
     'yangoStatus': yangoStatus.index,
     'internalOrderId': internalOrderId,
     'orderNumber': orderNumber,
+    'loyaltyPointsAwarded': loyaltyPointsAwarded,
+    'loyaltyPointsAwardedAt': loyaltyPointsAwardedAt?.millisecondsSinceEpoch,
     'source': 'online',
   };
 
@@ -580,6 +591,10 @@ class ClientOrder {
     yangoStatus: YangoDeliveryStatus.values[(m['yangoStatus'] as num?)?.toInt() ?? 0],
     internalOrderId: m['internalOrderId'] as String?,
     orderNumber: m['orderNumber'] as String?,
+    loyaltyPointsAwarded: m['loyaltyPointsAwarded'] as bool? ?? false,
+    loyaltyPointsAwardedAt: m['loyaltyPointsAwardedAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['loyaltyPointsAwardedAt'] as int)
+        : null,
   );
 }
 
