@@ -152,6 +152,10 @@ class _SettingsTabState extends State<_SettingsTab> {
           const SizedBox(height: 12),
         ],
 
+        // ── Indicateur sync Firestore ─────────────────────────────────
+        _SyncStatusBanner(svc: s),
+        const SizedBox(height: 12),
+
         // ════════════════════════════════════
         // 1. PARAMÈTRES SONS
         // ════════════════════════════════════
@@ -1190,6 +1194,98 @@ class _Badge extends StatelessWidget {
           color: AppTheme.error, borderRadius: BorderRadius.circular(10)),
       child: Text('$count',
           style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900)),
+    );
+  }
+}
+
+// ── Indicateur de synchronisation Firestore ──────────────────────────────────
+class _SyncStatusBanner extends StatefulWidget {
+  final NotificationService svc;
+  const _SyncStatusBanner({required this.svc});
+
+  @override
+  State<_SyncStatusBanner> createState() => _SyncStatusBannerState();
+}
+
+class _SyncStatusBannerState extends State<_SyncStatusBanner> {
+  bool _loading = true;
+  bool _synced  = false;
+  String _msg   = 'Chargement des paramètres…';
+
+  @override
+  void initState() {
+    super.initState();
+    _checkSync();
+  }
+
+  Future<void> _checkSync() async {
+    setState(() { _loading = true; _msg = 'Chargement des paramètres…'; });
+    try {
+      await widget.svc.loadFromFirestore();
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _synced  = true;
+          _msg     = 'Paramètres synchronisés avec Firestore';
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _synced  = false;
+          _msg     = 'Synchronisation locale uniquement';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _loading
+        ? AppTheme.primary
+        : _synced
+            ? AppTheme.success
+            : AppTheme.warning;
+
+    final icon = _loading
+        ? Icons.sync
+        : _synced
+            ? Icons.cloud_done_outlined
+            : Icons.cloud_off_outlined;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          _loading
+              ? SizedBox(
+                  width: 14, height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                  ),
+                )
+              : Icon(icon, color: color, size: 14),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _msg,
+              style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+          ),
+          if (!_loading)
+            GestureDetector(
+              onTap: _checkSync,
+              child: Icon(Icons.refresh, color: color, size: 14),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -216,10 +216,14 @@ class NotificationService extends ChangeNotifier {
   DateTime? _urgentStartTime;
   Timer?  _urgentMaxTimer;
 
-  // ── Listener Firestore temps réel ─────────────────────────────────────
+  // ── Listener Firestore notifications temps réel ────────────────────────
   StreamSubscription<QuerySnapshot>? _firestoreListener;
   final Set<String> _knownFirestoreIds = {};
   bool _firestoreListenerActive = false;
+
+  // ── Listener Firestore paramètres temps réel (sync multi-appareils) ──────
+  StreamSubscription<DocumentSnapshot>? _settingsListener;
+  bool _settingsListenerActive = false;
 
   // ── Horodatage login admin ────────────────────────────────────────────
   // Enregistré au moment du init() (= connexion admin).
@@ -269,7 +273,18 @@ class NotificationService extends ChangeNotifier {
     // Toute notification dont createdAt ≤ _adminLoginAt sera silencieuse.
     _adminLoginAt = DateTime.now();
     _knownFirestoreIds.clear(); // réinitialiser à chaque login
+
+    // ── Chargement prioritaire : Firestore > SharedPreferences ────────────
+    // 1. D'abord SharedPreferences (rapide, local)
     await _loadPrefs();
+    if (kDebugMode) debugPrint('[SETTINGS_LOADED] SharedPreferences chargé');
+
+    // 2. Ensuite Firestore (prioritaire — écrase SharedPreferences si données existent)
+    await loadFromFirestore();
+
+    // 3. Démarrer le stream temps réel pour la sync multi-appareils
+    _startSettingsStream();
+
     _startFirestoreListener();
   }
 
@@ -394,6 +409,8 @@ class NotificationService extends ChangeNotifier {
     _firestoreListener?.cancel();
     _firestoreListener = null;
     _firestoreListenerActive = false;
+    // Arrêter aussi le stream des paramètres
+    _stopSettingsStream();
   }
 
   void restartFirestoreListener() {
@@ -406,11 +423,89 @@ class NotificationService extends ChangeNotifier {
     _startFirestoreListener();
   }
 
+  // ── Stream temps réel des paramètres (sync multi-appareils) ──────────────
+
+  void _startSettingsStream() {
+    if (_settingsListenerActive) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      FirebaseAuth.instance.authStateChanges().listen((u) {
+        if (u != null && !_settingsListenerActive) _startSettingsStream();
+      });
+      return;
+    }
+    _settingsListenerActive = true;
+    try {
+      _settingsListener = FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('settings')
+          .doc('notifications')
+          .snapshots()
+          .listen((snap) {
+        if (!snap.exists) return;
+        _applyFirestoreSettings(snap.data()!);
+        if (kDebugMode) debugPrint('[SETTINGS_APPLIED] Stream Firestore → paramètres appliqués');
+      }, onError: (e) {
+        _settingsListenerActive = false;
+        if (kDebugMode) debugPrint('[NotificationService] settingsStream erreur: $e');
+      });
+    } catch (e) {
+      _settingsListenerActive = false;
+      if (kDebugMode) debugPrint('[NotificationService] _startSettingsStream: $e');
+    }
+  }
+
+  void _stopSettingsStream() {
+    _settingsListener?.cancel();
+    _settingsListener = null;
+    _settingsListenerActive = false;
+  }
+
+  /// Applique les données Firestore dans les champs locaux + notifie
+  void _applyFirestoreSettings(Map<String, dynamic> d) {
+    _soundEnabled         = d['sound_enabled']       as bool?   ?? _soundEnabled;
+    _volume               = (d['volume']             as num?)?.toDouble() ?? _volume;
+    _volumeRingtone       = (d['volume_ringtone']    as num?)?.toDouble() ?? _volumeRingtone;
+    _volumeVoice          = (d['volume_voice']       as num?)?.toDouble() ?? _volumeVoice;
+    _repeatImportant      = d['repeat_important']    as bool?   ?? _repeatImportant;
+    _repeatIntervalSec    = (d['repeat_interval_sec'] as num?)?.toInt() ?? _repeatIntervalSec;
+    _maxRepeatDurationSec = (d['max_repeat_duration'] as num?)?.toInt() ?? _maxRepeatDurationSec;
+    _selectedSound        = d['selected_sound']      as String? ?? _selectedSound;
+    _voiceEnabled         = d['voice_enabled']       as bool?   ?? _voiceEnabled;
+    _voiceName            = d['voice_name']          as String? ?? _voiceName;
+    _speechRate           = (d['speech_rate']        as num?)?.toDouble() ?? _speechRate;
+    _speechPitch          = (d['speech_pitch']       as num?)?.toDouble() ?? _speechPitch;
+    _voiceLang            = d['voice_lang']          as String? ?? _voiceLang;
+    _notifOnline          = d['notif_online']        as bool?   ?? _notifOnline;
+    _notifUrgent          = d['notif_urgent']        as bool?   ?? _notifUrgent;
+    _notifCuisine         = d['notif_cuisine']       as bool?   ?? _notifCuisine;
+    _notifCaisse          = d['notif_caisse']        as bool?   ?? _notifCaisse;
+    _notifStock           = d['notif_stock']         as bool?   ?? _notifStock;
+    _notifPersonnel       = d['notif_personnel']     as bool?   ?? _notifPersonnel;
+    _notifReservations    = d['notif_reservations']  as bool?   ?? _notifReservations;
+    _notifFournisseurs    = d['notif_fournisseurs']  as bool?   ?? _notifFournisseurs;
+    _notifSysteme         = d['notif_systeme']       as bool?   ?? _notifSysteme;
+    final pts = d['per_type_sounds'] as Map<String, dynamic>?;
+    if (pts != null) {
+      for (final e in pts.entries) {
+        _perTypeSound[e.key] = e.value as String;
+      }
+    }
+    notifyListeners();
+  }
+
   // ── Chargement / Sauvegarde SharedPreferences ─────────────────────────
 
   Future<void> _loadPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // Vérifier si des données existent déjà
+      final hasData = prefs.containsKey('notif_sound');
+      if (!hasData) {
+        if (kDebugMode) debugPrint('[SETTINGS_LOADED] SharedPreferences vide — valeurs par défaut');
+        return;
+      }
 
       // Sons
       _soundEnabled        = prefs.getBool('notif_sound')          ?? true;
@@ -446,6 +541,7 @@ class NotificationService extends ChangeNotifier {
         final saved = prefs.getString('notif_sound_${e.name}');
         if (saved != null) _perTypeSound[e.name] = saved;
       }
+      if (kDebugMode) debugPrint('[SETTINGS_LOADED] SharedPreferences OK (${_perTypeSound.length} sonneries personnalisées)');
     } catch (e) {
       if (kDebugMode) debugPrint('[NotificationService] _loadPrefs: $e');
     }
@@ -484,6 +580,7 @@ class NotificationService extends ChangeNotifier {
       for (final e in _perTypeSound.entries) {
         await prefs.setString('notif_sound_${e.key}', e.value);
       }
+      if (kDebugMode) debugPrint('[SETTINGS_SAVED] SharedPreferences sauvegardé');
     } catch (e) {
       if (kDebugMode) debugPrint('[NotificationService] _savePrefs: $e');
     }
@@ -494,7 +591,10 @@ class NotificationService extends ChangeNotifier {
   Future<void> saveToFirestore() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      if (user == null) {
+        if (kDebugMode) debugPrint('[SETTINGS_SAVED] Firestore ignoré — utilisateur non connecté');
+        return;
+      }
 
       await FirebaseFirestore.instance
           .collection('users')
@@ -527,15 +627,43 @@ class NotificationService extends ChangeNotifier {
         'per_type_sounds':        _perTypeSound,
         'updated_at':             FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      if (kDebugMode) debugPrint('[SETTINGS_SAVED] Firestore sauvegardé — users/${user.uid}/settings/notifications');
     } catch (e) {
-      if (kDebugMode) debugPrint('[NotificationService] saveToFirestore: $e');
+      if (kDebugMode) debugPrint('[NotificationService] saveToFirestore ERREUR: $e');
+    }
+  }
+
+  /// Enregistre un changement dans notification_settings_history
+  Future<void> _saveSettingsHistory({
+    required String field,
+    required dynamic oldValue,
+    required dynamic newValue,
+  }) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      final docId = FirebaseFirestore.instance.collection('notification_settings_history').doc().id;
+      await FirebaseFirestore.instance.collection('notification_settings_history').doc(docId).set({
+        'id':         docId,
+        'userId':     user.uid,
+        'userName':   user.displayName ?? user.email ?? 'Admin',
+        'field':      field,
+        'oldValue':   oldValue.toString(),
+        'newValue':   newValue.toString(),
+        'createdAt':  DateTime.now().millisecondsSinceEpoch,
+      });
+    } catch (e) {
+      if (kDebugMode) debugPrint('[NotificationService] _saveSettingsHistory: $e');
     }
   }
 
   Future<void> loadFromFirestore() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      if (user == null) {
+        if (kDebugMode) debugPrint('[SETTINGS_LOADED] Firestore ignoré — utilisateur non connecté');
+        return;
+      }
 
       final doc = await FirebaseFirestore.instance
           .collection('users')
@@ -544,139 +672,211 @@ class NotificationService extends ChangeNotifier {
           .doc('notifications')
           .get();
 
-      if (!doc.exists) return;
+      if (!doc.exists) {
+        if (kDebugMode) debugPrint('[SETTINGS_LOADED] Firestore — aucun paramètre sauvegardé, valeurs actuelles conservées');
+        return;
+      }
       final d = doc.data()!;
 
-      _soundEnabled         = d['sound_enabled']       as bool?   ?? _soundEnabled;
-      _volume               = (d['volume']             as num?)?.toDouble() ?? _volume;
-      _volumeRingtone       = (d['volume_ringtone']    as num?)?.toDouble() ?? _volumeRingtone;
-      _volumeVoice          = (d['volume_voice']       as num?)?.toDouble() ?? _volumeVoice;
-      _repeatImportant      = d['repeat_important']    as bool?   ?? _repeatImportant;
-      _repeatIntervalSec    = d['repeat_interval_sec'] as int?    ?? _repeatIntervalSec;
-      _maxRepeatDurationSec = d['max_repeat_duration'] as int?    ?? _maxRepeatDurationSec;
-      _selectedSound        = d['selected_sound']      as String? ?? _selectedSound;
-      _voiceEnabled         = d['voice_enabled']       as bool?   ?? _voiceEnabled;
-      _voiceName            = d['voice_name']          as String? ?? _voiceName;
-      _speechRate           = (d['speech_rate']        as num?)?.toDouble() ?? _speechRate;
-      _speechPitch          = (d['speech_pitch']       as num?)?.toDouble() ?? _speechPitch;
-      _voiceLang            = d['voice_lang']          as String? ?? _voiceLang;
-      _notifOnline          = d['notif_online']        as bool?   ?? _notifOnline;
-      _notifUrgent          = d['notif_urgent']        as bool?   ?? _notifUrgent;
-      _notifCuisine         = d['notif_cuisine']       as bool?   ?? _notifCuisine;
-      _notifCaisse          = d['notif_caisse']        as bool?   ?? _notifCaisse;
-      _notifStock           = d['notif_stock']         as bool?   ?? _notifStock;
-      _notifPersonnel       = d['notif_personnel']     as bool?   ?? _notifPersonnel;
-      _notifReservations    = d['notif_reservations']  as bool?   ?? _notifReservations;
-      _notifFournisseurs    = d['notif_fournisseurs']  as bool?   ?? _notifFournisseurs;
-      _notifSysteme         = d['notif_systeme']       as bool?   ?? _notifSysteme;
-
-      final pts = d['per_type_sounds'] as Map<String, dynamic>?;
-      if (pts != null) {
-        for (final e in pts.entries) {
-          _perTypeSound[e.key] = e.value as String;
-        }
-      }
+      _applyFirestoreSettings(d);
 
       // Synchroniser aussi dans SharedPreferences
       await _savePrefs();
-      notifyListeners();
+      if (kDebugMode) debugPrint('[SETTINGS_LOADED] Firestore → paramètres chargés et appliqués');
     } catch (e) {
-      if (kDebugMode) debugPrint('[NotificationService] loadFromFirestore: $e');
+      if (kDebugMode) debugPrint('[NotificationService] loadFromFirestore ERREUR: $e');
     }
   }
 
-  // ── Setters sons ──────────────────────────────────────────────────────
+  // ── Setters sons ─────────────────────────────────────────────────────
+  // Chaque setter : 1) met à jour le champ local
+  //                 2) sauvegarde SharedPreferences
+  //                 3) sauvegarde Firestore (async, non-bloquant)
+  //                 4) enregistre l'historique
+  //                 5) notifie les listeners
 
   Future<void> setSoundEnabled(bool v) async {
+    final old = _soundEnabled;
     _soundEnabled = v;
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'sound_enabled', oldValue: old, newValue: v));
+    notifyListeners();
   }
 
   Future<void> setVolume(double v) async {
+    final old = _volume;
     _volume = v;
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'volume', oldValue: old, newValue: v));
+    notifyListeners();
   }
 
   Future<void> setVolumeRingtone(double v) async {
+    final old = _volumeRingtone;
     _volumeRingtone = v;
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'volume_ringtone', oldValue: old, newValue: v));
+    notifyListeners();
   }
 
   Future<void> setVolumeVoice(double v) async {
+    final old = _volumeVoice;
     _volumeVoice = v;
-    // Appliquer immédiatement au TTS
     if (kIsWeb) tts_web.setTTSConfig(_voiceName, _speechRate, _speechPitch, v);
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'volume_voice', oldValue: old, newValue: v));
+    notifyListeners();
   }
 
   Future<void> setRepeatImportant(bool v) async {
+    final old = _repeatImportant;
     _repeatImportant = v;
     if (!v) stopUrgentLoop();
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'repeat_important', oldValue: old, newValue: v));
+    notifyListeners();
   }
 
   Future<void> setRepeatIntervalSec(int v) async {
+    final old = _repeatIntervalSec;
     _repeatIntervalSec = v;
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'repeat_interval_sec', oldValue: old, newValue: v));
+    notifyListeners();
   }
 
   Future<void> setMaxRepeatDurationSec(int v) async {
+    final old = _maxRepeatDurationSec;
     _maxRepeatDurationSec = v;
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'max_repeat_duration', oldValue: old, newValue: v));
+    notifyListeners();
   }
 
   Future<void> setSelectedSound(String v) async {
+    final old = _selectedSound;
     _selectedSound = v;
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'selected_sound', oldValue: old, newValue: v));
+    notifyListeners();
   }
 
   Future<void> setPerTypeSound(NotifEvent event, String sound) async {
+    final old = _perTypeSound[event.name] ?? event.defaultSound;
     _perTypeSound[event.name] = sound;
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'sound_${event.name}', oldValue: old, newValue: sound));
+    notifyListeners();
   }
 
   // ── Setters assistant vocal ───────────────────────────────────────────
 
   Future<void> setVoiceEnabled(bool v) async {
+    final old = _voiceEnabled;
     _voiceEnabled = v;
     if (kIsWeb) tts_web.setTTSConfig(_voiceName, _speechRate, _speechPitch, _volumeVoice);
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'voice_enabled', oldValue: old, newValue: v));
+    notifyListeners();
   }
 
   Future<void> setVoiceName(String v) async {
     _voiceName = v;
     if (kIsWeb) tts_web.setTTSConfig(v, _speechRate, _speechPitch, _volumeVoice);
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    notifyListeners();
   }
 
   Future<void> setSpeechRate(double v) async {
     _speechRate = v;
     if (kIsWeb) tts_web.setTTSConfig(_voiceName, v, _speechPitch, _volumeVoice);
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    notifyListeners();
   }
 
   Future<void> setSpeechPitch(double v) async {
     _speechPitch = v;
     if (kIsWeb) tts_web.setTTSConfig(_voiceName, _speechRate, v, _volumeVoice);
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    notifyListeners();
   }
 
   Future<void> setSpeechLang(String v) async {
     _voiceLang = v;
-    await _savePrefs(); notifyListeners();
+    await _savePrefs();
+    unawaited(saveToFirestore());
+    notifyListeners();
   }
 
   // ── Setters catégories ────────────────────────────────────────────────
 
-  Future<void> setNotifOnline(bool v)       async { _notifOnline = v;       await _savePrefs(); notifyListeners(); }
-  Future<void> setNotifUrgent(bool v)       async { _notifUrgent = v;       await _savePrefs(); notifyListeners(); }
-  Future<void> setNotifCuisine(bool v)      async { _notifCuisine = v;      await _savePrefs(); notifyListeners(); }
-  Future<void> setNotifCaisse(bool v)       async { _notifCaisse = v;       await _savePrefs(); notifyListeners(); }
-  Future<void> setNotifStock(bool v)        async { _notifStock = v;        await _savePrefs(); notifyListeners(); }
-  Future<void> setNotifPersonnel(bool v)    async { _notifPersonnel = v;    await _savePrefs(); notifyListeners(); }
-  Future<void> setNotifReservations(bool v) async { _notifReservations = v; await _savePrefs(); notifyListeners(); }
-  Future<void> setNotifFournisseurs(bool v) async { _notifFournisseurs = v; await _savePrefs(); notifyListeners(); }
-  Future<void> setNotifSysteme(bool v)      async { _notifSysteme = v;      await _savePrefs(); notifyListeners(); }
+  Future<void> setNotifOnline(bool v) async {
+    final old = _notifOnline; _notifOnline = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_online', oldValue: old, newValue: v));
+    notifyListeners();
+  }
+  Future<void> setNotifUrgent(bool v) async {
+    final old = _notifUrgent; _notifUrgent = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_urgent', oldValue: old, newValue: v));
+    notifyListeners();
+  }
+  Future<void> setNotifCuisine(bool v) async {
+    final old = _notifCuisine; _notifCuisine = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_cuisine', oldValue: old, newValue: v));
+    notifyListeners();
+  }
+  Future<void> setNotifCaisse(bool v) async {
+    final old = _notifCaisse; _notifCaisse = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_caisse', oldValue: old, newValue: v));
+    notifyListeners();
+  }
+  Future<void> setNotifStock(bool v) async {
+    final old = _notifStock; _notifStock = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_stock', oldValue: old, newValue: v));
+    notifyListeners();
+  }
+  Future<void> setNotifPersonnel(bool v) async {
+    final old = _notifPersonnel; _notifPersonnel = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_personnel', oldValue: old, newValue: v));
+    notifyListeners();
+  }
+  Future<void> setNotifReservations(bool v) async {
+    final old = _notifReservations; _notifReservations = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_reservations', oldValue: old, newValue: v));
+    notifyListeners();
+  }
+  Future<void> setNotifFournisseurs(bool v) async {
+    final old = _notifFournisseurs; _notifFournisseurs = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_fournisseurs', oldValue: old, newValue: v));
+    notifyListeners();
+  }
+  Future<void> setNotifSysteme(bool v) async {
+    final old = _notifSysteme; _notifSysteme = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_systeme', oldValue: old, newValue: v));
+    notifyListeners();
+  }
 
   Future<void> markAudioUnlockAsked() async {
     _audioUnlockAsked = true;
