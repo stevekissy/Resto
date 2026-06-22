@@ -1,0 +1,66 @@
+name: Deploy to Netlify
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Permet le déclenchement manuel depuis GitHub Actions
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout du code ──
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Installation Flutter ──
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.4'
+          channel: 'stable'
+          cache: true
+
+      # ── 3. Dépendances ──
+      - name: Install dependencies
+        run: flutter pub get
+
+      # ── 4. Analyse (non bloquante sur warnings) ──
+      - name: Analyze (warnings tolérés)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
+
+      # ── 5. Build Flutter Web (release) ──
+      - name: Build Flutter Web
+        run: |
+          flutter build web --release \
+            --dart-define=flutter.inspector.structuredErrors=false \
+            --dart-define=debugShowCheckedModeBanner=false
+
+      # ── 6. Vérification du _redirects SPA ──
+      - name: Ensure _redirects for SPA routing
+        run: |
+          if [ ! -f build/web/_redirects ]; then
+            echo "/*  /index.html  200" > build/web/_redirects
+            echo "_redirects créé"
+          else
+            echo "_redirects déjà présent :"
+            cat build/web/_redirects
+          fi
+
+      # ── 7. Déploiement sur Netlify ──
+      - name: Deploy to Netlify
+        uses: nwtgck/actions-netlify@v3.0
+        with:
+          publish-dir: './build/web'
+          production-branch: main
+          production-deploy: true
+          deploy-message: "Deploy from GitHub Actions — ${{ github.sha }}"
+          enable-pull-request-comment: false
+          enable-commit-comment: false
+          overwrites-pull-request-comment: false
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        timeout-minutes: 10
