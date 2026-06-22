@@ -300,6 +300,24 @@ class FirebaseService {
   // PAS de .orderBy() → aucun index composite requis → tri en mémoire
 
   /// Convertit un status (int ou String) en OrderStatus
+  /// Parse orderType — gère String, int (0=delivery,1=takeaway) et null
+  String _parseOrderType(dynamic raw, String? tableNumber) {
+    if (raw is String) {
+      if (raw == 'takeaway' || raw == 'takeOut' || raw == 'take_away') return 'takeaway';
+      if (raw == 'delivery') return 'delivery';
+      return 'dine_in';
+    }
+    if (raw is int) {
+      // 0 = delivery, 1 = takeaway (convention client_models OrderType enum)
+      if (raw == 1) return 'takeaway';
+      if (raw == 0) return 'delivery';
+      return 'dine_in';
+    }
+    // Fallback sur tableNumber
+    if (tableNumber == 'À Emporter') return 'takeaway';
+    return 'dine_in';
+  }
+
   OrderStatus _parseOrderStatus(dynamic raw) {
     if (raw == null) return OrderStatus.pending;
     if (raw is int) {
@@ -373,8 +391,7 @@ class FirebaseService {
             paymentStatus: data['paymentStatus'] as String?,
             settlementStatus: data['settlementStatus'] as String?,
             // ── Commandes en ligne ────────────────────────────────────
-            orderType: data['orderType'] as String?
-                ?? (data['tableNumber'] == 'À Emporter' ? 'takeaway' : 'dine_in'),
+            orderType: _parseOrderType(data['orderType'], data['tableNumber'] as String?),
             source: data['source'] as String?
                 ?? data['orderSource'] as String? ?? 'pos',
             clientId: data['clientId'] as String?,

@@ -1462,10 +1462,16 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                     final canChangeStatus = role == UserRole.kitchen ||
                                            role == UserRole.admin   ||
                                            role == UserRole.manager;
+                    // Pour les commandes online, utiliser kitchenStatus
+                    // Pour les commandes POS, utiliser status
+                    final bool isInPreparation = order.isOnlineOrder
+                        ? (order.kitchenStatus == 'preparing')
+                        : (order.status == OrderStatus.preparing);
+                    final bool needsStart = !isInPreparation;
                     return GestureDetector(
                       onTap: canChangeStatus
                           ? () {
-                              if (order.status == OrderStatus.pending) {
+                              if (needsStart) {
                                 widget.provider.updateOrderStatus(
                                     order.id, OrderStatus.preparing);
                               } else {
@@ -1487,17 +1493,13 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         decoration: BoxDecoration(
                           color: canChangeStatus
-                              ? (order.status == OrderStatus.pending
-                                  ? AppTheme.preparing
-                                  : AppTheme.ready)
+                              ? (needsStart ? AppTheme.preparing : AppTheme.ready)
                               : Colors.grey.shade700,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Center(
                           child: Text(
-                            order.status == OrderStatus.pending
-                                ? 'Commencer'
-                                : '✓ Prêt!',
+                            needsStart ? 'Commencer' : '✓ Prêt!',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 11,

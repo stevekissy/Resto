@@ -354,9 +354,10 @@ class Order {
   String? serverId;
   String? serverEmail;
 
-  // ── Type de commande (sur place / à emporter) ────────────────────────
-  String orderType;          // 'dine_in' | 'takeaway'
+  // ── Type de commande (sur place / à emporter / livraison) ─────────────
+  String orderType;          // 'dine_in' | 'takeaway' | 'delivery'
   bool get isTakeaway => orderType == 'takeaway';
+  bool get isDelivery => orderType == 'delivery' || (!isTakeaway && isOnlineOrder);
 
   // ── Source commande (pos / online) ──────────────────────────────────
   String source;             // 'pos' | 'online'
