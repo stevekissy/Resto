@@ -20,7 +20,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -45,6 +45,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
                 Tab(text: 'Stocks', icon: Icon(Icons.inventory, size: 16)),
                 Tab(text: 'Produits Disponibles', icon: Icon(Icons.restaurant_menu, size: 16)),
                 Tab(text: 'Inventaire', icon: Icon(Icons.playlist_add_check, size: 16)),
+                Tab(text: 'Historique', icon: Icon(Icons.history, size: 16)),
               ],
             ),
           ),
@@ -55,6 +56,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
                 _StockTab(),
                 _AvailableProductsTab(),
                 InventoryTab(),
+                _StockHistoryTab(),
               ],
             ),
           ),
@@ -284,6 +286,7 @@ class _StockTabState extends State<_StockTab> {
                       item: items[i],
                       onEdit: () => _showEditDialog(context, items[i], provider, _buildCategories(provider.stockItems)),
                       onDelete: () => _showDeleteDialog(context, items[i], provider),
+                      onAdjustQty: () => _showAdjustQuantityDialog(context, items[i], provider),
                     ),
                   ),
           ),
@@ -319,7 +322,7 @@ class _StockTabState extends State<_StockTab> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Info quantité — lecture seule
+                // Info quantité — non modifiable ici (utiliser le bouton dédié)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   margin: const EdgeInsets.only(bottom: 12),
@@ -335,7 +338,7 @@ class _StockTabState extends State<_StockTab> {
                       Text('Stock actuel : ${item.currentQuantity} ${item.unit}',
                           style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
                       const Spacer(),
-                      const Text('(non modifiable)', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
+                      const Text('(via bouton ✏️ Qté)', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10)),
                     ],
                   ),
                 ),
@@ -402,6 +405,147 @@ class _StockTabState extends State<_StockTab> {
     );
   }
 
+  // ── Dialog Modifier quantité d'un article stock ──────────────────────────
+  void _showAdjustQuantityDialog(BuildContext context, StockItem item, AppProvider provider) {
+    final newQtyCtrl = TextEditingController(text: item.currentQuantity.toStringAsFixed(item.currentQuantity == item.currentQuantity.truncateToDouble() ? 0 : 2));
+    final motifCtrl  = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.pin_outlined, color: AppTheme.warning, size: 20),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Modifier quantité: ${item.name}', overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Quantité actuelle (info)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF2A2A5A)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Quantité actuelle :', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                      Text('${item.currentQuantity} ${item.unit}',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                // Nouvelle quantité
+                TextField(
+                  controller: newQtyCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Nouvelle quantité *',
+                    suffixText: item.unit,
+                    suffixStyle: const TextStyle(color: AppTheme.primary),
+                    prefixIcon: const Icon(Icons.edit_outlined, color: AppTheme.warning),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Motif obligatoire
+                TextField(
+                  controller: motifCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Motif de la modification *',
+                    hintText: 'Ex: inventaire, correction, perte...',
+                    prefixIcon: Icon(Icons.notes, color: AppTheme.textSecondary),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Aperçu différence (dynamique)
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: newQtyCtrl,
+                  builder: (_, val, __) {
+                    final newQty = double.tryParse(val.text) ?? item.currentQuantity;
+                    final diff = newQty - item.currentQuantity;
+                    final diffColor = diff > 0 ? AppTheme.success : diff < 0 ? AppTheme.error : AppTheme.textSecondary;
+                    final sign = diff >= 0 ? '+' : '';
+                    return Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: diffColor.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: diffColor.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(diff > 0 ? Icons.trending_up : diff < 0 ? Icons.trending_down : Icons.trending_flat,
+                              color: diffColor, size: 16),
+                          const SizedBox(width: 6),
+                          Text('Différence : $sign${diff.toStringAsFixed(diff == diff.truncateToDouble() ? 0 : 2)} ${item.unit}',
+                              style: TextStyle(color: diffColor, fontWeight: FontWeight.w600, fontSize: 12)),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.check, size: 16),
+              label: const Text('Enregistrer'),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.warning),
+              onPressed: () async {
+                final newQty = double.tryParse(newQtyCtrl.text);
+                if (newQty == null || newQty < 0) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                      content: Text('Entrez une quantité valide (≥ 0)'), backgroundColor: AppTheme.warning));
+                  return;
+                }
+                final motif = motifCtrl.text.trim();
+                if (motif.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                      content: Text('Le motif est obligatoire'), backgroundColor: AppTheme.warning));
+                  return;
+                }
+                try {
+                  await provider.adjustStockQuantity(
+                    id: item.id,
+                    newQuantity: newQty,
+                    motif: motif,
+                  );
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                    final diff = newQty - item.currentQuantity;
+                    final sign = diff >= 0 ? '+' : '';
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                        content: Text('✅ ${item.name} : $sign${diff.toStringAsFixed(0)} ${item.unit}'),
+                        backgroundColor: AppTheme.success));
+                  }
+                } catch (e) {
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                        SnackBar(content: Text('Erreur: $e'), backgroundColor: AppTheme.error));
+                  }
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ── Dialog Ajouter nouveau produit stock ────────────────────────────────
   void _showAddStockDialog(BuildContext context, AppProvider provider, List<String> categories) {
     final nameCtrl     = TextEditingController();
@@ -459,7 +603,8 @@ class _StockTabState extends State<_StockTab> {
                 const SizedBox(height: 10),
                 // Unité
                 TextField(controller: unitCtrl, style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(labelText: 'Unité (kg, L, pcs, boîtes…) *',
+                    decoration: const InputDecoration(labelText: 'Unité (kg, L, pcs, boîtes…)',
+                        hintText: 'Laisser vide = pcs automatique',
                         prefixIcon: Icon(Icons.straighten, color: AppTheme.primary))),
                 const SizedBox(height: 10),
                 // Seuil d'alerte
@@ -519,20 +664,22 @@ class _StockTabState extends State<_StockTab> {
                 final qty  = double.tryParse(qtyCtrl.text) ?? 0;
                 final cat  = selectedCategory ?? 'Autres';
 
-                if (name.isEmpty || unit.isEmpty) {
+                if (name.isEmpty) {
                   ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
-                      content: Text('Nom et unité sont obligatoires'), backgroundColor: AppTheme.warning));
+                      content: Text('Le nom est obligatoire'), backgroundColor: AppTheme.warning));
                   return;
                 }
 
                 final id = FirebaseFirestore.instance.collection('stock').doc().id;
                 final minQty = double.tryParse(minCtrl.text) ?? 0;
                 final unitCost = double.tryParse(priceCtrl.text) ?? 0;
+                // Unité optionnelle : si vide → 'pcs' par défaut
+                final finalUnit = unit.isEmpty ? 'pcs' : unit;
 
                 final newItem = StockItem(
                   id: id,
                   name: name,
-                  unit: unit,
+                  unit: finalUnit,
                   currentQuantity: qty,
                   minQuantity: minQty,
                   maxQuantity: qty > 0 ? qty * 2 : 100,
@@ -573,7 +720,7 @@ class _StockTabState extends State<_StockTab> {
     final isSoftDelete = hasMenuLinks;
     final warningText = isSoftDelete
         ? 'Ce produit est lié au menu. Il sera désactivé (non supprimé définitivement).'
-        : 'Ce produit sera désactivé et masqué de la liste.\nLes mouvements de stock seront conservés.';;
+        : 'Ce produit sera désactivé et masqué de la liste.\nLes mouvements de stock seront conservés.';
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1139,8 +1286,9 @@ class _StockItemCard extends StatelessWidget {
   final StockItem item;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback? onAdjustQty;
 
-  const _StockItemCard({required this.item, required this.onEdit, required this.onDelete});
+  const _StockItemCard({required this.item, required this.onEdit, required this.onDelete, this.onAdjustQty});
 
   @override
   Widget build(BuildContext context) {
@@ -1197,7 +1345,7 @@ class _StockItemCard extends StatelessWidget {
                   ],
                 ),
               ),
-              // Actions : modifier + supprimer
+              // Actions : modifier qté + modifier infos + supprimer
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -1206,7 +1354,21 @@ class _StockItemCard extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Bouton modifier
+                      // Bouton modifier quantité
+                      GestureDetector(
+                        onTap: onAdjustQty,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: AppTheme.warning.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(7),
+                            border: Border.all(color: AppTheme.warning.withValues(alpha: 0.3)),
+                          ),
+                          child: const Icon(Icons.pin_outlined, color: AppTheme.warning, size: 14),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      // Bouton modifier infos
                       GestureDetector(
                         onTap: onEdit,
                         child: Container(
@@ -1499,6 +1661,284 @@ class _ProductAvailCard extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =================== ONGLET HISTORIQUE STOCK ===================
+class _StockHistoryTab extends StatefulWidget {
+  const _StockHistoryTab();
+
+  @override
+  State<_StockHistoryTab> createState() => _StockHistoryTabState();
+}
+
+class _StockHistoryTabState extends State<_StockHistoryTab> {
+  String _filterAction = 'tous';
+  String _searchQuery = '';
+
+  static const Map<String, String> _actionLabels = {
+    'tous':                  'Tous',
+    'creation':              'Créations',
+    'approvisionnement':     'Appros',
+    'modification_quantite': 'Modif. Qté',
+    'modification_info':     'Modif. Info',
+    'suppression':           'Suppressions',
+  };
+
+  static const Map<String, IconData> _actionIcons = {
+    'creation':              Icons.add_box_outlined,
+    'approvisionnement':     Icons.add_shopping_cart,
+    'modification_quantite': Icons.pin_outlined,
+    'modification_info':     Icons.edit_outlined,
+    'suppression':           Icons.delete_outline,
+  };
+
+  static const Map<String, Color> _actionColors = {
+    'creation':              Color(0xFF4CAF50),
+    'approvisionnement':     Color(0xFF2E7D32),
+    'modification_quantite': Color(0xFFFF9800),
+    'modification_info':     Color(0xFF5C6BC0),
+    'suppression':           Color(0xFFF44336),
+  };
+
+  String _formatDate(int ms) {
+    final d = DateTime.fromMillisecondsSinceEpoch(ms);
+    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} '
+           '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _actionLabel(String action) => switch (action) {
+    'creation'              => 'Création',
+    'approvisionnement'     => 'Approvisionné',
+    'modification_quantite' => 'Quantité modifiée',
+    'modification_info'     => 'Info modifiée',
+    'suppression'           => 'Supprimé',
+    _                       => action,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.read<AppProvider>();
+
+    return Scaffold(
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                // ── Barre de recherche ────────────────────────────────
+                TextField(
+                  onChanged: (v) => setState(() => _searchQuery = v),
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'Rechercher par produit, utilisateur…',
+                    prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary, size: 18),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, color: AppTheme.textSecondary, size: 16),
+                            onPressed: () => setState(() => _searchQuery = ''),
+                          )
+                        : null,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // ── Filtres par action ────────────────────────────────
+                SizedBox(
+                  height: 34,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _actionLabels.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 6),
+                    itemBuilder: (context, i) {
+                      final key = _actionLabels.keys.elementAt(i);
+                      final label = _actionLabels[key]!;
+                      final selected = _filterAction == key;
+                      final color = key == 'tous' ? AppTheme.primary : (_actionColors[key] ?? AppTheme.primary);
+                      return GestureDetector(
+                        onTap: () => setState(() => _filterAction = key),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: selected ? color.withValues(alpha: 0.2) : AppTheme.surfaceLight,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: selected ? color : const Color(0xFF2A2A5A)),
+                          ),
+                          child: Text(label,
+                              style: TextStyle(
+                                  color: selected ? color : AppTheme.textSecondary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Liste historique ──────────────────────────────────────────
+          Expanded(
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: provider.streamStockHistory(),
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snap.hasError) {
+                  return Center(
+                    child: Text('Erreur: ${snap.error}',
+                        style: const TextStyle(color: AppTheme.error)),
+                  );
+                }
+
+                var entries = snap.data ?? [];
+
+                // Filtrer par action
+                if (_filterAction != 'tous') {
+                  entries = entries.where((e) => e['action'] == _filterAction).toList();
+                }
+
+                // Filtrer par recherche
+                if (_searchQuery.isNotEmpty) {
+                  final q = _searchQuery.toLowerCase();
+                  entries = entries.where((e) =>
+                    (e['stockItemName'] as String? ?? '').toLowerCase().contains(q) ||
+                    (e['userName'] as String? ?? '').toLowerCase().contains(q) ||
+                    (e['comment'] as String? ?? '').toLowerCase().contains(q)
+                  ).toList();
+                }
+
+                if (entries.isEmpty) {
+                  return EmptyState(
+                    icon: Icons.history,
+                    title: _searchQuery.isNotEmpty
+                        ? 'Aucun résultat pour "$_searchQuery"'
+                        : 'Aucun historique',
+                    subtitle: 'Les mouvements de stock apparaîtront ici',
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  itemCount: entries.length,
+                  itemBuilder: (context, i) {
+                    final e = entries[i];
+                    final action     = e['action'] as String? ?? '';
+                    final prodName   = e['stockItemName'] as String? ?? '—';
+                    final oldQty     = (e['oldQuantity'] as num?)?.toDouble() ?? 0;
+                    final newQty     = (e['newQuantity'] as num?)?.toDouble() ?? 0;
+                    final diff       = (e['difference'] as num?)?.toDouble() ?? (newQty - oldQty);
+                    final userName   = e['userName'] as String? ?? '—';
+                    final comment    = e['comment'] as String? ?? '';
+                    final createdAt  = (e['createdAt'] as num?)?.toInt() ?? 0;
+
+                    final color = _actionColors[action] ?? AppTheme.textSecondary;
+                    final icon  = _actionIcons[action] ?? Icons.info_outline;
+                    final diffSign = diff >= 0 ? '+' : '';
+                    final diffColor = diff > 0 ? AppTheme.success : diff < 0 ? AppTheme.error : AppTheme.textSecondary;
+
+                    return GlassCard(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      border: Border.all(color: color.withValues(alpha: 0.25)),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Icône action
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            margin: const EdgeInsets.only(right: 10),
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(icon, color: color, size: 18),
+                          ),
+                          // Infos
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Ligne 1 : produit + action
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(prodName,
+                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                                          overflow: TextOverflow.ellipsis),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: color.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(_actionLabel(action),
+                                          style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                // Ligne 2 : ancienne qté → nouvelle qté (différence)
+                                Row(
+                                  children: [
+                                    Text('$oldQty', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                                    const Padding(
+                                      padding: EdgeInsets.symmetric(horizontal: 4),
+                                      child: Icon(Icons.arrow_forward, color: AppTheme.textSecondary, size: 11),
+                                    ),
+                                    Text('$newQty', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 11)),
+                                    const SizedBox(width: 8),
+                                    Text('($diffSign${diff.toStringAsFixed(diff == diff.truncateToDouble() ? 0 : 2)})',
+                                        style: TextStyle(color: diffColor, fontWeight: FontWeight.w700, fontSize: 11)),
+                                  ],
+                                ),
+                                const SizedBox(height: 3),
+                                // Ligne 3 : utilisateur + date
+                                Row(
+                                  children: [
+                                    const Icon(Icons.person_outline, color: AppTheme.textSecondary, size: 11),
+                                    const SizedBox(width: 3),
+                                    Text(userName, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                                    const SizedBox(width: 8),
+                                    const Icon(Icons.access_time, color: AppTheme.textSecondary, size: 11),
+                                    const SizedBox(width: 3),
+                                    Text(createdAt > 0 ? _formatDate(createdAt) : '—',
+                                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                                  ],
+                                ),
+                                // Ligne 4 : commentaire (si présent)
+                                if (comment.isNotEmpty) ...[
+                                  const SizedBox(height: 3),
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.notes, color: AppTheme.textSecondary, size: 11),
+                                      const SizedBox(width: 3),
+                                      Expanded(
+                                        child: Text(comment,
+                                            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                                            overflow: TextOverflow.ellipsis),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ],
       ),

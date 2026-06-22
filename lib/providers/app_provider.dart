@@ -1335,22 +1335,80 @@ class AppProvider extends ChangeNotifier {
     await _firebase.updateStockItem(item);
   }
 
+  /// Crée un article + enregistre dans stock_history (action: création)
   Future<void> addStockItem(StockItem item) async {
     await _firebase.saveStockItem(item);
+    final userName = _currentUser?.name ?? 'Admin';
+    await _firebase.addStockHistoryEntry(
+      stockItemId: item.id,
+      stockItemName: item.name,
+      action: 'creation',
+      oldQuantity: 0,
+      newQuantity: item.currentQuantity,
+      userName: userName,
+      comment: 'Création du produit',
+    );
   }
 
+  /// Met à jour les infos d'un article + enregistre dans stock_history (action: modification_info)
   Future<void> updateStockItem(StockItem item) async {
     await _firebase.updateStockItem(item);
+    final userName = _currentUser?.name ?? 'Admin';
+    await _firebase.addStockHistoryEntry(
+      stockItemId: item.id,
+      stockItemName: item.name,
+      action: 'modification_info',
+      oldQuantity: item.currentQuantity,
+      newQuantity: item.currentQuantity,
+      userName: userName,
+      comment: 'Modification des informations',
+    );
+  }
+
+  /// Modifie la quantité d'un article + enregistre dans stock_history (action: modification_quantite)
+  Future<void> adjustStockQuantity({
+    required String id,
+    required double newQuantity,
+    required String motif,
+  }) async {
+    final item = _stockItems.firstWhere((s) => s.id == id, orElse: () => StockItem(id: '', name: '', unit: '', currentQuantity: 0, minQuantity: 0, maxQuantity: 0, unitCost: 0, category: ''));
+    if (item.id.isEmpty) return;
+    final oldQuantity = item.currentQuantity;
+    item.currentQuantity = newQuantity;
+    await _firebase.updateStockItem(item);
+    final userName = _currentUser?.name ?? 'Admin';
+    await _firebase.addStockHistoryEntry(
+      stockItemId: item.id,
+      stockItemName: item.name,
+      action: 'modification_quantite',
+      oldQuantity: oldQuantity,
+      newQuantity: newQuantity,
+      userName: userName,
+      comment: motif,
+    );
   }
 
   Future<void> deleteStockItem(String id) async {
     await _firebase.deleteStockItem(id);
   }
 
-  /// Soft-delete : active=false + deletedAt + deletedBy
+  /// Soft-delete : active=false + deletedAt + deletedBy + stock_history
   Future<void> softDeleteStockItem(String id) async {
     final userName = currentUser?.name ?? 'Inconnu';
+    // Récupérer les infos avant suppression
+    final item = _stockItems.firstWhere((s) => s.id == id, orElse: () => StockItem(id: '', name: '', unit: '', currentQuantity: 0, minQuantity: 0, maxQuantity: 0, unitCost: 0, category: ''));
     await _firebase.softDeleteStockItem(id, userName);
+    if (item.id.isNotEmpty) {
+      await _firebase.addStockHistoryEntry(
+        stockItemId: item.id,
+        stockItemName: item.name,
+        action: 'suppression',
+        oldQuantity: item.currentQuantity,
+        newQuantity: 0,
+        userName: userName,
+        comment: 'Produit désactivé',
+      );
+    }
   }
 
   // ── Catégories stock (Firestore stock_categories) ────────────────────────
@@ -1359,7 +1417,10 @@ class AppProvider extends ChangeNotifier {
   Future<void> updateStockCategory(String oldName, String newName) => _firebase.updateStockCategory(oldName, newName);
   Future<void> deleteStockCategory(String name) => _firebase.deleteStockCategory(name);
 
-  /// Approvisionne un article de stock (entrée + stock_movements)
+  /// Stream historique stock
+  Stream<List<Map<String, dynamic>>> streamStockHistory() => _firebase.streamStockHistory();
+
+  /// Approvisionne un article de stock (entrée + stock_movements + stock_history)
   Future<void> restockItem({
     required String stockItemId,
     required double qty,

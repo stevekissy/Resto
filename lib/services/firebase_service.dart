@@ -572,6 +572,52 @@ class FirebaseService {
     });
   }
 
+  // =================== STOCK HISTORY ===================
+
+  /// Ajoute une entrée dans la collection stock_history.
+  /// action : 'creation' | 'modification_quantite' | 'approvisionnement' | 'suppression' | 'modification_info'
+  Future<void> addStockHistoryEntry({
+    required String stockItemId,
+    required String stockItemName,
+    required String action,
+    required double oldQuantity,
+    required double newQuantity,
+    required String userName,
+    String? comment,
+  }) async {
+    final id = _db.collection('stock_history').doc().id;
+    final diff = newQuantity - oldQuantity;
+    await _db.collection('stock_history').doc(id).set({
+      'id': id,
+      'stockItemId': stockItemId,
+      'stockItemName': stockItemName,
+      'action': action,
+      'oldQuantity': oldQuantity,
+      'newQuantity': newQuantity,
+      'difference': diff,
+      'userName': userName,
+      'comment': comment ?? '',
+      'createdAt': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// Stream de l'historique stock (les 200 dernières entrées, triées par date desc en mémoire).
+  Stream<List<Map<String, dynamic>>> streamStockHistory() {
+    return _db
+        .collection('stock_history')
+        .limit(200)
+        .snapshots()
+        .map((snap) {
+      final list = snap.docs.map((d) => d.data()).toList();
+      list.sort((a, b) {
+        final ta = (a['createdAt'] as num?)?.toInt() ?? 0;
+        final tb = (b['createdAt'] as num?)?.toInt() ?? 0;
+        return tb.compareTo(ta);
+      });
+      return list;
+    });
+  }
+
   // =================== STOCK CATEGORIES ===================
 
   Future<List<String>> fetchStockCategories() async {
@@ -1485,6 +1531,17 @@ class FirebaseService {
       note: note,
     );
     await _db.collection('stock_movements').doc(movId).set(movement.toMap());
+    // Enregistrer aussi dans stock_history (#5)
+    final currentAfter = (stockSnap.data()?['currentQuantity'] as num?)?.toDouble() ?? 0;
+    await addStockHistoryEntry(
+      stockItemId: stockItemId,
+      stockItemName: itemName,
+      action: 'approvisionnement',
+      oldQuantity: currentAfter - qty,
+      newQuantity: currentAfter,
+      userName: createdBy,
+      comment: note ?? (supplierName != null ? 'Fournisseur: $supplierName' : null),
+    );
     debugPrint('[FirebaseService] restockItem: +$qty $unit pour $itemName');
   }
 
