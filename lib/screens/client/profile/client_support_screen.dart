@@ -21,9 +21,9 @@ class _ClientSupportScreenState extends State<ClientSupportScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // Infos restaurant (à adapter)
-  static const _restaurantWhatsApp = '+2250101010101';
-  static const _restaurantPhone = '+2250101010101';
+  // Infos restaurant SANKADIOKRO
+  static const _restaurantWhatsApp = '+2250707042947';
+  static const _restaurantPhone = '07 07 04 29 47';
 
   @override
   void initState() {
@@ -192,9 +192,7 @@ class _ContactTab extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              _HoursRow('Lundi – Vendredi', '08h00 – 21h00'),
-              _HoursRow('Samedi', '09h00 – 22h00'),
-              _HoursRow('Dimanche', '10h00 – 20h00'),
+              _HoursRow('Tous les jours', '08h00 – 00h00'),
             ],
           ),
         ),

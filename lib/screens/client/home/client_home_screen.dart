@@ -221,19 +221,37 @@ class ClientHomeScreen extends StatelessWidget {
 
   void _openMenu(BuildContext context, OrderType type) {
     ClientProviderProxy.read(context).setOrderType(type);
-    DefaultTabController.maybeOf(context);
-    // Naviguer vers l'onglet Menu (index 1) via le parent
-    final scaffold = ScaffoldMessenger.of(context);
-    scaffold.clearSnackBars();
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const ClientMenuScreen()));
+    ScaffoldMessenger.of(context).clearSnackBars();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (ctx) => ClientMenuScreen(
+          onGoHome: () => Navigator.pop(ctx),
+        ),
+      ),
+    );
   }
 
   void _goToMenu(BuildContext context) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const ClientMenuScreen()));
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (ctx) => ClientMenuScreen(
+          onGoHome: () => Navigator.pop(ctx),
+        ),
+      ),
+    );
   }
 
   void _goToOrders(BuildContext context) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const ClientOrdersScreen()));
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (ctx) => ClientOrdersScreen(
+          onGoHome: () => Navigator.pop(ctx),
+        ),
+      ),
+    );
   }
 }
 

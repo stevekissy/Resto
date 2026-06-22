@@ -479,21 +479,22 @@ class ClientProvider extends ChangeNotifier {
     // via le champ loyaltyPointsAwarded.
     if (newStatus == ClientOrderStatus.delivered) {
       try {
-        // Récupérer la commande pour obtenir clientId et loyaltyPointsEarned
+        // Récupérer la commande depuis le cache local (mis à jour par le stream)
         final order = _orders.firstWhere(
           (o) => o.id == orderId,
           orElse: () => throw Exception('Commande $orderId non trouvée dans le cache'),
         );
-        if (order.loyaltyPointsEarned > 0 && order.clientId.isNotEmpty) {
+        if (order.clientId.isNotEmpty) {
+          // Appel TOUJOURS après delivered (même si loyaltyPointsEarned == 0)
+          // → awardLoyaltyPoints() gère l'idempotence ET met à jour totalSpent
           await _svc.awardLoyaltyPoints(
             clientOrderId: orderId,
             clientId: order.clientId,
-            pointsToAward: order.loyaltyPointsEarned,
+            pointsToAward: order.loyaltyPointsEarned, // peut être 0
           );
         }
       } catch (e) {
-        // Non bloquant : le statut a déjà été mis à jour, l'attribution
-        // peut être rejouée manuellement si nécessaire.
+        // Non bloquant : statut déjà mis à jour — peut être rejoué
         debugPrint('[ClientProvider] awardLoyaltyPoints erreur: $e');
       }
     }

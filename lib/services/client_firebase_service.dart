@@ -211,11 +211,9 @@ class ClientFirebaseService {
     // Créer aussi dans la collection 'orders' pour le tableau de bord cuisine
     await _createInternalOrder(data, id);
 
-    // Mettre à jour les stats client
-    await _db.collection('clients').doc(order.clientId).update({
-      'totalOrders': FieldValue.increment(1),
-      'totalSpent': FieldValue.increment(order.grandTotal),
-    });
+    // ⚠️ NE PAS mettre à jour totalOrders / totalSpent ici.
+    // Ces compteurs ne bougent QUE quand la commande est payée ET livrée.
+    // Voir awardLoyaltyPoints() — appelé après statut "delivered".
 
     return id;
   }
@@ -462,47 +460,89 @@ class ClientFirebaseService {
   // garantit l'idempotence (pas de double crédit si appelé deux fois).
   //
   // Appelé par updateOrderStatus() quand newStatus == delivered.
+  // ── Attribution sécurisée des points fidélité + totalSpent (après paiement ET livraison) ──
+  //
+  // Règle STRICTE :
+  //   paymentStatus == fullyPaid  (index 2)
+  //   status        == delivered  (index 5)
+  //   loyaltyPointsAwarded == false  (idempotence)
+  //
+  // Appelé par updateOrderStatus() quand newStatus == delivered.
+  // Incrémente aussi totalOrders et totalSpent — jamais à la création.
   Future<void> awardLoyaltyPoints({
     required String clientOrderId,
     required String clientId,
     required int pointsToAward,
   }) async {
-    if (pointsToAward <= 0) return;
-
-    // Vérification idempotence : ne pas re-créditer si déjà attribués
+    // Vérification idempotence : lire la commande complète depuis Firestore
     final orderDoc = await _db.collection('client_orders').doc(clientOrderId).get();
     if (!orderDoc.exists) return;
-    final alreadyAwarded = orderDoc.data()?['loyaltyPointsAwarded'] as bool? ?? false;
+    final data = orderDoc.data()!;
+
+    // ── Idempotence : bloquer si déjà traité ──────────────────────────────
+    final alreadyAwarded = data['loyaltyPointsAwarded'] as bool? ?? false;
     if (alreadyAwarded) {
-      debugPrintOrder('[loyalty] Points déjà attribués pour $clientOrderId — skip');
+      debugPrintOrder('[loyalty] Déjà traité pour $clientOrderId — skip complet');
       return;
     }
 
-    // Marquer l'ordre AVANT d'écrire la transaction (protection crash)
+    // ── Vérification triple : payé + livré (lecture depuis Firestore) ─────
+    final deliveryStatusIndex = (data['status'] as num?)?.toInt() ?? -1;
+    final paymentStatusIndex  = (data['paymentStatus'] as num?)?.toInt() ?? -1;
+    // Statut livraison : delivered = index 5 dans ClientOrderStatus
+    // Statut paiement : fullyPaid = index 2 dans ClientPaymentStatus
+    // Note : cashOnDelivery accepté si livré (paiement à la livraison)
+    final isDelivered = deliveryStatusIndex == 5; // ClientOrderStatus.delivered
+    final isFullyPaid = paymentStatusIndex == 2;  // ClientPaymentStatus.fullyPaid
+    // Pour paiement à la livraison (index 0 = cashOnDelivery),
+    // on considère payé à la livraison si livré.
+    final paymentMethod = (data['paymentMethod'] as num?)?.toInt() ?? -1;
+    final isCashOnDelivery = paymentMethod == 0;
+    final paymentOk = isFullyPaid || (isCashOnDelivery && isDelivered);
+
+    if (!isDelivered || !paymentOk) {
+      debugPrintOrder('[loyalty] Conditions non remplies (delivered=$isDelivered, paymentOk=$paymentOk) — skip');
+      return;
+    }
+
+    // ── Marquer AVANT toute écriture (protection crash/double appel) ──────
     final now = DateTime.now().millisecondsSinceEpoch;
     await _db.collection('client_orders').doc(clientOrderId).update({
       'loyaltyPointsAwarded': true,
       'loyaltyPointsAwardedAt': now,
     });
 
-    // Créer la transaction fidélité
-    final txId = _uuid.v4();
-    await _db.collection('loyalty_transactions').doc(txId).set({
-      'id': txId,
-      'clientId': clientId,
-      'type': LoyaltyType.earn.index,
-      'points': pointsToAward,
-      'description': 'Points fidélité — commande livrée',
-      'orderId': clientOrderId,
-      'createdAt': now,
-    });
-
-    // Incrémenter le solde du client
+    // ── Incrémenter totalOrders et totalSpent (ici et seulement ici) ─────
+    final totalAmount = (data['totalAmount'] as num?)?.toDouble() ?? 0;
+    final deliveryFee = (data['deliveryFee'] as num?)?.toDouble() ?? 0;
+    final grandTotal  = totalAmount + deliveryFee;
     await _db.collection('clients').doc(clientId).update({
-      'loyaltyPoints': FieldValue.increment(pointsToAward),
+      'totalOrders': FieldValue.increment(1),
+      'totalSpent':  FieldValue.increment(grandTotal),
     });
 
-    debugPrintOrder('[loyalty] ✅ $pointsToAward points attribués → client $clientId');
+    // ── Créer la transaction fidélité (seulement si points > 0) ──────────
+    if (pointsToAward > 0) {
+      final txId = _uuid.v4();
+      await _db.collection('loyalty_transactions').doc(txId).set({
+        'id': txId,
+        'clientId': clientId,
+        'type': LoyaltyType.earn.index,
+        'points': pointsToAward,
+        'description': 'Points fidélité — commande livrée et payée',
+        'orderId': clientOrderId,
+        'createdAt': now,
+      });
+
+      // Incrémenter le solde de points
+      await _db.collection('clients').doc(clientId).update({
+        'loyaltyPoints': FieldValue.increment(pointsToAward),
+      });
+
+      debugPrintOrder('[loyalty] ✅ $pointsToAward pts + totalSpent+$grandTotal F → client $clientId');
+    } else {
+      debugPrintOrder('[loyalty] ✅ totalSpent+$grandTotal F (0 point à attribuer) → client $clientId');
+    }
   }
 
   // ── Menu produits (lecture seule — collection partagée) ────────────────

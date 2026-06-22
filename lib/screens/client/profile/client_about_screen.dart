@@ -44,7 +44,7 @@ class _ClientAboutScreenState extends State<ClientAboutScreen> {
 
     final phone = settings.restaurantPhone.isNotEmpty
         ? settings.restaurantPhone
-        : '+225 07 07 07 07 07';
+        : '07 07 04 29 47';
     final address = settings.restaurantAddress.isNotEmpty
         ? settings.restaurantAddress
         : 'Yopougon Millionnaire, Abidjan';
@@ -141,8 +141,8 @@ class _ClientAboutScreenState extends State<ClientAboutScreen> {
             icon: Icons.email_outlined,
             color: AppTheme.primary,
             label: 'Email',
-            value: 'contact@sankadiokro.ci',
-            onTap: () => _sendEmail('contact@sankadiokro.ci'),
+            value: 'restaurantsankadiokro@gmail.com',
+            onTap: () => _sendEmail('restaurantsankadiokro@gmail.com'),
           ),
           const SizedBox(height: 20),
 
@@ -315,7 +315,7 @@ DROITS
 Vous avez le droit d\'accéder, de corriger ou de supprimer vos données en contactant notre support.
 
 CONTACT
-Pour toute question : contact@sankadiokro.ci
+Pour toute question : restaurantsankadiokro@gmail.com
 ''';
 }
 
@@ -434,9 +434,7 @@ class _HoursCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          _HRow('Lundi – Vendredi', '11h00 – 23h00'),
-          _HRow('Samedi', '10h00 – 23h30'),
-          _HRow('Dimanche', '11h00 – 22h00'),
+          _HRow('Tous les jours', '08h00 – 00h00'),
         ],
       ),
     );
