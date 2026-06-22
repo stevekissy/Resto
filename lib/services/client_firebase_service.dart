@@ -188,6 +188,7 @@ class ClientFirebaseService {
     });
   }
 
+  /// Stream côté client — lit client_orders (pour l'espace client connecté)
   Stream<List<ClientOrder>> streamAllOnlineOrders() {
     return _db
         .collection('client_orders')
@@ -197,6 +198,87 @@ class ClientFirebaseService {
         .map((snap) => snap.docs
             .map((d) => ClientOrder.fromMap(d.data()))
             .toList());
+  }
+
+  /// Stream côté admin — lit la collection 'orders' filtrée sur orderSource==online
+  /// Convertit les docs 'orders' en ClientOrder pour l'écran OnlineOrdersAdmin.
+  Stream<List<ClientOrder>> streamAdminOnlineOrders() {
+    return _db
+        .collection('orders')
+        .where('orderSource', isEqualTo: 'online')
+        .snapshots()
+        .map((snap) {
+      final list = snap.docs.map((d) {
+        final data = Map<String, dynamic>.from(d.data());
+        // Normaliser les champs pour que ClientOrder.fromMap() fonctionne
+        // La collection orders utilise status string ('pending') → mapper en int
+        final statusRaw = data['status'];
+        if (statusRaw is String) {
+          data['status'] = _clientStatusFromString(statusRaw);
+        }
+        // orderType est stocké comme string dans orders
+        final orderTypeRaw = data['tableNumber'] as String? ?? '';
+        if (data['orderType'] == null) {
+          data['orderType'] = orderTypeRaw.contains('Emporter') ? 1 : 0;
+        }
+        // paymentMethod et paymentStatus peuvent être int ou string
+        final pmRaw = data['paymentMethod'];
+        if (pmRaw is String) {
+          data['paymentMethod'] = _paymentMethodFromString(pmRaw);
+        }
+        final psRaw = data['paymentStatus'];
+        if (psRaw is String) {
+          data['paymentStatus'] = _paymentStatusFromString(psRaw);
+        }
+        // L'id du document admin est internalOrderId — l'admin le gère via clientOrderId
+        // On expose clientOrderId comme 'id' pour que updateOrderStatus() fonctionne
+        data['id'] = data['clientOrderId'] as String? ?? d.id;
+        data['internalOrderId'] = d.id;
+        // S'assurer que createdAt est bien présent (Timestamp Firestore)
+        // ClientOrder.fromMap sait gérer int et Timestamp
+        return ClientOrder.fromMap(data);
+      }).toList();
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
+  }
+
+  /// Convertit le champ status string de la collection orders en index ClientOrderStatus
+  int _clientStatusFromString(String s) {
+    switch (s) {
+      case 'pending':    return 0; // ClientOrderStatus.pending
+      case 'confirmed':  return 1; // ClientOrderStatus.confirmed
+      case 'preparing':  return 2; // ClientOrderStatus.preparing
+      case 'ready':      return 3; // ClientOrderStatus.ready
+      case 'delivering': return 4; // ClientOrderStatus.delivering
+      case 'delivered':  return 5; // ClientOrderStatus.delivered
+      case 'cancelled':  return 6; // ClientOrderStatus.cancelled
+      default:           return 0;
+    }
+  }
+
+  /// Convertit le paymentMethod string en index ClientPaymentMethod
+  int _paymentMethodFromString(String s) {
+    switch (s) {
+      case 'cashOnDelivery': return 0;
+      case 'orangeMoney':    return 1;
+      case 'mtnMoney':       return 2;
+      case 'moovMoney':      return 3;
+      case 'wave':           return 4;
+      case 'card':           return 5;
+      default:               return 0;
+    }
+  }
+
+  /// Convertit le paymentStatus string en index ClientPaymentStatus
+  int _paymentStatusFromString(String s) {
+    switch (s) {
+      case 'pending':      return 0;
+      case 'depositPaid':  return 1;
+      case 'fullyPaid':
+      case 'paid':         return 2;
+      default:             return 0;
+    }
   }
 
   Future<String> createOrder(ClientOrder order) async {
@@ -230,12 +312,16 @@ class ClientFirebaseService {
   /// Crée une commande miroir dans la collection interne 'orders' de l'app de gestion
   Future<void> _createInternalOrder(Map<String, dynamic> clientOrderData, String clientOrderId) async {
     try {
+      // Conserver les clés natives de CartItem.fromMap (productName, unitPrice)
+      // + ajouter des alias (name, price) pour compatibilité cuisine/affichage
       final items = (clientOrderData['items'] as List? ?? []).map((i) {
         final m = i as Map<String, dynamic>;
         return {
           'productId': m['productId'],
-          'name': m['productName'],
-          'price': m['unitPrice'],
+          'productName': m['productName'],   // clé lue par CartItem.fromMap
+          'name': m['productName'],          // alias pour affichage cuisine
+          'unitPrice': m['unitPrice'],       // clé lue par CartItem.fromMap
+          'price': m['unitPrice'],           // alias pour affichage cuisine
           'quantity': m['quantity'],
           'comment': m['comment'] ?? '',
           'categoryName': m['categoryName'] ?? '',
@@ -270,6 +356,9 @@ class ClientFirebaseService {
         'clientId': clientOrderData['clientId'],
         'clientName': clientOrderData['clientName'],
         'clientPhone': clientOrderData['clientPhone'],
+        // Statuts admin/cuisine — requis pour le filtrage admin
+        'adminStatus': 'received',
+        'kitchenStatus': 'pending',
         // Adresse livraison
         'deliveryAddress': deliveryAddr?['address'] ?? '',
         'geoLocation': clientOrderData['geoLocation'],
@@ -289,8 +378,9 @@ class ClientFirebaseService {
         'deliveryNote': clientOrderData['deliveryNote'],
         'yangoStatus': 0,  // YangoDeliveryStatus.waiting
         'remainingAmount': clientOrderData['remainingAmount'],
-        'kitchenStatus': 'pending',
       });
+
+      debugPrint('ONLINE_ORDER_CREATED orderId=$internalOrderId clientOrderId=$clientOrderId');
 
       // Mettre à jour clientOrderData avec l'id interne
       await _db.collection('client_orders').doc(clientOrderId).update({
@@ -353,8 +443,10 @@ class ClientFirebaseService {
     }
   }
 
-  // ignore: avoid_print
-  void debugPrintOrder(String msg) {}
+  void debugPrintOrder(String msg) {
+    // ignore: avoid_print
+    debugPrint('[ClientFirebaseService] $msg');
+  }
 
   Future<void> updateOrderStatus(String orderId, ClientOrderStatus status) async {
     final now = DateTime.now().millisecondsSinceEpoch;

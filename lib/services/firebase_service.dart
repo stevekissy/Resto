@@ -350,6 +350,13 @@ class FirebaseService {
             cancelReason: data['cancelReason'] as String?,
             paymentStatus: data['paymentStatus'] as String?,
             settlementStatus: data['settlementStatus'] as String?,
+            // ── Commandes en ligne ────────────────────────────────────
+            orderType: data['orderType'] as String?
+                ?? (data['tableNumber'] == 'À Emporter' ? 'takeaway' : 'dine_in'),
+            source: data['source'] as String?
+                ?? data['orderSource'] as String? ?? 'pos',
+            clientId: data['clientId'] as String?,
+            clientPhone: data['clientPhone'] as String?,
           );
         } catch (e) {
           debugPrint('[stream.orders] doc ${d.id}: $e');

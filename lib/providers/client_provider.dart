@@ -448,6 +448,8 @@ class ClientProvider extends ChangeNotifier {
   }
 
   // ── Admin : charger uniquement les paramètres (sans session client) ─────
+  // ⚠️  Inclut le stream des commandes en ligne (collection 'orders')
+  //     afin que provider.orders soit peuplé pour OnlineOrdersAdminScreen.
 
   Future<void> initSettingsOnly() async {
     _settingsSubscription?.cancel();
@@ -455,11 +457,27 @@ class ClientProvider extends ChangeNotifier {
       _settings = s;
       notifyListeners();
     });
+
     _promotionsSubscription?.cancel();
     _promotionsSubscription = _svc.streamActivePromotions().listen((promos) {
       _promotions = promos;
       notifyListeners();
     });
+
+    // ── CORRECTION CRITIQUE ───────────────────────────────────────────────
+    // Sans ce stream, provider.orders reste [] et l'admin ne voit rien.
+    // streamAdminOnlineOrders() lit la collection 'orders' (orderSource==online)
+    // et la convertit en List<ClientOrder> pour l'écran admin.
+    _ordersSubscription?.cancel();
+    _ordersSubscription = _svc.streamAdminOnlineOrders().listen(
+      (orders) {
+        _orders = orders;
+        notifyListeners();
+      },
+      onError: (e) {
+        debugPrint('[ClientProvider] streamAdminOnlineOrders erreur: $e');
+      },
+    );
   }
 
   // ── Admin : sauvegarder les paramètres en ligne ─────────────────────────
