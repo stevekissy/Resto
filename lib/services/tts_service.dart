@@ -91,6 +91,7 @@ class TtsService {
   static const _kCashierEnabled  = 'tts_cashier_enabled';
   static const _kSpeechRate      = 'tts_speech_rate';
   static const _kVoiceName       = 'tts_voice_name';
+  static const _kPitch           = 'tts_pitch';
 
   /// Charge l'état persisté depuis SharedPreferences.
   /// À appeler au démarrage de l'application (ou des écrans cuisine/caisse).
@@ -100,6 +101,7 @@ class TtsService {
       settings.enabled     = prefs.getBool(_kKitchenEnabled)    ?? true;
       settings.speechRate  = prefs.getDouble(_kSpeechRate)      ?? 0.88;
       settings.voiceName   = prefs.getString(_kVoiceName)       ?? '';
+      _pitch               = prefs.getDouble(_kPitch)           ?? 1.22;
       _cashierEnabledPersisted = prefs.getBool(_kCashierEnabled) ?? false;
       if (kDebugMode) {
         debugPrint('[TTS] État chargé — cuisine: ${settings.enabled}, rate: ${settings.speechRate}, voix: "${settings.voiceName}", caisse: $_cashierEnabledPersisted');
@@ -109,23 +111,43 @@ class TtsService {
     }
   }
 
-  /// Sauvegarde vitesse de parole et nom de voix.
+  // Pitch configurable par l'utilisateur (indépendant du coachMode)
+  double _pitch = 1.22;
+  double get pitch => _pitch;
+
+  /// Sauvegarde vitesse de parole, nom de voix et pitch.
   Future<void> saveVoiceSettings({
     required double speechRate,
     required String voiceName,
+    double? pitch,
   }) async {
     settings.speechRate = speechRate;
     settings.voiceName  = voiceName;
+    if (pitch != null) _pitch = pitch;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_kSpeechRate, speechRate);
       await prefs.setString(_kVoiceName, voiceName);
-      // Appliquer immédiatement la config JS sur web
+      await prefs.setDouble(_kPitch, _pitch);
       if (kIsWeb) {
-        tts_web.setTTSConfig(voiceName, speechRate, _pitchForMode(), settings.volume);
+        tts_web.setTTSConfig(voiceName, speechRate, _pitch, settings.volume);
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[TTS] saveVoiceSettings erreur: $e');
+    }
+  }
+
+  /// Sauvegarde uniquement le pitch.
+  Future<void> savePitch(double pitch) async {
+    _pitch = pitch;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_kPitch, pitch);
+      if (kIsWeb) {
+        tts_web.setTTSConfig(settings.voiceName, settings.speechRate, pitch, settings.volume);
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[TTS] savePitch erreur: $e');
     }
   }
 
@@ -265,18 +287,10 @@ class TtsService {
     _speakNow(next);
   }
 
-  /// Calcule le pitch en fonction du mode coach.
-  /// Mode doux → voix plus douce (pitch légèrement plus haut)
-  /// Mode pression → voix plus incisive (pitch légèrement plus bas)
+  /// Calcule le pitch effectif : pitch utilisateur si défini, sinon basé sur coachMode.
   double _pitchForMode() {
-    switch (settings.coachMode) {
-      case CoachMode.doux:
-        return 1.35;
-      case CoachMode.pression:
-        return 1.10;
-      case CoachMode.normal:
-        return 1.22;
-    }
+    // Si pitch a été modifié manuellement (différent de la valeur mode normal), l'utiliser
+    return _pitch;
   }
 
   /// Effectue la parole réelle (sans file).
@@ -608,6 +622,25 @@ class TtsService {
       'Nouvelle commande en cuisine, table quatre. '
       'Allez l\'équipe, on garde le rythme !',
     );
+  }
+
+  /// Lit la dernière notification de l'historique NotificationService
+  Future<void> readLastNotification(String lastMessage) async {
+    await stop();
+    if (kIsWeb) {
+      tts_web.setTTSConfig(
+        settings.voiceName,
+        settings.speechRate,
+        _pitchForMode(),
+        settings.volume,
+      );
+    }
+    enqueue(lastMessage);
+  }
+
+  /// Annonce générique d'un événement de notification (pour NotificationService)
+  Future<void> announceNotifEvent(String label, String message) async {
+    enqueue('$label. $message');
   }
 
   /// Test voix pour la caisse

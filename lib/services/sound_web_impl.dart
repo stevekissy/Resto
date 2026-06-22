@@ -5,6 +5,7 @@ import 'dart:js' as js;
 //  SOUND WEB IMPL — Web Audio API via dart:js
 //  Génère 5 sonneries synthétisées directement en mémoire.
 //  Aucun fichier externe requis — 100 % intégré.
+//  v2 : intervalle configurable, volume sonnerie / vocal séparés
 // ═══════════════════════════════════════════════════════════════════════════
 
 bool _unlocked = false;
@@ -20,7 +21,6 @@ void webUnlockAudio() {
       js.context['AudioContext'] as js.JsFunction? ??
       js.context['webkitAudioContext'] as js.JsFunction,
     );
-    // Crée un buffer silencieux pour débloquer l'audio policy du navigateur
     final buf = ctx.callMethod('createBuffer', [1, 1, 22050]);
     final src = ctx.callMethod('createBufferSource', []);
     src['buffer'] = buf;
@@ -28,7 +28,7 @@ void webUnlockAudio() {
     src.callMethod('start', [0]);
     _unlocked = true;
   } catch (_) {
-    _unlocked = true; // Considérer comme déverrouillé si erreur
+    _unlocked = true;
   }
 }
 
@@ -36,27 +36,28 @@ void webUnlockAudio() {
 /// Types : classic | restaurant | cash | urgent | discrete
 void webPlaySound(String soundType, {double volume = 1.0}) {
   try {
-    final script = _buildSoundScript(soundType, volume: volume, loop: false);
+    final script = _buildSoundScript(soundType, volume: volume);
     js.context.callMethod('eval', [script]);
     _unlocked = true;
   } catch (_) {}
 }
 
-/// Démarre une boucle urgente (répétition toutes les 10s).
-void webPlayUrgentLoop(String soundType, {double volume = 1.0}) {
+/// Démarre une boucle urgente avec intervalle configurable.
+/// [intervalMs] : intervalle en millisecondes (défaut 10 000ms = 10s)
+void webPlayUrgentLoop(String soundType, {double volume = 1.0, int intervalMs = 10000}) {
   webStopUrgentLoop();
   try {
     // Premier son immédiat
     webPlaySound(soundType, volume: volume);
-    // Répétition via setInterval JS
+    // Répétition via setInterval JS avec intervalle configurable
     final fn = js.allowInterop(() {
       try {
-        final script = _buildSoundScript(soundType, volume: volume, loop: false);
+        final script = _buildSoundScript(soundType, volume: volume);
         js.context.callMethod('eval', [script]);
       } catch (_) {}
     });
     _urgentTimer = js.JsObject.jsify(
-      {'timerId': js.context.callMethod('setInterval', [fn, 10000])},
+      {'timerId': js.context.callMethod('setInterval', [fn, intervalMs])},
     );
   } catch (_) {}
 }
@@ -74,7 +75,7 @@ void webStopUrgentLoop() {
 
 // ── Générateur de scripts Audio ──────────────────────────────────────────
 
-String _buildSoundScript(String soundType, {double volume = 1.0, bool loop = false}) {
+String _buildSoundScript(String soundType, {double volume = 1.0}) {
   switch (soundType) {
     case 'restaurant': return _scriptRestaurant(volume);
     case 'cash':       return _scriptCash(volume);

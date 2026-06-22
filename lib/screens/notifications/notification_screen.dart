@@ -1,10 +1,13 @@
+// ignore_for_file: use_build_context_synchronously
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../services/notification_service.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  NotificationScreen — Paramètres et historique des notifications sonores
+//  NotificationScreen v2 — Paramètres sons + Assistant vocal + Historique
 // ═══════════════════════════════════════════════════════════════════════════
 
 class NotificationScreen extends StatefulWidget {
@@ -39,7 +42,8 @@ class _NotificationScreenState extends State<NotificationScreen>
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('Notifications', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        title: const Text('Notifications',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
         backgroundColor: AppTheme.surfaceLight,
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
@@ -47,7 +51,8 @@ class _NotificationScreenState extends State<NotificationScreen>
             TextButton.icon(
               onPressed: () { _svc.markAllRead(); },
               icon: const Icon(Icons.done_all, color: AppTheme.success, size: 18),
-              label: const Text('Tout lire', style: TextStyle(color: AppTheme.success, fontSize: 12)),
+              label: const Text('Tout lire',
+                  style: TextStyle(color: AppTheme.success, fontSize: 12)),
             ),
         ],
         bottom: TabBar(
@@ -56,11 +61,11 @@ class _NotificationScreenState extends State<NotificationScreen>
           labelColor: AppTheme.primary,
           unselectedLabelColor: AppTheme.textSecondary,
           tabs: [
-            Tab(
+            const Tab(
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.settings, size: 16),
-                const SizedBox(width: 6),
-                const Text('Paramètres'),
+                Icon(Icons.settings, size: 16),
+                SizedBox(width: 6),
+                Text('Paramètres'),
               ]),
             ),
             Tab(
@@ -88,7 +93,9 @@ class _NotificationScreenState extends State<NotificationScreen>
   }
 }
 
-// ── Onglet Paramètres ─────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+//  Onglet Paramètres
+// ══════════════════════════════════════════════════════════════════════════
 
 class _SettingsTab extends StatefulWidget {
   final NotificationService svc;
@@ -100,13 +107,41 @@ class _SettingsTab extends StatefulWidget {
 class _SettingsTabState extends State<_SettingsTab> {
   NotificationService get s => widget.svc;
 
+  // Voix disponibles chargées depuis Web Speech API
+  List<Map<String, String>> _voices = [];
+  bool _voicesLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVoices();
+  }
+
+  void _loadVoices() {
+    if (!kIsWeb) return;
+    try {
+      final json = s.getVoiceListJson();
+      final list = jsonDecode(json) as List<dynamic>;
+      setState(() {
+        _voices = list.map((e) => {
+          'name': e['name'] as String? ?? '',
+          'lang': e['lang'] as String? ?? '',
+        }).toList();
+        _voicesLoaded = true;
+      });
+    } catch (_) {
+      _voicesLoaded = true;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // ── Alerte déblocage audio ──
-        if (!s.isAudioUnlocked) ...[
+
+        // ── Alerte déblocage audio (Web) ──
+        if (kIsWeb && !s.isAudioUnlocked) ...[
           _AudioUnlockBanner(svc: s),
           const SizedBox(height: 12),
         ],
@@ -117,181 +152,548 @@ class _SettingsTabState extends State<_SettingsTab> {
           const SizedBox(height: 12),
         ],
 
-        // ── Section activation générale ──
-        _SectionHeader('Sons et alertes'),
+        // ════════════════════════════════════
+        // 1. PARAMÈTRES SONS
+        // ════════════════════════════════════
+        _SectionHeader('1. Paramètres sons'),
         GlassCard(
           child: Column(children: [
+
             _SwitchRow(
               icon: Icons.volume_up,
               iconColor: AppTheme.primary,
-              title: 'Activer les sons',
+              title: 'Activer tous les sons',
               subtitle: 'Active toutes les sonneries de l\'application',
               value: s.soundEnabled,
               onChanged: (v) async { await s.setSoundEnabled(v); setState(() {}); },
             ),
-            const Divider(color: Color(0xFF2A2A5A), height: 1),
+
+            const _Divider(),
+
+            // Volume général
+            _VolumeRow(
+              icon: Icons.volume_up,
+              iconColor: AppTheme.primary,
+              label: 'Volume général',
+              value: s.volume,
+              onChanged: (v) async { await s.setVolume(v); setState(() {}); },
+              onChangeEnd: (_) => s.testSound(),
+            ),
+
+            const _Divider(),
+
+            // Volume sonnerie
+            _VolumeRow(
+              icon: Icons.notifications_active,
+              iconColor: const Color(0xFFFF7043),
+              label: 'Volume sonneries',
+              value: s.volumeRingtone,
+              onChanged: (v) async { await s.setVolumeRingtone(v); setState(() {}); },
+              onChangeEnd: (_) => s.testSound(),
+            ),
+
+            const _Divider(),
+
+            // Volume vocal
+            _VolumeRow(
+              icon: Icons.record_voice_over,
+              iconColor: const Color(0xFF42A5F5),
+              label: 'Volume assistant vocal',
+              value: s.volumeVoice,
+              onChanged: (v) async { await s.setVolumeVoice(v); setState(() {}); },
+              onChangeEnd: (_) {},
+            ),
+
+            const _Divider(),
+
             _SwitchRow(
               icon: Icons.repeat,
               iconColor: AppTheme.warning,
               title: 'Répéter les alertes importantes',
-              subtitle: 'Commandes urgentes et ruptures de stock (toutes les 10s)',
+              subtitle: 'Sonnerie + vocal répétés pour urgences et ruptures',
               value: s.repeatImportant,
               onChanged: (v) async { await s.setRepeatImportant(v); setState(() {}); },
             ),
+
+            if (s.repeatImportant) ...[
+              const _Divider(),
+              // Intervalle de répétition
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.warning.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.timer, color: AppTheme.warning, size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Intervalle de répétition',
+                          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                      Text('Durée entre chaque répétition d\'alerte',
+                          style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                    ]),
+                  ),
+                  DropdownButton<int>(
+                    value: s.repeatIntervalSec,
+                    dropdownColor: AppTheme.surfaceLight,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    items: kRepeatIntervals.map((sec) => DropdownMenuItem(
+                      value: sec,
+                      child: Text(intervalLabel(sec)),
+                    )).toList(),
+                    onChanged: (v) async {
+                      if (v != null) { await s.setRepeatIntervalSec(v); setState(() {}); }
+                    },
+                  ),
+                ]),
+              ),
+
+              const _Divider(),
+
+              // Durée maximale
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.error.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.hourglass_bottom, color: AppTheme.error, size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Durée max. répétition',
+                          style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                      Text('Arrêt automatique après cette durée',
+                          style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                    ]),
+                  ),
+                  DropdownButton<int>(
+                    value: s.maxRepeatDurationSec,
+                    dropdownColor: AppTheme.surfaceLight,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    items: [60, 120, 180, 300, 600].map((sec) => DropdownMenuItem(
+                      value: sec,
+                      child: Text(intervalLabel(sec)),
+                    )).toList(),
+                    onChanged: (v) async {
+                      if (v != null) { await s.setMaxRepeatDurationSec(v); setState(() {}); }
+                    },
+                  ),
+                ]),
+              ),
+            ],
+
+            const _Divider(),
+
+            // Bouton arrêter toutes les alertes
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () { s.stopAllAlerts(); setState(() {}); },
+                  icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                  label: const Text('Arrêter toutes les alertes'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.error,
+                    side: BorderSide(color: AppTheme.error.withValues(alpha: 0.5)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ),
+            ),
           ]),
         ),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
 
-        // ── Sélection de sonnerie ──
-        _SectionHeader('Sonnerie par défaut'),
+        // ════════════════════════════════════
+        // 2. ASSISTANT VOCAL
+        // ════════════════════════════════════
+        _SectionHeader('2. Assistant vocal'),
         GlassCard(
           child: Column(children: [
-            ...kSoundOptions.map((opt) => _SoundOptionRow(
-              opt: opt,
-              isSelected: s.selectedSound == opt.id,
-              onSelect: () async {
-                await s.setSelectedSound(opt.id);
-                setState(() {});
-              },
-              onTest: () => s.testSound(opt.id),
-            )),
-          ]),
-        ),
 
-        const SizedBox(height: 16),
+            _SwitchRow(
+              icon: Icons.record_voice_over,
+              iconColor: const Color(0xFF42A5F5),
+              title: 'Activer l\'assistant vocal',
+              subtitle: 'Lecture vocale des notifications importantes',
+              value: s.voiceEnabled,
+              onChanged: (v) async { await s.setVoiceEnabled(v); setState(() {}); },
+            ),
 
-        // ── Volume ──
-        _SectionHeader('Volume'),
-        GlassCard(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  const Icon(Icons.volume_down, color: AppTheme.textSecondary, size: 20),
-                  Expanded(
-                    child: SliderTheme(
-                      data: SliderThemeData(
-                        activeTrackColor: AppTheme.primary,
-                        inactiveTrackColor: const Color(0xFF2A2A5A),
-                        thumbColor: AppTheme.primary,
-                        overlayColor: AppTheme.primary.withValues(alpha: 0.2),
+            if (s.voiceEnabled) ...[
+              const _Divider(),
+
+              // Sélection voix
+              if (kIsWeb && _voicesLoaded && _voices.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Row(children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF42A5F5).withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Slider(
-                        value: s.volume,
-                        min: 0.1,
-                        max: 1.0,
-                        divisions: 9,
-                        onChanged: (v) async {
-                          await s.setVolume(v);
-                          setState(() {});
-                        },
-                        onChangeEnd: (_) => s.testSound(),
+                      child: const Icon(Icons.mic, color: Color(0xFF42A5F5), size: 18),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        const Text('Voix',
+                            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                        Text(s.voiceName.isEmpty ? 'Automatique (féminine)' : s.voiceName,
+                            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                            overflow: TextOverflow.ellipsis),
+                      ]),
+                    ),
+                    const SizedBox(width: 8),
+                    DropdownButton<String>(
+                      value: _voices.any((v) => v['name'] == s.voiceName)
+                          ? s.voiceName
+                          : '',
+                      dropdownColor: AppTheme.surfaceLight,
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      items: [
+                        const DropdownMenuItem(
+                          value: '',
+                          child: Text('Auto (féminine)'),
+                        ),
+                        ..._voices.map((v) => DropdownMenuItem(
+                          value: v['name']!,
+                          child: Text(v['name']!.length > 22
+                              ? '${v['name']!.substring(0, 22)}…'
+                              : v['name']!),
+                        )),
+                      ],
+                      onChanged: (v) async {
+                        if (v != null) { await s.setVoiceName(v); setState(() {}); }
+                      },
+                    ),
+                  ]),
+                ),
+
+              const _Divider(),
+
+              // Vitesse de parole
+              _VolumeRow(
+                icon: Icons.speed,
+                iconColor: const Color(0xFF66BB6A),
+                label: 'Vitesse de parole',
+                value: s.speechRate,
+                min: 0.5,
+                max: 1.5,
+                divisions: 10,
+                displayPercent: false,
+                displayValue: '${s.speechRate.toStringAsFixed(2)}×',
+                onChanged: (v) async { await s.setSpeechRate(v); setState(() {}); },
+                onChangeEnd: (_) {},
+              ),
+
+              const _Divider(),
+
+              // Pitch / Ton
+              _VolumeRow(
+                icon: Icons.tune,
+                iconColor: const Color(0xFFAB47BC),
+                label: 'Ton / Pitch',
+                value: s.speechPitch,
+                min: 0.8,
+                max: 1.6,
+                divisions: 8,
+                displayPercent: false,
+                displayValue: '${s.speechPitch.toStringAsFixed(2)}',
+                onChanged: (v) async { await s.setSpeechPitch(v); setState(() {}); },
+                onChangeEnd: (_) {},
+              ),
+
+              const _Divider(),
+
+              // Boutons test
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        s.unlockAudio();
+                        s.testVoice();
+                      },
+                      icon: const Icon(Icons.play_circle_filled, size: 18),
+                      label: const Text('Tester la voix', style: TextStyle(fontSize: 12)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF42A5F5),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                     ),
                   ),
-                  const Icon(Icons.volume_up, color: AppTheme.primary, size: 20),
-                ]),
-                Center(
-                  child: Text(
-                    '${(s.volume * 100).round()} %',
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => s.readLastNotification(),
+                      icon: const Icon(Icons.replay, size: 18),
+                      label: const Text('Dernière notif', style: TextStyle(fontSize: 12)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF66BB6A),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
+                ]),
+              ),
+            ],
+          ]),
         ),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
 
-        // ── Catégories ──
-        _SectionHeader('Catégories de notifications'),
+        // ════════════════════════════════════
+        // 3. TYPES DE NOTIFICATIONS
+        // ════════════════════════════════════
+        _SectionHeader('3. Types de notifications'),
         GlassCard(
           child: Column(children: [
             _SwitchRow(
+              icon: Icons.phone_android,
+              iconColor: const Color(0xFF42A5F5),
+              title: 'Commandes en ligne',
+              subtitle: 'Nouvelles commandes depuis l\'espace client',
+              value: s.notifOnline,
+              onChanged: (v) async { await s.setNotifOnline(v); setState(() {}); },
+            ),
+            const _Divider(),
+            _SwitchRow(
+              icon: Icons.warning_amber,
+              iconColor: AppTheme.error,
+              title: 'Commandes urgentes',
+              subtitle: 'Alertes de commandes prioritaires',
+              value: s.notifUrgent,
+              onChanged: (v) async { await s.setNotifUrgent(v); setState(() {}); },
+            ),
+            const _Divider(),
+            _SwitchRow(
               icon: Icons.restaurant,
               iconColor: const Color(0xFFFF7043),
-              title: 'Notifications cuisine',
+              title: 'Cuisine',
               subtitle: 'Nouvelles commandes, urgences, plats prêts',
               value: s.notifCuisine,
               onChanged: (v) async { await s.setNotifCuisine(v); setState(() {}); },
             ),
-            const Divider(color: Color(0xFF2A2A5A), height: 1),
+            const _Divider(),
             _SwitchRow(
               icon: Icons.point_of_sale,
               iconColor: const Color(0xFF66BB6A),
-              title: 'Notifications caisse',
-              subtitle: 'Paiements enregistrés',
+              title: 'Caisse',
+              subtitle: 'Paiements enregistrés et encaissements',
               value: s.notifCaisse,
               onChanged: (v) async { await s.setNotifCaisse(v); setState(() {}); },
             ),
-            const Divider(color: Color(0xFF2A2A5A), height: 1),
+            const _Divider(),
             _SwitchRow(
               icon: Icons.inventory_2,
               iconColor: const Color(0xFFFFCA28),
-              title: 'Notifications stock',
-              subtitle: 'Stock faible et ruptures',
+              title: 'Stock faible',
+              subtitle: 'Alertes de niveau bas',
               value: s.notifStock,
               onChanged: (v) async { await s.setNotifStock(v); setState(() {}); },
             ),
-            const Divider(color: Color(0xFF2A2A5A), height: 1),
+            const _Divider(),
             _SwitchRow(
-              icon: Icons.people,
-              iconColor: const Color(0xFF42A5F5),
-              title: 'Notifications personnel',
-              subtitle: 'Contrats, salaires à payer',
-              value: s.notifPersonnel,
-              onChanged: (v) async { await s.setNotifPersonnel(v); setState(() {}); },
+              icon: Icons.do_not_disturb_on,
+              iconColor: AppTheme.error,
+              title: 'Rupture de stock',
+              subtitle: 'Produits épuisés',
+              value: s.notifStock,
+              onChanged: (v) async { await s.setNotifStock(v); setState(() {}); },
             ),
-            const Divider(color: Color(0xFF2A2A5A), height: 1),
+            const _Divider(),
             _SwitchRow(
               icon: Icons.event_note,
               iconColor: const Color(0xFFAB47BC),
-              title: 'Notifications réservations',
+              title: 'Réservations',
               subtitle: 'Nouvelles réservations et rappels',
               value: s.notifReservations,
               onChanged: (v) async { await s.setNotifReservations(v); setState(() {}); },
             ),
+            const _Divider(),
+            _SwitchRow(
+              icon: Icons.description,
+              iconColor: const Color(0xFF42A5F5),
+              title: 'Contrats',
+              subtitle: 'Contrats approchant l\'expiration',
+              value: s.notifPersonnel,
+              onChanged: (v) async { await s.setNotifPersonnel(v); setState(() {}); },
+            ),
+            const _Divider(),
+            _SwitchRow(
+              icon: Icons.people,
+              iconColor: const Color(0xFF42A5F5),
+              title: 'Salaires',
+              subtitle: 'Paiements de salaires à effectuer',
+              value: s.notifPersonnel,
+              onChanged: (v) async { await s.setNotifPersonnel(v); setState(() {}); },
+            ),
+            const _Divider(),
+            _SwitchRow(
+              icon: Icons.local_shipping,
+              iconColor: const Color(0xFF66BB6A),
+              title: 'Fournisseurs',
+              subtitle: 'Livraisons et bons de commande',
+              value: s.notifFournisseurs,
+              onChanged: (v) async { await s.setNotifFournisseurs(v); setState(() {}); },
+            ),
+            const _Divider(),
+            _SwitchRow(
+              icon: Icons.settings,
+              iconColor: AppTheme.textSecondary,
+              title: 'Système',
+              subtitle: 'Notifications système et mises à jour',
+              value: s.notifSysteme,
+              onChanged: (v) async { await s.setNotifSysteme(v); setState(() {}); },
+            ),
           ]),
         ),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
 
-        // ── Tester le son ──
-        _SectionHeader('Test sonore'),
+        // ════════════════════════════════════
+        // 4. SONNERIES PAR TYPE
+        // ════════════════════════════════════
+        _SectionHeader('4. Sonneries par type de notification'),
+        ..._buildPerTypeSoundSections(),
+
+        const SizedBox(height: 20),
+
+        // ════════════════════════════════════
+        // 5. ALERTES URGENTES
+        // ════════════════════════════════════
+        _SectionHeader('5. Alertes urgentes'),
+        GlassCard(
+          child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Les commandes urgentes et ruptures critiques déclenchent une sonnerie répétée + lecture vocale répétée jusqu\'à consultation.',
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  if (s.urgentActive)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.error.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppTheme.error.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.alarm, color: AppTheme.error, size: 18),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text('🚨 Alerte urgente en cours',
+                              style: TextStyle(color: AppTheme.error, fontSize: 12, fontWeight: FontWeight.w700)),
+                        ),
+                        ElevatedButton(
+                          onPressed: () { s.acknowledgeUrgent(); setState(() {}); },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.error,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            minimumSize: Size.zero,
+                          ),
+                          child: const Text('Arrêter', style: TextStyle(fontSize: 11)),
+                        ),
+                      ]),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.success.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Row(children: [
+                        Icon(Icons.check_circle, color: AppTheme.success, size: 16),
+                        SizedBox(width: 8),
+                        Text('Aucune alerte urgente active',
+                            style: TextStyle(color: AppTheme.success, fontSize: 12)),
+                      ]),
+                    ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () { s.stopAllAlerts(); setState(() {}); },
+                      icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                      label: const Text('Arrêter toutes les alertes',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.error,
+                        side: BorderSide(color: AppTheme.error.withValues(alpha: 0.5)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ]),
+        ),
+
+        const SizedBox(height: 20),
+
+        // ════════════════════════════════════
+        // TEST SONORE GLOBAL
+        // ════════════════════════════════════
+        _SectionHeader('Test sonore rapide'),
         GlassCard(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                const Text(
-                  'Appuyez sur le bouton ci-dessous pour tester la sonnerie sélectionnée.',
-                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      s.unlockAudio();
-                      s.testSound();
-                    },
-                    icon: const Icon(Icons.play_circle_filled, size: 22),
-                    label: const Text('▶  Tester le son', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
+            child: Column(children: [
+              const Text(
+                'Testez la sonnerie sélectionnée pour vérifier le volume.',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    s.unlockAudio();
+                    s.testSound();
+                  },
+                  icon: const Icon(Icons.play_circle_filled, size: 22),
+                  label: const Text('▶  Tester le son',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ]),
           ),
         ),
 
@@ -299,9 +701,128 @@ class _SettingsTabState extends State<_SettingsTab> {
       ],
     );
   }
+
+  // Sélection sonnerie par type de notification
+  List<Widget> _buildPerTypeSoundSections() {
+    final groups = [
+      {'label': 'Commandes en ligne', 'event': NotifEvent.nouvelleCommandeEnLigne},
+      {'label': 'Commandes urgentes', 'event': NotifEvent.commandeUrgente},
+      {'label': 'Commande prête',     'event': NotifEvent.commandePrete},
+      {'label': 'Paiement',           'event': NotifEvent.paiementEnregistre},
+      {'label': 'Réservation',        'event': NotifEvent.nouvelleReservation},
+      {'label': 'Stock faible',       'event': NotifEvent.stockFaible},
+      {'label': 'Rupture stock',      'event': NotifEvent.ruptureStock},
+      {'label': 'Système',            'event': NotifEvent.notificationSysteme},
+    ];
+
+    return groups.map((g) {
+      final event     = g['event'] as NotifEvent;
+      final label     = g['label'] as String;
+      final curSound  = s.getPerTypeSound(event);
+      return _PerTypeSoundRow(
+        label:       label,
+        event:       event,
+        curSound:    curSound,
+        onSelect:    (sound) async {
+          await s.setPerTypeSound(event, sound);
+          setState(() {});
+        },
+        onTest:      (sound) {
+          s.unlockAudio();
+          s.testSound(sound);
+        },
+      );
+    }).toList();
+  }
 }
 
-// ── Onglet Historique ─────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+//  Widget : Sélection sonnerie par type
+// ══════════════════════════════════════════════════════════════════════════
+
+class _PerTypeSoundRow extends StatelessWidget {
+  final String label;
+  final NotifEvent event;
+  final String curSound;
+  final ValueChanged<String> onSelect;
+  final ValueChanged<String> onTest;
+
+  const _PerTypeSoundRow({
+    required this.label,
+    required this.event,
+    required this.curSound,
+    required this.onSelect,
+    required this.onTest,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.cardBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2A2A5A)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Text(event.icon, style: const TextStyle(fontSize: 18)),
+              const SizedBox(width: 8),
+              Text(label,
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+            ]),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: kSoundOptions.map((opt) {
+                final isSelected = curSound == opt.id;
+                return GestureDetector(
+                  onTap: () => onSelect(opt.id),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? AppTheme.primary.withValues(alpha: 0.2)
+                          : const Color(0xFF1E1E3A),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isSelected ? AppTheme.primary : const Color(0xFF2A2A5A),
+                      ),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text(opt.label,
+                          style: TextStyle(
+                            color: isSelected ? AppTheme.primary : AppTheme.textSecondary,
+                            fontSize: 11,
+                            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
+                          )),
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: () => onTest(opt.id),
+                        child: Icon(Icons.play_arrow,
+                            size: 14,
+                            color: isSelected ? AppTheme.primary : AppTheme.textSecondary),
+                      ),
+                    ]),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Onglet Historique
+// ══════════════════════════════════════════════════════════════════════════
 
 class _HistoryTab extends StatelessWidget {
   final NotificationService svc;
@@ -324,7 +845,7 @@ class _HistoryTab extends StatelessWidget {
       itemBuilder: (context, i) {
         final n = history[i];
         return _NotifHistoryCard(
-          notif: n,
+          notif:  n,
           onRead: () => svc.markRead(n.id),
         );
       },
@@ -332,7 +853,7 @@ class _HistoryTab extends StatelessWidget {
   }
 }
 
-// ── Widgets internes ──────────────────────────────────────────────────────
+// ── Carte notification historique ─────────────────────────────────────────
 
 class _NotifHistoryCard extends StatelessWidget {
   final AppNotification notif;
@@ -388,7 +909,8 @@ class _NotifHistoryCard extends StatelessWidget {
                     color: AppTheme.primary.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Text('Lu', style: TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w600)),
+                  child: const Text('Lu',
+                      style: TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w600)),
                 ),
               )
             : const Icon(Icons.check_circle, color: AppTheme.success, size: 16),
@@ -403,23 +925,26 @@ class _NotifHistoryCard extends StatelessWidget {
       case 'stock':        return const Color(0xFFFFCA28);
       case 'personnel':    return const Color(0xFF42A5F5);
       case 'reservations': return const Color(0xFFAB47BC);
+      case 'online':       return AppTheme.primary;
       default:             return AppTheme.primary;
     }
   }
 
   String _formatDateTime(DateTime dt) {
-    final now = DateTime.now();
+    final now  = DateTime.now();
     final diff = now.difference(dt);
-    if (diff.inSeconds < 60)   return 'À l\'instant';
-    if (diff.inMinutes < 60)   return 'Il y a ${diff.inMinutes} min';
-    if (diff.inHours < 24)     return 'Il y a ${diff.inHours} h';
-    if (diff.inDays == 1)      return 'Hier ${_hm(dt)}';
+    if (diff.inSeconds < 60)  return 'À l\'instant';
+    if (diff.inMinutes < 60)  return 'Il y a ${diff.inMinutes} min';
+    if (diff.inHours < 24)    return 'Il y a ${diff.inHours} h';
+    if (diff.inDays == 1)     return 'Hier ${_hm(dt)}';
     return '${dt.day.toString().padLeft(2,'0')}/${dt.month.toString().padLeft(2,'0')} ${_hm(dt)}';
   }
 
   String _hm(DateTime dt) =>
       '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
 }
+
+// ── Banners ───────────────────────────────────────────────────────────────
 
 class _AudioUnlockBanner extends StatelessWidget {
   final NotificationService svc;
@@ -436,11 +961,13 @@ class _AudioUnlockBanner extends StatelessWidget {
       child: Row(children: [
         const Icon(Icons.volume_off, color: AppTheme.warning, size: 22),
         const SizedBox(width: 12),
-        Expanded(
+        const Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Autorisation audio requise', style: TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w700, fontSize: 13)),
-            const SizedBox(height: 2),
-            const Text('Le navigateur bloque l\'audio. Appuyez sur "Activer" pour autoriser les sons.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+            Text('Autorisation audio requise',
+                style: TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w700, fontSize: 13)),
+            SizedBox(height: 2),
+            Text('Le navigateur bloque l\'audio. Appuyez sur "Activer" pour autoriser les sons.',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
           ]),
         ),
         const SizedBox(width: 10),
@@ -451,7 +978,8 @@ class _AudioUnlockBanner extends StatelessWidget {
             foregroundColor: Colors.black,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           ),
-          child: const Text('Activer', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+          child: const Text('Activer les sons',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
         ),
       ]),
     );
@@ -473,11 +1001,16 @@ class _UrgentActiveBanner extends StatelessWidget {
       child: Row(children: [
         const Icon(Icons.alarm, color: AppTheme.error, size: 22),
         const SizedBox(width: 12),
-        const Expanded(
+        Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('🚨 Alerte urgente active', style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700, fontSize: 13)),
+            const Text('🚨 Alerte urgente active',
+                style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700, fontSize: 13)),
             SizedBox(height: 2),
-            Text('La sonnerie se répète toutes les 10 secondes. Consultez la notification pour l\'arrêter.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+            Text(
+              'Sonnerie répétée toutes les ${intervalLabel(svc.repeatIntervalSec)}. '
+              'Consultez la notification pour arrêter.',
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+            ),
           ]),
         ),
         const SizedBox(width: 10),
@@ -494,6 +1027,8 @@ class _UrgentActiveBanner extends StatelessWidget {
     );
   }
 }
+
+// ── Widgets réutilisables ──────────────────────────────────────────────────
 
 class _SwitchRow extends StatelessWidget {
   final IconData icon;
@@ -513,67 +1048,115 @@ class _SwitchRow extends StatelessWidget {
       child: Row(children: [
         Container(
           padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(color: iconColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+          decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8)),
           child: Icon(icon, color: iconColor, size: 18),
         ),
         const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-          Text(subtitle, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-        ])),
-        Switch(
-          value: value,
-          onChanged: onChanged,
-          activeColor: AppTheme.primary,
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title,
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+            Text(subtitle,
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+          ]),
         ),
+        Switch(value: value, onChanged: onChanged, activeColor: AppTheme.primary),
       ]),
     );
   }
 }
 
-class _SoundOptionRow extends StatelessWidget {
-  final SoundOption opt;
-  final bool isSelected;
-  final VoidCallback onSelect;
-  final VoidCallback onTest;
-  const _SoundOptionRow({
-    required this.opt, required this.isSelected,
-    required this.onSelect, required this.onTest,
+class _VolumeRow extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final bool displayPercent;
+  final String? displayValue;
+  final ValueChanged<double> onChanged;
+  final ValueChanged<double> onChangeEnd;
+
+  const _VolumeRow({
+    required this.icon,
+    required this.iconColor,
+    required this.label,
+    required this.value,
+    this.min = 0.0,
+    this.max = 1.0,
+    this.divisions = 9,
+    this.displayPercent = true,
+    this.displayValue,
+    required this.onChanged,
+    required this.onChangeEnd,
   });
+
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onSelect,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(children: [
-          Radio<bool>(
-            value: true,
-            groupValue: isSelected,
-            onChanged: (_) => onSelect(),
-            activeColor: AppTheme.primary,
-          ),
-          const SizedBox(width: 4),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(opt.label, style: TextStyle(
-              color: isSelected ? AppTheme.primary : Colors.white,
-              fontSize: 13,
-              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-            )),
-            Text(opt.description, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
-          ])),
-          IconButton(
-            onPressed: onTest,
-            icon: Icon(Icons.play_circle_outline,
-              color: isSelected ? AppTheme.primary : AppTheme.textSecondary,
-              size: 24,
+    final val = displayValue ?? (displayPercent
+        ? '${((value - min) / (max - min) * 100).round()} %'
+        : value.toStringAsFixed(2));
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                  color: iconColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(6)),
+              child: Icon(icon, color: iconColor, size: 16),
             ),
-            tooltip: 'Tester',
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(label,
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(val,
+                  style: TextStyle(color: iconColor, fontSize: 11, fontWeight: FontWeight.w700)),
+            ),
+          ]),
+          const SizedBox(height: 4),
+          SliderTheme(
+            data: SliderThemeData(
+              activeTrackColor:   iconColor,
+              inactiveTrackColor: const Color(0xFF2A2A5A),
+              thumbColor:         iconColor,
+              overlayColor:       iconColor.withValues(alpha: 0.2),
+              trackHeight:        3,
+            ),
+            child: Slider(
+              value:      value.clamp(min, max),
+              min:        min,
+              max:        max,
+              divisions:  divisions,
+              onChanged:  onChanged,
+              onChangeEnd: onChangeEnd,
+            ),
           ),
-        ]),
+        ],
       ),
     );
   }
+}
+
+class _Divider extends StatelessWidget {
+  const _Divider();
+  @override
+  Widget build(BuildContext context) =>
+      const Divider(color: Color(0xFF2A2A5A), height: 1, indent: 16, endIndent: 16);
 }
 
 class _SectionHeader extends StatelessWidget {
@@ -603,8 +1186,10 @@ class _Badge extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(color: AppTheme.error, borderRadius: BorderRadius.circular(10)),
-      child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900)),
+      decoration: BoxDecoration(
+          color: AppTheme.error, borderRadius: BorderRadius.circular(10)),
+      child: Text('$count',
+          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900)),
     );
   }
 }
