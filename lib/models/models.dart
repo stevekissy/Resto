@@ -364,6 +364,12 @@ class Order {
   String? clientId;          // UID client (si commande en ligne)
   String? clientPhone;       // Téléphone client (si commande en ligne)
 
+  // ── Workflow cuisine pour commandes en ligne ─────────────────────────
+  bool sentToKitchen;        // true = commande confirmée et envoyée en cuisine
+  String? kitchenStatus;     // 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled'
+  String? adminStatus;       // 'received' | 'confirmed' | 'cancelled'
+  String? clientName;        // Nom client (commandes en ligne)
+
   // ── Cycle de vie modification / annulation ──────────────────────────
   DateTime? updatedAt;
   DateTime? cancelledAt;
@@ -411,6 +417,10 @@ class Order {
     this.source = 'pos',
     this.clientId,
     this.clientPhone,
+    this.sentToKitchen = false,
+    this.kitchenStatus,
+    this.adminStatus,
+    this.clientName,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.totalPrice);
@@ -484,6 +494,10 @@ class Order {
     'source': source,
     'clientId': clientId,
     'clientPhone': clientPhone,
+    'sentToKitchen': sentToKitchen,
+    if (kitchenStatus != null) 'kitchenStatus': kitchenStatus,
+    if (adminStatus != null) 'adminStatus': adminStatus,
+    if (clientName != null) 'clientName': clientName,
   };
 
   factory Order.fromMap(Map<String, dynamic> map) => Order(
@@ -530,6 +544,10 @@ class Order {
     source: map['source'] as String? ?? 'pos',
     clientId: map['clientId'] as String?,
     clientPhone: map['clientPhone'] as String?,
+    sentToKitchen: map['sentToKitchen'] as bool? ?? false,
+    kitchenStatus: map['kitchenStatus'] as String?,
+    adminStatus: map['adminStatus'] as String?,
+    clientName: map['clientName'] as String?,
   );
 }
 

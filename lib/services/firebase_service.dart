@@ -299,6 +299,28 @@ class FirebaseService {
   // =================== ORDERS ===================
   // PAS de .orderBy() → aucun index composite requis → tri en mémoire
 
+  /// Convertit un status (int ou String) en OrderStatus
+  OrderStatus _parseOrderStatus(dynamic raw) {
+    if (raw == null) return OrderStatus.pending;
+    if (raw is int) {
+      if (raw >= 0 && raw < OrderStatus.values.length) return OrderStatus.values[raw];
+      return OrderStatus.pending;
+    }
+    if (raw is String) {
+      switch (raw) {
+        case 'pending':    return OrderStatus.pending;
+        case 'confirmed':  return OrderStatus.pending;  // confirmed → affiché comme pending en cuisine
+        case 'preparing':  return OrderStatus.preparing;
+        case 'ready':      return OrderStatus.ready;
+        case 'served':
+        case 'delivered':  return OrderStatus.served;
+        case 'cancelled':  return OrderStatus.cancelled;
+        default:           return OrderStatus.pending;
+      }
+    }
+    return OrderStatus.pending;
+  }
+
   Stream<List<Order>> streamOrders() {
     return _db.collection('orders').snapshots().map((snap) {
       final list = snap.docs.map((d) {
@@ -310,7 +332,7 @@ class FirebaseService {
             tableNumber: data['tableNumber'] as String? ?? '',
             serverName: data['serverName'] as String?,
             items: _parseOrderItems(data['items']),
-            status: OrderStatus.values[(data['status'] as int?) ?? 0],
+            status: _parseOrderStatus(data['status']),
             specialInstructions: data['specialInstructions'] as String?,
             isUrgent: data['isUrgent'] as bool? ?? false,
             createdAt: _toDateTime(data['createdAt']),
@@ -357,6 +379,11 @@ class FirebaseService {
                 ?? data['orderSource'] as String? ?? 'pos',
             clientId: data['clientId'] as String?,
             clientPhone: data['clientPhone'] as String?,
+            // ── Workflow cuisine commandes en ligne ───────────────────
+            sentToKitchen: data['sentToKitchen'] as bool? ?? false,
+            kitchenStatus: data['kitchenStatus'] as String?,
+            adminStatus: data['adminStatus'] as String?,
+            clientName: data['clientName'] as String?,
           );
         } catch (e) {
           debugPrint('[stream.orders] doc ${d.id}: $e');
@@ -374,12 +401,24 @@ class FirebaseService {
     try {
       return (raw as List).map((i) {
         final m = i as Map<String, dynamic>;
+        // Lecture avec fallbacks : productName → name, unitPrice → price
+        // Les anciens docs et docs online utilisent 'name'/'price'
+        final productName = (m['productName'] as String?)?.isNotEmpty == true
+            ? m['productName'] as String
+            : (m['name'] as String? ?? '');
+        final unitPrice = (m['unitPrice'] as num?)?.toDouble()
+            ?? (m['price'] as num?)?.toDouble()
+            ?? 0.0;
+        // specialComment peut être dans 'comment' (docs online)
+        final rawComment = m['comment'] as String? ?? '';
+        final specialComment = (m['specialComment'] as String?)
+            ?? (rawComment.isNotEmpty ? rawComment : null);
         return OrderItem(
           productId: m['productId'] as String? ?? '',
-          productName: m['productName'] as String? ?? '',
+          productName: productName,
           quantity: (m['quantity'] as num?)?.toInt() ?? 1,
-          unitPrice: (m['unitPrice'] as num?)?.toDouble() ?? 0,
-          specialComment: m['specialComment'] as String?,
+          unitPrice: unitPrice,
+          specialComment: specialComment,
         );
       }).toList();
     } catch (e) {
@@ -401,9 +440,21 @@ class FirebaseService {
 
   Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
     final data = <String, dynamic>{'status': status.index};
-    if (status == OrderStatus.preparing) data['startedAt'] = FieldValue.serverTimestamp();
-    if (status == OrderStatus.ready)     data['readyAt']   = FieldValue.serverTimestamp();
-    if (status == OrderStatus.served)    data['servedAt']  = FieldValue.serverTimestamp();
+    if (status == OrderStatus.preparing) {
+      data['startedAt']     = FieldValue.serverTimestamp();
+      data['kitchenStatus'] = 'preparing';
+    }
+    if (status == OrderStatus.ready) {
+      data['readyAt']       = FieldValue.serverTimestamp();
+      data['kitchenStatus'] = 'ready';
+    }
+    if (status == OrderStatus.served) {
+      data['servedAt']      = FieldValue.serverTimestamp();
+      data['kitchenStatus'] = 'served';
+    }
+    if (status == OrderStatus.cancelled) {
+      data['kitchenStatus'] = 'cancelled';
+    }
     await _db.collection('orders').doc(orderId).update(data);
   }
 

@@ -65,9 +65,21 @@ class _KitchenScreenState extends State<KitchenScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    final activeOrders = provider.orders
-      .where((o) => o.status == OrderStatus.pending || o.status == OrderStatus.preparing)
-      .toList()
+    // Filtre cuisine :
+    // - Commandes POS normales : status pending ou preparing
+    // - Commandes en ligne : seulement si sentToKitchen == true ET kitchenStatus actif
+    final activeOrders = provider.orders.where((o) {
+      // Ignorer les commandes annulées
+      if (o.status == OrderStatus.cancelled) return false;
+      // Commandes en ligne : exiger sentToKitchen == true
+      if (o.isOnlineOrder) {
+        if (!o.sentToKitchen) return false;
+        final ks = o.kitchenStatus ?? 'pending';
+        return ks == 'pending' || ks == 'preparing';
+      }
+      // Commandes POS : filtre habituel
+      return o.status == OrderStatus.pending || o.status == OrderStatus.preparing;
+    }).toList()
       ..sort((a, b) {
         if (a.isUrgent && !b.isUrgent) return -1;
         if (!a.isUrgent && b.isUrgent) return 1;

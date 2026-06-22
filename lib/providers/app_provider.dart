@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
+import '../models/client_models.dart';
 import '../services/firebase_service.dart';
+import '../services/client_firebase_service.dart';
 import '../services/print_service.dart';
 import '../services/notification_service.dart';
 
@@ -62,7 +64,12 @@ class AppProvider extends ChangeNotifier {
   List<Order> get orders => _orders;
   List<Order> get pendingOrders => _orders.where((o) => o.status == OrderStatus.pending).toList();
   List<Order> get preparingOrders => _orders.where((o) => o.status == OrderStatus.preparing).toList();
-  List<Order> get readyOrders => _orders.where((o) => o.status == OrderStatus.ready).toList();
+  List<Order> get readyOrders => _orders.where((o) {
+    // Commandes en ligne : basé sur kitchenStatus
+    if (o.isOnlineOrder) return o.sentToKitchen && o.kitchenStatus == 'ready';
+    // Commandes POS : basé sur status
+    return o.status == OrderStatus.ready;
+  }).toList();
   List<Order> get servedOrders => _orders.where((o) => o.status == OrderStatus.served).toList();
 
   // ── Getters caisse 2 étapes ─────────────────────────────────────────
@@ -1094,7 +1101,52 @@ class AppProvider extends ChangeNotifier {
       debugPrint('[AppProvider] updateOrderStatus REFUSÉ — rôle $role non autorisé pour statut $status');
       throw Exception('Action réservée à la cuisine');
     }
+    // Mise à jour dans 'orders' (avec kitchenStatus maintenant)
     await _firebase.updateOrderStatus(orderId, status);
+
+    // ── Synchronisation commandes en ligne → client_orders ────────────
+    // Si c'est une commande online, synchroniser aussi le statut dans client_orders
+    try {
+      final order = _orders.firstWhere(
+        (o) => o.id == orderId,
+        orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
+      );
+      if (order.isOnlineOrder && order.id.isNotEmpty) {
+        // Mapper OrderStatus → ClientOrderStatus pour la sync
+        ClientOrderStatus? clientStatus;
+        switch (status) {
+          case OrderStatus.preparing:
+            clientStatus = ClientOrderStatus.preparing;
+            break;
+          case OrderStatus.ready:
+            clientStatus = ClientOrderStatus.ready;
+            break;
+          case OrderStatus.served:
+            clientStatus = ClientOrderStatus.delivered;
+            break;
+          case OrderStatus.cancelled:
+            clientStatus = ClientOrderStatus.cancelled;
+            break;
+          default:
+            break;
+        }
+        if (clientStatus != null) {
+          // Trouver le clientOrderId dans le doc orders
+          final clientSvc = ClientFirebaseService();
+          // L'id du client_orders est stocké dans 'clientOrderId' du doc orders
+          // On passe l'orderId (internalOrderId) à updateOrderStatus de client_firebase_service
+          // mais la méthode cherche par clientOrderId dans orders → on doit passer le clientOrderId
+          // Récupérer depuis les données en mémoire si disponible
+          // Utiliser directement FirebaseFirestore via un appel séparé
+          await clientSvc.syncKitchenStatusToClientOrder(
+            internalOrderId: orderId,
+            clientStatus: clientStatus,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('[AppProvider] sync client_orders: $e');
+    }
   }
 
   Future<void> updateOrderItemQuantity(String orderId, String productId, int newQuantity) async {

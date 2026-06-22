@@ -487,28 +487,65 @@ class ClientFirebaseService {
 
     await _db.collection('client_orders').doc(orderId).update(update);
 
-    // Synchroniser aussi dans la collection 'orders' (cuisine/caisse)
+    // ── Synchroniser dans la collection 'orders' (cuisine/caisse) ──────────
+    // Recherche par clientOrderId (l'id du doc client_orders)
+    // OU par internalOrderId si le doc orders a été créé avec un id différent
     try {
       final snap = await _db.collection('orders')
           .where('clientOrderId', isEqualTo: orderId)
           .limit(1)
           .get();
       if (snap.docs.isNotEmpty) {
-        final orderUpdate = <String, dynamic>{'clientOrderStatus': status.index};
-        if (status == ClientOrderStatus.preparing) {
-          orderUpdate['status'] = 1; // OrderStatus.preparing
-        } else if (status == ClientOrderStatus.ready) {
-          orderUpdate['status'] = 2; // OrderStatus.ready
-        } else if (status == ClientOrderStatus.delivered) {
-          orderUpdate['status'] = 3; // OrderStatus.served
-          orderUpdate['paymentStatus'] = 'paid';
-          orderUpdate['settlementStatus'] = 'completed';
-        } else if (status == ClientOrderStatus.cancelled) {
-          orderUpdate['status'] = 4; // OrderStatus.cancelled
+        final orderUpdate = <String, dynamic>{
+          'clientOrderStatus': status.index,
+          'updatedAt': now,
+        };
+
+        // ── CAS CONFIRMATION : envoyer en cuisine ─────────────────────
+        if (status == ClientOrderStatus.confirmed) {
+          orderUpdate['adminStatus']      = 'confirmed';
+          orderUpdate['status']           = 'confirmed';   // String pour compatibilité streamAdminOnlineOrders
+          orderUpdate['kitchenStatus']    = 'pending';
+          orderUpdate['sentToKitchen']    = true;
+          orderUpdate['sentToKitchenAt']  = FieldValue.serverTimestamp();
+          orderUpdate['confirmedAt']      = FieldValue.serverTimestamp();
         }
+        // ── CAS PREPARING (cuisine commence) ─────────────────────────
+        else if (status == ClientOrderStatus.preparing) {
+          orderUpdate['status']        = 1; // OrderStatus.preparing
+          orderUpdate['kitchenStatus'] = 'preparing';
+          orderUpdate['startedAt']     = FieldValue.serverTimestamp();
+        }
+        // ── CAS READY (cuisine : prête) ────────────────────────────────
+        else if (status == ClientOrderStatus.ready) {
+          orderUpdate['status']        = 2; // OrderStatus.ready
+          orderUpdate['kitchenStatus'] = 'ready';
+          orderUpdate['readyAt']       = FieldValue.serverTimestamp();
+        }
+        // ── CAS DELIVERED (livré) ───────────────────────────────────────
+        else if (status == ClientOrderStatus.delivered) {
+          orderUpdate['status']           = 3; // OrderStatus.served
+          orderUpdate['kitchenStatus']    = 'served';
+          orderUpdate['paymentStatus']    = 'paid';
+          orderUpdate['settlementStatus'] = 'completed';
+          orderUpdate['servedAt']         = FieldValue.serverTimestamp();
+        }
+        // ── CAS CANCELLED ───────────────────────────────────────────────
+        else if (status == ClientOrderStatus.cancelled) {
+          orderUpdate['status']        = 4; // OrderStatus.cancelled
+          orderUpdate['kitchenStatus'] = 'cancelled';
+          orderUpdate['adminStatus']   = 'cancelled';
+          orderUpdate['sentToKitchen'] = false;
+        }
+
         await snap.docs.first.reference.update(orderUpdate);
+        debugPrint('[updateOrderStatus] ✅ orders/${snap.docs.first.id} mis à jour → status=$status');
+      } else {
+        debugPrint('[updateOrderStatus] ⚠ Aucun doc orders trouvé pour clientOrderId=$orderId');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[updateOrderStatus] ❌ Erreur sync orders: $e');
+    }
 
     // ── Notifications Firestore selon statut ──────────────────────────
     try {
@@ -526,9 +563,9 @@ class ClientFirebaseService {
 
         switch (status) {
           case ClientOrderStatus.confirmed:
-            notifTitle   = 'Commande confirmée';
-            notifMessage = 'Commande $orderNumber de $clientName confirmée — envoyée en cuisine';
-            notifType    = 'order_confirmed';
+            notifTitle   = '🍳 Nouvelle commande en ligne confirmée';
+            notifMessage = 'Commande $orderNumber de $clientName — à préparer en cuisine';
+            notifType    = 'kitchen_online_order';
             break;
           case ClientOrderStatus.preparing:
             notifTitle   = 'Commande en cuisine';
@@ -579,6 +616,43 @@ class ClientFirebaseService {
       }
     } catch (_) {
       // Notifications non bloquantes
+    }
+  }
+
+  /// Synchronise le statut cuisine → client_orders
+  /// Appelé par AppProvider.updateOrderStatus() pour les commandes online
+  /// [internalOrderId] = id du doc dans 'orders'
+  Future<void> syncKitchenStatusToClientOrder({
+    required String internalOrderId,
+    required ClientOrderStatus clientStatus,
+  }) async {
+    try {
+      // Chercher dans client_orders par internalOrderId
+      final snap = await _db.collection('client_orders')
+          .where('internalOrderId', isEqualTo: internalOrderId)
+          .limit(1)
+          .get();
+      if (snap.docs.isEmpty) {
+        debugPrint('[syncKitchenStatus] Aucun client_orders trouvé pour internalOrderId=$internalOrderId');
+        return;
+      }
+      final clientOrderId = snap.docs.first.id;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final update = <String, dynamic>{
+        'status': clientStatus.index,
+        'updatedAt': now,
+      };
+      if (clientStatus == ClientOrderStatus.preparing) {
+        update['sentToKitchenAt'] = now;
+      } else if (clientStatus == ClientOrderStatus.ready) {
+        update['readyAt'] = now;
+      } else if (clientStatus == ClientOrderStatus.delivered) {
+        update['deliveredAt'] = now;
+      }
+      await _db.collection('client_orders').doc(clientOrderId).update(update);
+      debugPrint('[syncKitchenStatus] ✅ client_orders/$clientOrderId → $clientStatus');
+    } catch (e) {
+      debugPrint('[syncKitchenStatus] ❌ $e');
     }
   }
 
