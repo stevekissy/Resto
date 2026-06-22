@@ -118,13 +118,41 @@ class _OnlineOrdersAdminScreenState extends State<OnlineOrdersAdminScreen>
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
+      body: Column(
         children: [
-          _OrdersTab(provider: provider),
-          _ConfigTab(settings: settings),
-          _PromotionsTab(provider: provider),
-          _ClientsTab(provider: provider),
+          // ── Badge fix discret (temporaire) ──────────────────────────────
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            color: const Color(0xFF0D1B2A),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: const [
+                Icon(Icons.verified, size: 11, color: Color(0xFF4CAF50)),
+                SizedBox(width: 4),
+                Text(
+                  'LIVE ORDER FIX : 3cd7cc7',
+                  style: TextStyle(
+                    color: Color(0xFF4CAF50),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _OrdersTab(provider: provider),
+                _ConfigTab(settings: settings),
+                _PromotionsTab(provider: provider),
+                _ClientsTab(provider: provider),
+              ],
+            ),
+          ),
         ],
       ),
     );
