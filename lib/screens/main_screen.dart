@@ -26,6 +26,9 @@ import 'login_screen.dart';
 import 'client/client_main_screen.dart';
 
 // ── Constantes de build — identifiant de version visible dans le drawer ──
+const String _kBuildCommit = '77452d2';
+const String _kBuildDate = '23/06 01:05';
+
 /// Widget affiché quand un utilisateur tente d'accéder à un module interdit.
 class _AccessDeniedScreen extends StatelessWidget {
   final String moduleName;
@@ -651,6 +654,42 @@ class _MainScreenState extends State<MainScreen> {
               },
             ),
           ),
+          // ── Badge LIVE BUILD (admin/manager uniquement) ──
+          if (_canSwitchSpace(provider))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A3E),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6, height: 6,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF4CAF50),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'LIVE · $_kBuildCommit · $_kBuildDate',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ListTile(
             leading: Container(
               padding: const EdgeInsets.all(8),
