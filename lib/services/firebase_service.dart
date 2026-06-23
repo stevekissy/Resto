@@ -1378,6 +1378,7 @@ class FirebaseService {
           'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
           'suppliers': true, 'productManagement': true, 'adminManagement': true,
           'reservations': true, 'accounting': true, 'notifications': true,
+          'onlineOrders': true,
         };
       case UserRole.manager:
         return {
@@ -1385,6 +1386,7 @@ class FirebaseService {
           'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
           'suppliers': true, 'productManagement': true, 'adminManagement': false,
           'reservations': true, 'accounting': true, 'notifications': true,
+          'onlineOrders': true,
         };
       case UserRole.cashier:
         return {
@@ -1392,6 +1394,7 @@ class FirebaseService {
           'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
           'reservations': true, 'accounting': false, 'notifications': true,
+          'onlineOrders': false,
         };
       case UserRole.kitchen:
         return {
@@ -1399,6 +1402,7 @@ class FirebaseService {
           'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
           'reservations': false, 'accounting': false, 'notifications': true,
+          'onlineOrders': false,
         };
       case UserRole.server:
         return {
@@ -1406,6 +1410,7 @@ class FirebaseService {
           'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
           'reservations': false, 'accounting': false, 'notifications': true,
+          'onlineOrders': false,
         };
       case UserRole.stockManager:
         return {
@@ -1413,6 +1418,7 @@ class FirebaseService {
           'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': true, 'productManagement': true, 'adminManagement': false,
           'reservations': false, 'accounting': false, 'notifications': true,
+          'onlineOrders': false,
         };
       case UserRole.client:
         // Les clients n'ont aucun accès à l'interface staff
@@ -1421,6 +1427,7 @@ class FirebaseService {
           'stock': false, 'personnel': false, 'messages': false, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
           'reservations': false, 'accounting': false, 'notifications': false,
+          'onlineOrders': false,
         };
     }
   }

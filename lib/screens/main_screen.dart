@@ -383,7 +383,7 @@ class _MainScreenState extends State<MainScreen> {
       ),
       _NavItem(
         icon: Icons.storefront_outlined, label: 'Commandes en ligne',
-        screen: const OnlineOrdersAdminScreen(), permissionKey: 'adminManagement',
+        screen: const OnlineOrdersAdminScreen(), permissionKey: 'onlineOrders',
       ),
     ];
 

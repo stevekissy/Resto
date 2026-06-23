@@ -15,11 +15,16 @@ class AdminManagementScreen extends StatefulWidget {
 class _AdminManagementScreenState extends State<AdminManagementScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  int _currentTab = 0;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) return;
+      if (mounted) setState(() => _currentTab = _tabController.index);
+    });
   }
 
   @override
@@ -58,12 +63,17 @@ class _AdminManagementScreenState extends State<AdminManagementScreen>
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddUserDialog(context),
-        backgroundColor: AppTheme.primary,
-        icon: const Icon(Icons.person_add, color: Colors.white),
-        label: const Text('Nouvel utilisateur', style: TextStyle(color: Colors.white)),
-      ),
+      // FAB visible uniquement sur l'onglet Utilisateurs (index 0)
+      floatingActionButton: _currentTab == 0
+          ? FloatingActionButton(
+              onPressed: () => _showAddUserDialog(context),
+              backgroundColor: AppTheme.primary,
+              tooltip: 'Nouvel utilisateur',
+              mini: true,
+              child: const Icon(Icons.person_add, color: Colors.white, size: 20),
+            )
+          : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 
@@ -551,7 +561,11 @@ class _RolePermissionCard extends StatelessWidget {
     'statistics': 'Statistiques',
     'suppliers': 'Fournisseurs',
     'productManagement': 'Gestion Produits',
+    'reservations': 'Réservations',
+    'accounting': 'Comptabilité',
+    'notifications': 'Notifications',
     'adminManagement': 'Gestion Admins',
+    'onlineOrders': 'Commandes en ligne',
   };
 
   static const Map<String, IconData> _moduleIcons = {
@@ -565,7 +579,11 @@ class _RolePermissionCard extends StatelessWidget {
     'statistics': Icons.bar_chart,
     'suppliers': Icons.local_shipping,
     'productManagement': Icons.restaurant_menu,
+    'reservations': Icons.event_note,
+    'accounting': Icons.calculate,
+    'notifications': Icons.notifications,
     'adminManagement': Icons.admin_panel_settings,
+    'onlineOrders': Icons.storefront_outlined,
   };
 
   @override
