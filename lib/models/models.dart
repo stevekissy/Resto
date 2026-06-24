@@ -367,9 +367,10 @@ class Order {
 
   // ── Workflow cuisine pour commandes en ligne ─────────────────────────
   bool sentToKitchen;        // true = commande confirmée et envoyée en cuisine
-  String? kitchenStatus;     // 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled'
+  String? kitchenStatus;     // 'waiting' | 'preparing' | 'ready' | 'served' | 'cancelled'
   String? adminStatus;       // 'received' | 'confirmed' | 'cancelled'
   String? clientName;        // Nom client (commandes en ligne)
+  DateTime? sentToKitchenAt; // Horodatage envoi en cuisine
 
   // ── Cycle de vie modification / annulation ──────────────────────────
   DateTime? updatedAt;
@@ -422,6 +423,7 @@ class Order {
     this.kitchenStatus,
     this.adminStatus,
     this.clientName,
+    this.sentToKitchenAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.totalPrice);
@@ -499,6 +501,7 @@ class Order {
     if (kitchenStatus != null) 'kitchenStatus': kitchenStatus,
     if (adminStatus != null) 'adminStatus': adminStatus,
     if (clientName != null) 'clientName': clientName,
+    if (sentToKitchenAt != null) 'sentToKitchenAt': sentToKitchenAt!.millisecondsSinceEpoch,
   };
 
   factory Order.fromMap(Map<String, dynamic> map) => Order(
@@ -549,6 +552,7 @@ class Order {
     kitchenStatus: map['kitchenStatus'] as String?,
     adminStatus: map['adminStatus'] as String?,
     clientName: map['clientName'] as String?,
+    sentToKitchenAt: map['sentToKitchenAt'] != null ? DateTime.fromMillisecondsSinceEpoch((map['sentToKitchenAt'] as num).toInt()) : null,
   );
 }
 

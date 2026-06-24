@@ -401,6 +401,9 @@ class FirebaseService {
             kitchenStatus: data['kitchenStatus'] as String?,
             adminStatus: data['adminStatus'] as String?,
             clientName: data['clientName'] as String?,
+            sentToKitchenAt: data['sentToKitchenAt'] != null
+                ? DateTime.fromMillisecondsSinceEpoch((data['sentToKitchenAt'] as num).toInt())
+                : null,
           );
         } catch (e) {
           debugPrint('[stream.orders] doc ${d.id}: $e');
@@ -473,6 +476,20 @@ class FirebaseService {
       data['kitchenStatus'] = 'cancelled';
     }
     await _db.collection('orders').doc(orderId).update(data);
+  }
+
+  /// Envoie une commande en ligne en cuisine.
+  /// Met à jour : sentToKitchen=true, kitchenStatus='waiting', sentToKitchenAt, status=1
+  Future<void> sendOnlineOrderToKitchen(String orderId) async {
+    await _db.collection('orders').doc(orderId).update({
+      'sentToKitchen':    true,
+      'kitchenStatus':    'waiting',
+      'sentToKitchenAt':  FieldValue.serverTimestamp(),
+      'status':           OrderStatus.pending.index,  // reste pending côté cuisine (pas encore started)
+      'adminStatus':      'sent_to_kitchen',
+      'updatedAt':        FieldValue.serverTimestamp(),
+    });
+    debugPrint('[FirebaseService] sendOnlineOrderToKitchen: orders/$orderId → kitchenStatus=waiting');
   }
 
   Future<void> deleteOrder(String orderId) async {

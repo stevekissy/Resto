@@ -1149,6 +1149,14 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  /// Envoie une commande en ligne en cuisine (depuis l'écran OnlineOrdersAdmin).
+  /// [clientOrderId] = widget.order.id (id du doc client_orders)
+  Future<void> sendOnlineOrderToKitchen(String clientOrderId) async {
+    final clientSvc = ClientFirebaseService();
+    await clientSvc.sendToKitchen(clientOrderId);
+    debugPrint('[AppProvider] sendOnlineOrderToKitchen: clientOrderId=$clientOrderId');
+  }
+
   Future<void> updateOrderItemQuantity(String orderId, String productId, int newQuantity) async {
     final order = _orders.firstWhere((o) => o.id == orderId, orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []));
     if (order.id.isEmpty) return;

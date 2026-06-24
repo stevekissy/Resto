@@ -67,15 +67,17 @@ class _KitchenScreenState extends State<KitchenScreen> {
     final provider = context.watch<AppProvider>();
     // Filtre cuisine :
     // - Commandes POS normales : status pending ou preparing
-    // - Commandes en ligne : seulement si sentToKitchen == true ET kitchenStatus actif
+    // - Commandes en ligne : sentToKitchen==true ET kitchenStatus actif (waiting/preparing)
     final activeOrders = provider.orders.where((o) {
       // Ignorer les commandes annulées
       if (o.status == OrderStatus.cancelled) return false;
       // Commandes en ligne : exiger sentToKitchen == true
       if (o.isOnlineOrder) {
         if (!o.sentToKitchen) return false;
-        final ks = o.kitchenStatus ?? 'pending';
-        return ks == 'pending' || ks == 'preparing';
+        final ks = o.kitchenStatus ?? '';
+        // 'waiting' = envoyée par admin, pas encore prise en cuisine
+        // 'preparing' = cuisine a commencé
+        return ks == 'waiting' || ks == 'preparing' || ks == 'pending';
       }
       // Commandes POS : filtre habituel
       return o.status == OrderStatus.pending || o.status == OrderStatus.preparing;
@@ -1250,14 +1252,26 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                             ],
                           ],
                         ),
-                        Text(
-                          order.tableLabel,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
+                        // Nom client (commandes en ligne) ou label table (POS)
+                        if (order.isOnlineOrder && (order.clientName?.isNotEmpty ?? false)) ...[
+                          Text(
+                            order.clientName!,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
                           ),
-                        ),
+                        ] else ...[
+                          Text(
+                            order.tableLabel,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
                         // Infos client (commande en ligne)
                         if (order.isOnlineOrder && (order.clientPhone?.isNotEmpty ?? false)) ...[
                           const SizedBox(height: 2),
@@ -1298,12 +1312,34 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                           'Passé à $_exactTime',
                           style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
                         ),
-                        StatusBadge(
-                          label: order.statusLabel,
-                          color: order.statusColor,
-                          fontSize: 10,
-                        ),
-                        // Type : livraison / emporter
+                        // Badge "En attente" si kitchenStatus='waiting', sinon badge statut normal
+                        if (order.isOnlineOrder && order.kitchenStatus == 'waiting') ...[
+                          const SizedBox(height: 3),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFF9800).withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: const Color(0xFFFF9800).withValues(alpha: 0.7)),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.hourglass_empty, size: 9, color: Color(0xFFFF9800)),
+                                SizedBox(width: 3),
+                                Text('En attente',
+                                    style: TextStyle(color: Color(0xFFFF9800), fontSize: 9, fontWeight: FontWeight.w800)),
+                              ],
+                            ),
+                          ),
+                        ] else ...[
+                          StatusBadge(
+                            label: order.statusLabel,
+                            color: order.statusColor,
+                            fontSize: 10,
+                          ),
+                        ],
+                        // Type : livraison / emporter / sur place
                         if (order.isOnlineOrder) ...[
                           const SizedBox(height: 2),
                           Container(
@@ -1311,13 +1347,23 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                             decoration: BoxDecoration(
                               color: order.isTakeaway
                                   ? AppTheme.success.withValues(alpha: 0.15)
-                                  : const Color(0xFFF57C00).withValues(alpha: 0.15),
+                                  : order.isDelivery
+                                      ? const Color(0xFFF57C00).withValues(alpha: 0.15)
+                                      : const Color(0xFF42A5F5).withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(5),
                             ),
                             child: Text(
-                              order.isTakeaway ? '🏃 Emporter' : '🚗 Livraison',
+                              order.isTakeaway
+                                  ? '🏃 Emporter'
+                                  : order.isDelivery
+                                      ? '🚗 Livraison'
+                                      : '🍽️ Sur place',
                               style: TextStyle(
-                                color: order.isTakeaway ? AppTheme.success : const Color(0xFFF57C00),
+                                color: order.isTakeaway
+                                    ? AppTheme.success
+                                    : order.isDelivery
+                                        ? const Color(0xFFF57C00)
+                                        : const Color(0xFF42A5F5),
                                 fontSize: 9, fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -1463,6 +1509,8 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                                            role == UserRole.admin   ||
                                            role == UserRole.manager;
                     // Pour les commandes online, utiliser kitchenStatus
+                    // 'waiting' = arrivée en cuisine, pas encore commencée
+                    // 'preparing' = en cours de préparation
                     // Pour les commandes POS, utiliser status
                     final bool isInPreparation = order.isOnlineOrder
                         ? (order.kitchenStatus == 'preparing')

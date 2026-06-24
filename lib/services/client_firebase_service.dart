@@ -510,11 +510,13 @@ class ClientFirebaseService {
           orderUpdate['sentToKitchenAt']  = FieldValue.serverTimestamp();
           orderUpdate['confirmedAt']      = FieldValue.serverTimestamp();
         }
-        // ── CAS PREPARING (cuisine commence) ─────────────────────────
+        // ── CAS PREPARING = "Envoyer en cuisine" ─────────────────────
         else if (status == ClientOrderStatus.preparing) {
-          orderUpdate['status']        = 1; // OrderStatus.preparing
-          orderUpdate['kitchenStatus'] = 'preparing';
-          orderUpdate['startedAt']     = FieldValue.serverTimestamp();
+          orderUpdate['sentToKitchen']   = true;
+          orderUpdate['kitchenStatus']   = 'waiting';
+          orderUpdate['sentToKitchenAt'] = FieldValue.serverTimestamp();
+          orderUpdate['status']          = OrderStatus.pending.index; // toujours pending (cuisine pas encore commencé)
+          orderUpdate['adminStatus']     = 'sent_to_kitchen';
         }
         // ── CAS READY (cuisine : prête) ────────────────────────────────
         else if (status == ClientOrderStatus.ready) {
@@ -653,6 +655,65 @@ class ClientFirebaseService {
       debugPrint('[syncKitchenStatus] ✅ client_orders/$clientOrderId → $clientStatus');
     } catch (e) {
       debugPrint('[syncKitchenStatus] ❌ $e');
+    }
+  }
+
+  /// Envoie une commande en cuisine depuis l'écran admin.
+  /// Écrit dans client_orders ET dans orders (sync atomique).
+  /// [clientOrderId] = id du doc client_orders (= widget.order.id côté admin)
+  Future<void> sendToKitchen(String clientOrderId) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    // 1. Mettre à jour client_orders
+    await _db.collection('client_orders').doc(clientOrderId).update({
+      'status':          ClientOrderStatus.preparing.index,
+      'sentToKitchenAt': now,
+      'updatedAt':       now,
+    });
+
+    // 2. Trouver et mettre à jour le doc orders correspondant
+    try {
+      final snap = await _db.collection('orders')
+          .where('clientOrderId', isEqualTo: clientOrderId)
+          .limit(1)
+          .get();
+      if (snap.docs.isNotEmpty) {
+        await snap.docs.first.reference.update({
+          'sentToKitchen':    true,
+          'kitchenStatus':    'waiting',
+          'sentToKitchenAt':  FieldValue.serverTimestamp(),
+          'status':           OrderStatus.pending.index,
+          'adminStatus':      'sent_to_kitchen',
+          'clientOrderStatus': ClientOrderStatus.preparing.index,
+          'updatedAt':        FieldValue.serverTimestamp(),
+        });
+        debugPrint('[sendToKitchen] ✅ orders/${snap.docs.first.id} → kitchenStatus=waiting sentToKitchen=true');
+      } else {
+        debugPrint('[sendToKitchen] ⚠ Aucun doc orders trouvé pour clientOrderId=$clientOrderId');
+      }
+    } catch (e) {
+      debugPrint('[sendToKitchen] ❌ Erreur sync orders: $e');
+    }
+
+    // 3. Notifier dans Firestore
+    try {
+      final orderDoc = await _db.collection('client_orders').doc(clientOrderId).get();
+      if (orderDoc.exists) {
+        final data = orderDoc.data()!;
+        final clientName  = data['clientName'] as String? ?? 'Client';
+        final orderNumber = data['orderNumber'] as String? ?? '';
+        final notifId     = _uuid.v4();
+        await _db.collection('notifications').doc(notifId).set({
+          'id':        notifId,
+          'type':      'order_preparing',
+          'message':   'Commande #$orderNumber de $clientName envoyée en cuisine',
+          'orderId':   clientOrderId,
+          'createdAt': FieldValue.serverTimestamp(),
+          'isRead':    false,
+        });
+      }
+    } catch (e) {
+      debugPrint('[sendToKitchen] ❌ Notif: $e');
     }
   }
 

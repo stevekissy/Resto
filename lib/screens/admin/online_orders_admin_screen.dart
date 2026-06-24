@@ -556,8 +556,52 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
 
   // ── Actions ──────────────────────────────────────────────────────────
 
+  /// Envoi DÉDIÉ en cuisine — passe par AppProvider.sendOnlineOrderToKitchen()
+  /// qui écrit sentToKitchen=true + kitchenStatus='waiting' dans 'orders'.
+  Future<void> _sendToKitchen() async {
+    if (_processing) return;
+    setState(() => _processing = true);
+    try {
+      // Utiliser AppProvider car il a accès aux deux services (firebase + client_firebase)
+      await context.read<AppProvider>().sendOnlineOrderToKitchen(widget.order.id);
+
+      // Notification locale
+      NotificationService().trigger(
+        NotifEvent.nouvelleCommande,
+        message: 'Commande #${widget.order.orderNumber} envoyée en cuisine',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Row(children: [
+            Icon(Icons.restaurant, color: Colors.white, size: 18),
+            SizedBox(width: 8),
+            Text('Commande envoyée en cuisine !'),
+          ]),
+          backgroundColor: const Color(0xFFFF9800),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Erreur envoi cuisine : $e'), backgroundColor: AppTheme.error));
+      }
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
+
   Future<void> _updateStatus(ClientOrderStatus newStatus) async {
     if (_processing) return;
+
+    // ── Cas spécial : "Envoyer en cuisine" → méthode dédiée ──────────
+    if (newStatus == ClientOrderStatus.preparing) {
+      await _sendToKitchen();
+      return;
+    }
     
     // Confirmation pour annulation
     if (newStatus == ClientOrderStatus.cancelled) {
@@ -596,7 +640,7 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
       final notifSvc = NotificationService();
       if (newStatus == ClientOrderStatus.confirmed) {
         notifSvc.trigger(NotifEvent.nouvelleCommande,
-            message: 'Commande #${widget.order.orderNumber} confirmée — envoi en cuisine');
+            message: 'Commande #${widget.order.orderNumber} confirmée');
       } else if (newStatus == ClientOrderStatus.ready) {
         notifSvc.trigger(NotifEvent.commandePrete,
             message: 'Commande #${widget.order.orderNumber} prête — appeler Yango');
