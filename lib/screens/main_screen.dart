@@ -26,8 +26,8 @@ import 'login_screen.dart';
 import 'client/client_main_screen.dart';
 
 // ── Constantes de build — identifiant de version visible dans le drawer ──
-const String _kBuildCommit = '77452d2';
-const String _kBuildDate = '23/06 01:05';
+const String _kBuildCommit = '1ed2a4f';
+const String _kBuildDate = '23/06 20:30';
 
 /// Widget affiché quand un utilisateur tente d'accéder à un module interdit.
 class _AccessDeniedScreen extends StatelessWidget {
