@@ -1,4 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
+
+// ── Helper : convertit Timestamp Firestore, int (ms) ou null → DateTime? ──
+DateTime? _parseDTNullable(dynamic v) {
+  if (v == null) return null;
+  if (v is Timestamp) return v.toDate();
+  if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
+  return null;
+}
 
 // =================== ENUMS ===================
 enum OrderStatus { pending, preparing, ready, served, cancelled }
@@ -371,6 +380,7 @@ class Order {
   String? adminStatus;       // 'received' | 'confirmed' | 'cancelled'
   String? clientName;        // Nom client (commandes en ligne)
   DateTime? sentToKitchenAt; // Horodatage envoi en cuisine
+  String? clientOrderId;     // ID du doc client_orders lié (pour sync retour)
 
   // ── Cycle de vie modification / annulation ──────────────────────────
   DateTime? updatedAt;
@@ -424,6 +434,7 @@ class Order {
     this.adminStatus,
     this.clientName,
     this.sentToKitchenAt,
+    this.clientOrderId,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.totalPrice);
@@ -502,6 +513,7 @@ class Order {
     if (adminStatus != null) 'adminStatus': adminStatus,
     if (clientName != null) 'clientName': clientName,
     if (sentToKitchenAt != null) 'sentToKitchenAt': sentToKitchenAt!.millisecondsSinceEpoch,
+    if (clientOrderId != null) 'clientOrderId': clientOrderId,
   };
 
   factory Order.fromMap(Map<String, dynamic> map) => Order(
@@ -552,7 +564,8 @@ class Order {
     kitchenStatus: map['kitchenStatus'] as String?,
     adminStatus: map['adminStatus'] as String?,
     clientName: map['clientName'] as String?,
-    sentToKitchenAt: map['sentToKitchenAt'] != null ? DateTime.fromMillisecondsSinceEpoch((map['sentToKitchenAt'] as num).toInt()) : null,
+    sentToKitchenAt: _parseDTNullable(map['sentToKitchenAt']),
+    clientOrderId: map['clientOrderId'] as String?,
   );
 }
 

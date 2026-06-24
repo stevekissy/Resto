@@ -401,9 +401,9 @@ class FirebaseService {
             kitchenStatus: data['kitchenStatus'] as String?,
             adminStatus: data['adminStatus'] as String?,
             clientName: data['clientName'] as String?,
-            sentToKitchenAt: data['sentToKitchenAt'] != null
-                ? DateTime.fromMillisecondsSinceEpoch((data['sentToKitchenAt'] as num).toInt())
-                : null,
+            // sentToKitchenAt peut être un Timestamp Firestore OU un int (ms) — gérer les deux
+            sentToKitchenAt: _toDateTimeNullable(data['sentToKitchenAt']),
+            clientOrderId: data['clientOrderId'] as String?,
           );
         } catch (e) {
           debugPrint('[stream.orders] doc ${d.id}: $e');

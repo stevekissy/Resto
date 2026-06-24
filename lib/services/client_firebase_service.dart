@@ -340,7 +340,14 @@ class ClientFirebaseService {
       final totalAmount = (clientOrderData['totalAmount'] as num?)?.toDouble() ?? 0;
       final deliveryFee = (clientOrderData['deliveryFee'] as num?)?.toDouble() ?? 0;
 
-      final orderType = (clientOrderData['orderType'] as num?)?.toInt() ?? 0;
+      final orderTypeInt = (clientOrderData['orderType'] as num?)?.toInt() ?? 0;
+      // Convertir int → string : 0=delivery, 1=takeaway, 2=dine_in
+      final orderTypeStr = orderTypeInt == 1 ? 'takeaway'
+                         : orderTypeInt == 2 ? 'dine_in'
+                         : 'delivery';
+      final tableNumberStr = orderTypeInt == 1 ? 'À Emporter'
+                           : orderTypeInt == 2 ? 'Sur place'
+                           : 'Livraison Yango';
       final depositAmount = (clientOrderData['depositAmount'] as num?)?.toDouble() ?? 0;
       final loyaltyDiscount = (clientOrderData['loyaltyDiscountAmount'] as num?)?.toDouble() ?? 0;
       final deliveryAddr = clientOrderData['deliveryAddress'] as Map<String, dynamic>?;
@@ -349,10 +356,11 @@ class ClientFirebaseService {
         'id': internalOrderId,
         'clientOrderId': clientOrderId,
         'orderNumber': clientOrderData['orderNumber'],
-        'tableNumber': orderType == 0 ? 'Livraison Yango' : 'À Emporter',
+        'tableNumber': tableNumberStr,
+        'orderType': orderTypeStr,
         'serverName': clientOrderData['clientName'] ?? '',
         'items': items,
-        'status': 'pending',
+        'status': 'pending',              // String — _parseOrderStatus gère les deux
         'totalAmount': totalAmount,
         'discount': loyaltyDiscount,
         'cashStatus': depositAmount > 0 ? 'deposit_received' : 'pending_cashout',
@@ -367,6 +375,8 @@ class ClientFirebaseService {
         // Statuts admin/cuisine — requis pour le filtrage admin
         'adminStatus': 'received',
         'kitchenStatus': 'pending',
+        // Cuisine — initialiser à false : sera mis à true lors de l'envoi en cuisine
+        'sentToKitchen': false,
         // Adresse livraison — stocker le Map complet ou null (jamais une String)
         // ClientOrder.fromMap() attend un Map<String,dynamic> ou null pour deliveryAddress.
         // Stocker une String vide '' provoque un TypeError silencieux dans le stream.
@@ -501,14 +511,14 @@ class ClientFirebaseService {
           'updatedAt': now,
         };
 
-        // ── CAS CONFIRMATION : envoyer en cuisine ─────────────────────
+        // ── CAS CONFIRMATION : commande confirmée mais PAS encore en cuisine ──
+        // sentToKitchen reste false — l'admin cliquera "Envoyer en cuisine" ensuite
         if (status == ClientOrderStatus.confirmed) {
-          orderUpdate['adminStatus']      = 'confirmed';
-          orderUpdate['status']           = 'confirmed';   // String pour compatibilité streamAdminOnlineOrders
-          orderUpdate['kitchenStatus']    = 'pending';
-          orderUpdate['sentToKitchen']    = true;
-          orderUpdate['sentToKitchenAt']  = FieldValue.serverTimestamp();
-          orderUpdate['confirmedAt']      = FieldValue.serverTimestamp();
+          orderUpdate['adminStatus']   = 'confirmed';
+          orderUpdate['status']        = 'pending';   // garde le statut pending jusqu'à envoi cuisine
+          orderUpdate['kitchenStatus'] = 'pending';
+          orderUpdate['confirmedAt']   = FieldValue.serverTimestamp();
+          // NE PAS mettre sentToKitchen=true ici — c'est sendToKitchen() qui le fait
         }
         // ── CAS PREPARING = "Envoyer en cuisine" ─────────────────────
         else if (status == ClientOrderStatus.preparing) {
@@ -660,9 +670,11 @@ class ClientFirebaseService {
 
   /// Envoie une commande en cuisine depuis l'écran admin.
   /// Écrit dans client_orders ET dans orders (sync atomique).
-  /// [clientOrderId] = id du doc client_orders (= widget.order.id côté admin)
-  Future<void> sendToKitchen(String clientOrderId) async {
+  /// [clientOrderId]   = id du doc client_orders
+  /// [internalOrderId] = id du doc orders (optionnel — accélère la recherche)
+  Future<void> sendToKitchen(String clientOrderId, {String? internalOrderId}) async {
     final now = DateTime.now().millisecondsSinceEpoch;
+    debugPrint('[sendToKitchen] START clientOrderId=$clientOrderId internalOrderId=$internalOrderId');
 
     // 1. Mettre à jour client_orders
     await _db.collection('client_orders').doc(clientOrderId).update({
@@ -670,29 +682,54 @@ class ClientFirebaseService {
       'sentToKitchenAt': now,
       'updatedAt':       now,
     });
+    debugPrint('[sendToKitchen] ✅ client_orders/$clientOrderId mis à jour');
 
     // 2. Trouver et mettre à jour le doc orders correspondant
+    // Stratégie triple : internalOrderId passé → chercher par clientOrderId → lire dans client_orders
     try {
-      final snap = await _db.collection('orders')
-          .where('clientOrderId', isEqualTo: clientOrderId)
-          .limit(1)
-          .get();
-      if (snap.docs.isNotEmpty) {
-        await snap.docs.first.reference.update({
-          'sentToKitchen':    true,
-          'kitchenStatus':    'waiting',
-          'sentToKitchenAt':  FieldValue.serverTimestamp(),
-          'status':           OrderStatus.pending.index,
-          'adminStatus':      'sent_to_kitchen',
-          'clientOrderStatus': ClientOrderStatus.preparing.index,
-          'updatedAt':        FieldValue.serverTimestamp(),
-        });
-        debugPrint('[sendToKitchen] ✅ orders/${snap.docs.first.id} → kitchenStatus=waiting sentToKitchen=true');
+      String? resolvedId = internalOrderId; // priorité au paramètre passé
+
+      if (resolvedId == null || resolvedId.isEmpty) {
+        // Tentative 1 : chercher par champ clientOrderId dans orders
+        final snap1 = await _db.collection('orders')
+            .where('clientOrderId', isEqualTo: clientOrderId)
+            .limit(1)
+            .get();
+        if (snap1.docs.isNotEmpty) {
+          resolvedId = snap1.docs.first.id;
+          debugPrint('[sendToKitchen] Trouvé via clientOrderId → $resolvedId');
+        } else {
+          // Tentative 2 : lire internalOrderId depuis client_orders
+          debugPrint('[sendToKitchen] ⚠ Aucun orders par clientOrderId=$clientOrderId, essai client_orders...');
+          final clientDoc = await _db.collection('client_orders').doc(clientOrderId).get();
+          final stored = clientDoc.data()?['internalOrderId'] as String?;
+          if (stored != null && stored.isNotEmpty) {
+            resolvedId = stored;
+            debugPrint('[sendToKitchen] internalOrderId depuis client_orders → $resolvedId');
+          } else {
+            debugPrint('[sendToKitchen] ❌ AUCUN internalOrderId trouvable pour clientOrderId=$clientOrderId');
+          }
+        }
       } else {
-        debugPrint('[sendToKitchen] ⚠ Aucun doc orders trouvé pour clientOrderId=$clientOrderId');
+        debugPrint('[sendToKitchen] Utilise internalOrderId param → $resolvedId');
+      }
+
+      if (resolvedId != null && resolvedId.isNotEmpty) {
+        await _db.collection('orders').doc(resolvedId).update({
+          'sentToKitchen':     true,
+          'kitchenStatus':     'waiting',
+          'sentToKitchenAt':   FieldValue.serverTimestamp(),
+          'status':            'pending',
+          'adminStatus':       'sent_to_kitchen',
+          'clientOrderId':     clientOrderId,
+          'clientOrderStatus': ClientOrderStatus.preparing.index,
+          'updatedAt':         FieldValue.serverTimestamp(),
+        });
+        debugPrint('[sendToKitchen] ✅ orders/$resolvedId → sentToKitchen=true kitchenStatus=waiting');
       }
     } catch (e) {
       debugPrint('[sendToKitchen] ❌ Erreur sync orders: $e');
+      rethrow; // rethrow pour que l'UI affiche l'erreur
     }
 
     // 3. Notifier dans Firestore

@@ -560,8 +560,15 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
     if (_processing) return;
     setState(() => _processing = true);
     try {
-      // Utiliser AppProvider car il a accès aux deux services (firebase + client_firebase)
-      await context.read<AppProvider>().sendOnlineOrderToKitchen(widget.order.id);
+      // widget.order.id     = clientOrderId (id du doc client_orders)
+      // widget.order.internalOrderId = id du doc orders (si disponible)
+      final clientOrderId  = widget.order.id;
+      final internalOrderId = widget.order.internalOrderId;
+      debugPrint('[_sendToKitchen] clientOrderId=$clientOrderId internalOrderId=$internalOrderId');
+      await context.read<AppProvider>().sendOnlineOrderToKitchen(
+        clientOrderId,
+        internalOrderId: internalOrderId,
+      );
 
       // Notification locale
       NotificationService().trigger(
