@@ -7,6 +7,7 @@ import '../../../providers/client_provider.dart';
 import '../../../services/client_firebase_service.dart';
 import '../../../utils/app_theme.dart';
 import '../client_main_screen.dart';
+import '../../login_screen.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ÉCRAN AUTH CLIENT — Inscription, Connexion, Mot de passe oublié
@@ -209,30 +210,41 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // ── Bouton Retour ──────────────────────────────────
-                    if (Navigator.canPop(context))
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white70, size: 14),
-                                SizedBox(width: 6),
-                                Text('Retour', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
-                              ],
-                            ),
+                    // ── Bouton Retour à l'accueil (toujours visible) ───
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: GestureDetector(
+                        onTap: () {
+                          if (Navigator.canPop(context)) {
+                            Navigator.pop(context);
+                          } else {
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const LoginScreen(),
+                              ),
+                            );
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white70, size: 14),
+                              SizedBox(width: 6),
+                              Text('Retour à l\'accueil',
+                                  style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
+                            ],
                           ),
                         ),
                       ),
+                    ),
                     const SizedBox(height: 16),
                     // Logo
                     _buildLogo(),
