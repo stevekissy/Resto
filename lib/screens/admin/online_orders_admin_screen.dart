@@ -554,21 +554,16 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
 
   // ── Actions ──────────────────────────────────────────────────────────
 
-  /// Envoi DÉDIÉ en cuisine — passe par AppProvider.sendOnlineOrderToKitchen()
-  /// qui écrit sentToKitchen=true + kitchenStatus='waiting' dans 'orders'.
+  /// SOURCE UNIQUE : envoie la commande en cuisine via update direct du doc 'orders'.
+  /// widget.order.id = id du doc orders (depuis streamAdminOnlineOrders, data['id'] = d.id)
   Future<void> _sendToKitchen() async {
     if (_processing) return;
     setState(() => _processing = true);
     try {
-      // widget.order.id     = clientOrderId (id du doc client_orders)
-      // widget.order.internalOrderId = id du doc orders (si disponible)
-      final clientOrderId  = widget.order.id;
-      final internalOrderId = widget.order.internalOrderId;
-      debugPrint('[_sendToKitchen] clientOrderId=$clientOrderId internalOrderId=$internalOrderId');
-      await context.read<AppProvider>().sendOnlineOrderToKitchen(
-        clientOrderId,
-        internalOrderId: internalOrderId,
-      );
+      // SOURCE UNIQUE : widget.order.id = id du doc orders directement
+      final orderId = widget.order.id;
+      debugPrint('[_sendToKitchen] orderId=$orderId');
+      await context.read<AppProvider>().sendOnlineOrderToKitchen(orderId);
 
       // Notification locale
       NotificationService().trigger(

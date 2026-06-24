@@ -1131,13 +1131,10 @@ class AppProvider extends ChangeNotifier {
             break;
         }
         if (clientStatus != null) {
-          // Trouver le clientOrderId dans le doc orders
+          // SOURCE UNIQUE : updateOrderStatus() écrit déjà dans 'orders' via firebase_service.
+          // syncKitchenStatusToClientOrder est devenu un NO-OP (source unique orders).
+          // On l'appelle uniquement pour la compatibilité descendante — ne fait rien.
           final clientSvc = ClientFirebaseService();
-          // L'id du client_orders est stocké dans 'clientOrderId' du doc orders
-          // On passe l'orderId (internalOrderId) à updateOrderStatus de client_firebase_service
-          // mais la méthode cherche par clientOrderId dans orders → on doit passer le clientOrderId
-          // Récupérer depuis les données en mémoire si disponible
-          // Utiliser directement FirebaseFirestore via un appel séparé
           await clientSvc.syncKitchenStatusToClientOrder(
             internalOrderId: orderId,
             clientStatus: clientStatus,
@@ -1149,16 +1146,12 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  /// Envoie une commande en ligne en cuisine (depuis l'écran OnlineOrdersAdmin).
-  /// [clientOrderId]   = widget.order.id (id du doc client_orders)
-  /// [internalOrderId] = widget.order.internalOrderId (id du doc orders — optionnel)
-  Future<void> sendOnlineOrderToKitchen(
-    String clientOrderId, {
-    String? internalOrderId,
-  }) async {
+  /// SOURCE UNIQUE : envoie une commande en ligne en cuisine.
+  /// [orderId] = id du doc orders (widget.order.id depuis streamAdminOnlineOrders)
+  Future<void> sendOnlineOrderToKitchen(String orderId) async {
     final clientSvc = ClientFirebaseService();
-    await clientSvc.sendToKitchen(clientOrderId, internalOrderId: internalOrderId);
-    debugPrint('[AppProvider] sendOnlineOrderToKitchen: clientOrderId=$clientOrderId internalOrderId=$internalOrderId');
+    await clientSvc.sendToKitchen(orderId);
+    debugPrint('[AppProvider] sendOnlineOrderToKitchen: orderId=$orderId');
   }
 
   Future<void> updateOrderItemQuantity(String orderId, String productId, int newQuantity) async {

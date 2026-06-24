@@ -11,7 +11,8 @@ import 'package:flutter/foundation.dart';
 // Gère toutes les opérations Firestore liées à l'espace client
 // Collections :
 //   clients             → profils clients
-//   client_orders       → commandes en ligne
+//   orders              → SOURCE UNIQUE pour toutes les commandes (POS + online)
+//                         Les commandes en ligne ont orderSource='online'
 //   client_addresses    → adresses livraison
 //   loyalty_transactions → historique points
 //   promotions          → offres promotionnelles
@@ -174,34 +175,94 @@ class ClientFirebaseService {
 
   // ── Commandes client ───────────────────────────────────────────────────
 
+  /// Stream commandes du client — lit UNIQUEMENT dans 'orders' (source unique)
+  /// Filtre : clientId + orderSource='online'
   Stream<List<ClientOrder>> streamClientOrders(String clientId) {
     return _db
-        .collection('client_orders')
+        .collection('orders')
         .where('clientId', isEqualTo: clientId)
+        .where('orderSource', isEqualTo: 'online')
         .snapshots()
         .map((snap) {
-      final orders = snap.docs
-          .map((d) => ClientOrder.fromMap(d.data()))
-          .toList();
+      final orders = <ClientOrder>[];
+      for (final d in snap.docs) {
+        try {
+          final data = Map<String, dynamic>.from(d.data());
+          // Normaliser les champs pour ClientOrder.fromMap()
+          data['id'] = d.id;          // id = id du doc orders (source unique)
+          data['internalOrderId'] = d.id; // alias pour compatibilité
+          _normalizeOrderDataForClient(data);
+          orders.add(ClientOrder.fromMap(data));
+        } catch (e) {
+          debugPrint('[streamClientOrders] doc ${d.id} ignoré: $e');
+        }
+      }
       orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return orders;
     });
   }
 
-  /// Stream côté client — lit client_orders (pour l'espace client connecté)
+  /// Stream côté client — toutes les commandes en ligne (admin/stats)
   Stream<List<ClientOrder>> streamAllOnlineOrders() {
     return _db
-        .collection('client_orders')
-        .orderBy('createdAt', descending: true)
-        .limit(100)
+        .collection('orders')
+        .where('orderSource', isEqualTo: 'online')
         .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => ClientOrder.fromMap(d.data()))
-            .toList());
+        .map((snap) {
+      final orders = <ClientOrder>[];
+      for (final d in snap.docs) {
+        try {
+          final data = Map<String, dynamic>.from(d.data());
+          data['id'] = d.id;
+          data['internalOrderId'] = d.id;
+          _normalizeOrderDataForClient(data);
+          orders.add(ClientOrder.fromMap(data));
+        } catch (e) {
+          debugPrint('[streamAllOnlineOrders] doc ${d.id} ignoré: $e');
+        }
+      }
+      orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return orders;
+    });
   }
 
-  /// Stream côté admin — lit la collection 'orders' filtrée sur orderSource==online
-  /// Convertit les docs 'orders' en ClientOrder pour l'écran OnlineOrdersAdmin.
+  /// Normalise un doc 'orders' pour qu'il soit lisible par ClientOrder.fromMap()
+  void _normalizeOrderDataForClient(Map<String, dynamic> data) {
+    // status : string → int
+    final statusRaw = data['status'];
+    if (statusRaw is String) {
+      data['status'] = _clientStatusFromString(statusRaw);
+    }
+    // orderType : null → calculer depuis tableNumber ou orderType string
+    final orderTypeRaw = data['orderType'];
+    if (orderTypeRaw == null) {
+      final tableNum = data['tableNumber'] as String? ?? '';
+      data['orderType'] = tableNum.contains('Emporter') ? 1 : 0;
+    } else if (orderTypeRaw is String) {
+      data['orderType'] = orderTypeRaw == 'takeaway' ? 1
+                        : orderTypeRaw == 'dine_in'  ? 2
+                        : 0;
+    }
+    // paymentMethod string → int
+    final pmRaw = data['paymentMethod'];
+    if (pmRaw is String) {
+      data['paymentMethod'] = _paymentMethodFromString(pmRaw);
+    }
+    // paymentStatus string → int
+    final psRaw = data['paymentStatus'];
+    if (psRaw is String) {
+      data['paymentStatus'] = _paymentStatusFromString(psRaw);
+    }
+    // deliveryAddress : si String → null (évite TypeError)
+    final da = data['deliveryAddress'];
+    if (da is String) {
+      data['deliveryAddress'] = null;
+    }
+  }
+
+  /// Stream côté admin — lit 'orders' filtrée sur orderSource=='online'
+  /// SOURCE UNIQUE : data['id'] = d.id (id du doc orders directement)
+  /// Plus de clientOrderId/internalOrderId : l'id est celui du doc orders.
   Stream<List<ClientOrder>> streamAdminOnlineOrders() {
     return _db
         .collection('orders')
@@ -212,35 +273,10 @@ class ClientFirebaseService {
       for (final d in snap.docs) {
         try {
           final data = Map<String, dynamic>.from(d.data());
-          // Normaliser status string → int
-          final statusRaw = data['status'];
-          if (statusRaw is String) {
-            data['status'] = _clientStatusFromString(statusRaw);
-          }
-          // orderType null → calculer depuis tableNumber
-          final tableNum = data['tableNumber'] as String? ?? '';
-          if (data['orderType'] == null) {
-            data['orderType'] = tableNum.contains('Emporter') ? 1 : 0;
-          }
-          // paymentMethod string → int
-          final pmRaw = data['paymentMethod'];
-          if (pmRaw is String) {
-            data['paymentMethod'] = _paymentMethodFromString(pmRaw);
-          }
-          // paymentStatus string → int
-          final psRaw = data['paymentStatus'];
-          if (psRaw is String) {
-            data['paymentStatus'] = _paymentStatusFromString(psRaw);
-          }
-          // id = clientOrderId (pour que updateOrderStatus() cible le bon doc client)
-          data['id'] = data['clientOrderId'] as String? ?? d.id;
+          // SOURCE UNIQUE : id = id du doc orders (pas clientOrderId)
+          data['id'] = d.id;
           data['internalOrderId'] = d.id;
-          // deliveryAddress : si c'est une String (anciens docs), on la met à null
-          // pour éviter un TypeError dans ClientOrder.fromMap()
-          final da = data['deliveryAddress'];
-          if (da is String) {
-            data['deliveryAddress'] = null;
-          }
+          _normalizeOrderDataForClient(data);
           list.add(ClientOrder.fromMap(data));
         } catch (e) {
           debugPrint('[streamAdminOnlineOrders] doc ${d.id} ignoré — erreur: $e');
@@ -289,23 +325,135 @@ class ClientFirebaseService {
     }
   }
 
+  /// SOURCE UNIQUE : crée la commande UNIQUEMENT dans 'orders'.
+  /// Plus de double écriture client_orders + orders.
+  /// Retourne l'id du doc orders (= orderId utilisé partout).
   Future<String> createOrder(ClientOrder order) async {
-    final id = _uuid.v4();
-    // Générer numéro de commande
+    final orderId = _uuid.v4();
     final count = await _getNextOrderNumber();
-    final data = order.toMap();
-    data['id'] = id;
-    data['orderNumber'] = '#${count.toString().padLeft(4, '0')}';
-    await _db.collection('client_orders').doc(id).set(data);
+    final orderNumber = '#${count.toString().padLeft(4, '0')}';
 
-    // Créer aussi dans la collection 'orders' pour le tableau de bord cuisine
-    await _createInternalOrder(data, id);
+    // Construire les items avec alias pour cuisine
+    final items = order.items.map((i) => {
+      'productId': i.productId,
+      'productName': i.productName,
+      'name': i.productName,         // alias cuisine
+      'unitPrice': i.unitPrice,
+      'price': i.unitPrice,          // alias cuisine
+      'quantity': i.quantity,
+      'comment': i.comment ?? '',
+      'categoryName': i.categoryName ?? '',
+      'imageUrl': i.imageUrl,
+    }).toList();
 
-    // ⚠️ NE PAS mettre à jour totalOrders / totalSpent ici.
-    // Ces compteurs ne bougent QUE quand la commande est payée ET livrée.
-    // Voir awardLoyaltyPoints() — appelé après statut "delivered".
+    final orderTypeInt = order.orderType.index; // 0=delivery, 1=takeaway
+    final orderTypeStr = orderTypeInt == 1 ? 'takeaway'
+                       : orderTypeInt == 2 ? 'dine_in'
+                       : 'delivery';
+    final tableNumberStr = orderTypeInt == 1 ? 'À Emporter'
+                         : orderTypeInt == 2 ? 'Sur place'
+                         : 'Livraison Yango';
 
-    return id;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await _db.collection('orders').doc(orderId).set({
+      // ── Identité ──────────────────────────────────────────────────────
+      'id':            orderId,
+      'orderNumber':   orderNumber,
+      'orderSource':   'online',
+      'source':        'online',
+      // ── Client ────────────────────────────────────────────────────────
+      'clientId':      order.clientId,
+      'clientName':    order.clientName,
+      'clientPhone':   order.clientPhone,
+      'serverName':    order.clientName,  // alias cuisine
+      // ── Articles ──────────────────────────────────────────────────────
+      'items':         items,
+      // ── Type & table ──────────────────────────────────────────────────
+      'orderType':     orderTypeStr,
+      'tableNumber':   tableNumberStr,
+      // ── Statuts ───────────────────────────────────────────────────────
+      'status':        'pending',
+      'orderStatus':   'received',
+      'adminStatus':   'received',
+      'kitchenStatus': 'not_sent',
+      'sentToKitchen': false,
+      // ── Cuisine workflow ──────────────────────────────────────────────
+      'sentToKitchenAt': null,
+      // ── Montants ──────────────────────────────────────────────────────
+      'totalAmount':          order.totalAmount,
+      'deliveryFee':          order.deliveryFee,
+      'discount':             order.loyaltyDiscountAmount,
+      'loyaltyDiscountAmount': order.loyaltyDiscountAmount,
+      'depositAmount':         order.depositAmount,
+      'remainingAmount':       order.remainingAmount,
+      'depositRequired':       order.depositRequired,
+      'depositPaid':           order.depositPaid,
+      // ── Paiement ──────────────────────────────────────────────────────
+      'paymentMethod':  order.paymentMethod.index,
+      'paymentStatus':  order.paymentStatus.index,
+      'cashStatus':     order.depositAmount > 0 ? 'deposit_received' : 'pending_cashout',
+      // ── Fidélité ──────────────────────────────────────────────────────
+      'loyaltyPointsUsed':    order.loyaltyPointsUsed,
+      'loyaltyPointsEarned':  order.loyaltyPointsEarned,
+      'loyaltyPointsAwarded': false,
+      // ── Livraison ─────────────────────────────────────────────────────
+      'deliveryAddress':     order.deliveryAddress?.toMap(),
+      'geoLocation':         order.geoLocation,
+      'deliveryNote':        order.deliveryNote,
+      'deliveryPartner':     order.deliveryPartner,
+      'deliveryFeePaidTo':   order.deliveryFeePaidTo,
+      'deliveryFeeIncluded': order.deliveryFeeIncluded,
+      'yangoStatus':         0,
+      // ── Notes ─────────────────────────────────────────────────────────
+      'notes':         order.notes ?? '',
+      'specialInstructions': order.notes ?? '',
+      // ── Timestamps ────────────────────────────────────────────────────
+      'createdAt':     FieldValue.serverTimestamp(),
+      'updatedAt':     FieldValue.serverTimestamp(),
+    });
+
+    debugPrint('[createOrder] ✅ orders/$orderId créé — orderSource=online kitchenStatus=not_sent');
+
+    // ── Notifications admin/cuisine ──────────────────────────────────────
+    try {
+      final clientName   = order.clientName;
+      final orderTypeLbl = orderTypeInt == 0 ? 'Livraison Yango' : 'À emporter';
+      final notifId      = _uuid.v4();
+      await _db.collection('notifications').doc(notifId).set({
+        'id':          notifId,
+        'type':        'online_order',
+        'title':       '📱 Nouvelle commande en ligne',
+        'message':     'NOUVELLE COMMANDE $orderNumber — $clientName ($orderTypeLbl)',
+        'orderId':     orderId,
+        'clientId':    order.clientId,
+        'clientName':  clientName,
+        'createdAt':   FieldValue.serverTimestamp(),
+        'read':        false,
+        'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
+      });
+
+      if (order.depositPaid && order.depositAmount > 0) {
+        final depositNotifId = _uuid.v4();
+        await _db.collection('notifications').doc(depositNotifId).set({
+          'id':          depositNotifId,
+          'type':        'deposit_paid',
+          'title':       '💰 Acompte reçu',
+          'message':     'Acompte reçu pour commande $orderNumber — $clientName : ${order.depositAmount.toStringAsFixed(0)} F CFA',
+          'orderId':     orderId,
+          'clientId':    order.clientId,
+          'clientName':  clientName,
+          'amount':      order.depositAmount,
+          'createdAt':   FieldValue.serverTimestamp(),
+          'read':        false,
+          'targetRoles': ['admin', 'manager', 'cashier'],
+        });
+      }
+    } catch (e) {
+      debugPrintOrder('Erreur notification création commande: $e');
+    }
+
+    return orderId;
   }
 
   Future<int> _getNextOrderNumber() async {
@@ -317,252 +465,68 @@ class ClientFirebaseService {
     return current + 1;
   }
 
-  /// Crée une commande miroir dans la collection interne 'orders' de l'app de gestion
-  Future<void> _createInternalOrder(Map<String, dynamic> clientOrderData, String clientOrderId) async {
-    try {
-      // Conserver les clés natives de CartItem.fromMap (productName, unitPrice)
-      // + ajouter des alias (name, price) pour compatibilité cuisine/affichage
-      final items = (clientOrderData['items'] as List? ?? []).map((i) {
-        final m = i as Map<String, dynamic>;
-        return {
-          'productId': m['productId'],
-          'productName': m['productName'],   // clé lue par CartItem.fromMap
-          'name': m['productName'],          // alias pour affichage cuisine
-          'unitPrice': m['unitPrice'],       // clé lue par CartItem.fromMap
-          'price': m['unitPrice'],           // alias pour affichage cuisine
-          'quantity': m['quantity'],
-          'comment': m['comment'] ?? '',
-          'categoryName': m['categoryName'] ?? '',
-        };
-      }).toList();
-
-      final internalOrderId = _uuid.v4();
-      final totalAmount = (clientOrderData['totalAmount'] as num?)?.toDouble() ?? 0;
-      final deliveryFee = (clientOrderData['deliveryFee'] as num?)?.toDouble() ?? 0;
-
-      final orderTypeInt = (clientOrderData['orderType'] as num?)?.toInt() ?? 0;
-      // Convertir int → string : 0=delivery, 1=takeaway, 2=dine_in
-      final orderTypeStr = orderTypeInt == 1 ? 'takeaway'
-                         : orderTypeInt == 2 ? 'dine_in'
-                         : 'delivery';
-      final tableNumberStr = orderTypeInt == 1 ? 'À Emporter'
-                           : orderTypeInt == 2 ? 'Sur place'
-                           : 'Livraison Yango';
-      final depositAmount = (clientOrderData['depositAmount'] as num?)?.toDouble() ?? 0;
-      final loyaltyDiscount = (clientOrderData['loyaltyDiscountAmount'] as num?)?.toDouble() ?? 0;
-      final deliveryAddr = clientOrderData['deliveryAddress'] as Map<String, dynamic>?;
-
-      await _db.collection('orders').doc(internalOrderId).set({
-        'id': internalOrderId,
-        'clientOrderId': clientOrderId,
-        'orderNumber': clientOrderData['orderNumber'],
-        'tableNumber': tableNumberStr,
-        'orderType': orderTypeStr,
-        'serverName': clientOrderData['clientName'] ?? '',
-        'items': items,
-        'status': 'pending',              // String — _parseOrderStatus gère les deux
-        'totalAmount': totalAmount,
-        'discount': loyaltyDiscount,
-        'cashStatus': depositAmount > 0 ? 'deposit_received' : 'pending_cashout',
-        'notes': clientOrderData['notes'] ?? '',
-        'createdAt': clientOrderData['createdAt'],
-        // Source et identification commande en ligne
-        'source': 'online',
-        'orderSource': 'online',
-        'clientId': clientOrderData['clientId'],
-        'clientName': clientOrderData['clientName'],
-        'clientPhone': clientOrderData['clientPhone'],
-        // Statuts admin/cuisine — requis pour le filtrage admin
-        'adminStatus': 'received',
-        'kitchenStatus': 'pending',
-        // Cuisine — initialiser à false : sera mis à true lors de l'envoi en cuisine
-        'sentToKitchen': false,
-        // Adresse livraison — stocker le Map complet ou null (jamais une String)
-        // ClientOrder.fromMap() attend un Map<String,dynamic> ou null pour deliveryAddress.
-        // Stocker une String vide '' provoque un TypeError silencieux dans le stream.
-        'deliveryAddress': deliveryAddr,
-        'geoLocation': clientOrderData['geoLocation'],
-        // Acompte
-        'depositRequired': clientOrderData['depositRequired'] ?? true,
-        'depositAmount': depositAmount,
-        'depositPaid': clientOrderData['depositPaid'] ?? false,
-        'paymentMethod': clientOrderData['paymentMethod'],
-        'paymentStatus': clientOrderData['paymentStatus'],
-        // Points fidélité
-        'loyaltyPointsUsed': clientOrderData['loyaltyPointsUsed'] ?? 0,
-        'loyaltyDiscountAmount': loyaltyDiscount,
-        // Yango delivery
-        'deliveryPartner': 'Yango',
-        'deliveryFeePaidTo': 'driver',
-        'deliveryFeeIncluded': false,
-        'deliveryNote': clientOrderData['deliveryNote'],
-        'yangoStatus': 0,  // YangoDeliveryStatus.waiting
-        'remainingAmount': clientOrderData['remainingAmount'],
-      });
-
-      debugPrint('ONLINE_ORDER_CREATED orderId=$internalOrderId clientOrderId=$clientOrderId');
-
-      // Mettre à jour clientOrderData avec l'id interne
-      await _db.collection('client_orders').doc(clientOrderId).update({
-        'internalOrderId': internalOrderId,
-      });
-
-      // ── Notification admin/cuisine Firestore ────────────────────────
-      // Écrite dans la collection 'notifications' pour que l'admin la voie
-      // même s'il se connecte après la commande (persistant).
-      try {
-        final clientName    = clientOrderData['clientName'] as String? ?? 'Client';
-        final orderNum      = clientOrderData['orderNumber'] as String? ?? '';
-        final depositPaid   = clientOrderData['depositPaid'] as bool? ?? false;
-        final depositAmount = (clientOrderData['depositAmount'] as num?)?.toDouble() ?? 0;
-        final orderTypeIdx  = (clientOrderData['orderType'] as num?)?.toInt() ?? 0;
-        final orderTypeLabel= orderTypeIdx == 0 ? 'Livraison Yango' : 'À emporter';
-
-        // 1. Notification nouvelle commande
-        final notifId = _uuid.v4();
-        await _db.collection('notifications').doc(notifId).set({
-          'id': notifId,
-          'type': 'online_order',
-          'title': '📱 Nouvelle commande en ligne',
-          'message': 'NOUVELLE COMMANDE $orderNum — $clientName ($orderTypeLabel)',
-          'orderId': internalOrderId,
-          'clientOrderId': clientOrderId,
-          'clientId': clientOrderData['clientId'],
-          'clientName': clientName,
-          'createdAt': FieldValue.serverTimestamp(),
-          'read': false,
-          'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
-        });
-
-        // 2. Notification acompte reçu (si l'acompte est payé à la commande)
-        if (depositPaid && depositAmount > 0) {
-          final depositNotifId = _uuid.v4();
-          await _db.collection('notifications').doc(depositNotifId).set({
-            'id': depositNotifId,
-            'type': 'deposit_paid',
-            'title': '💰 Acompte reçu',
-            'message': 'Acompte reçu pour commande $orderNum — $clientName : ${depositAmount.toStringAsFixed(0)} F CFA',
-            'orderId': internalOrderId,
-            'clientOrderId': clientOrderId,
-            'clientId': clientOrderData['clientId'],
-            'clientName': clientName,
-            'amount': depositAmount,
-            'createdAt': FieldValue.serverTimestamp(),
-            'read': false,
-            'targetRoles': ['admin', 'manager', 'cashier'],
-          });
-        }
-      } catch (e) {
-        debugPrintOrder('Erreur création notification admin: $e');
-      }
-      // ────────────────────────────────────────────────────────────────
-
-    } catch (e) {
-      // Non bloquant — la commande client a déjà été créée
-      debugPrintOrder('Erreur création commande interne: $e');
-    }
-  }
+  // _createInternalOrder() SUPPRIMÉ — SOURCE UNIQUE 'orders'
 
   void debugPrintOrder(String msg) {
     // ignore: avoid_print
     debugPrint('[ClientFirebaseService] $msg');
   }
 
+  /// SOURCE UNIQUE : met à jour le statut directement dans 'orders'.
+  /// [orderId] = id du doc orders (source unique — plus de clientOrderId séparé)
   Future<void> updateOrderStatus(String orderId, ClientOrderStatus status) async {
-    final now = DateTime.now().millisecondsSinceEpoch;
     final update = <String, dynamic>{
       'status': status.index,
-      'updatedAt': now,
+      'updatedAt': FieldValue.serverTimestamp(),
     };
 
-    // Écrire les timestamps de workflow selon le nouveau statut
+    // Timestamps workflow
     switch (status) {
       case ClientOrderStatus.confirmed:
-        update['confirmedAt'] = now;
+        update['confirmedAt']  = FieldValue.serverTimestamp();
+        update['adminStatus']  = 'confirmed';
+        update['kitchenStatus'] = 'not_sent';
+        // sentToKitchen reste false — l'admin clique "Envoyer en cuisine" ensuite
         break;
       case ClientOrderStatus.preparing:
-        update['sentToKitchenAt'] = now;
+        // "Envoyer en cuisine" — sentToKitchen=true, cuisine voit la commande
+        update['sentToKitchen']   = true;
+        update['kitchenStatus']   = 'pending';
+        update['sentToKitchenAt'] = FieldValue.serverTimestamp();
+        update['adminStatus']     = 'sent_to_kitchen';
+        update['orderStatus']     = 'sent_to_kitchen';
         break;
       case ClientOrderStatus.ready:
-        update['readyAt'] = now;
+        update['readyAt']       = FieldValue.serverTimestamp();
+        update['kitchenStatus'] = 'ready';
+        update['adminStatus']   = 'ready';
+        break;
+      case ClientOrderStatus.delivering:
+        update['adminStatus'] = 'delivering';
         break;
       case ClientOrderStatus.delivered:
-        update['deliveredAt'] = now;
-        update['settledAt'] = now;
-        update['paymentStatus'] = ClientPaymentStatus.fullyPaid.index;
+        update['deliveredAt']       = FieldValue.serverTimestamp();
+        update['settledAt']         = FieldValue.serverTimestamp();
+        update['paymentStatus']     = ClientPaymentStatus.fullyPaid.index;
+        update['kitchenStatus']     = 'served';
+        update['adminStatus']       = 'delivered';
+        update['settlementStatus']  = 'completed';
+        break;
+      case ClientOrderStatus.cancelled:
+        update['kitchenStatus'] = 'cancelled';
+        update['adminStatus']   = 'cancelled';
+        update['sentToKitchen'] = false;
         break;
       default:
         break;
     }
 
-    await _db.collection('client_orders').doc(orderId).update(update);
+    await _db.collection('orders').doc(orderId).update(update);
+    debugPrint('[updateOrderStatus] ✅ orders/$orderId → $status');
 
-    // ── Synchroniser dans la collection 'orders' (cuisine/caisse) ──────────
-    // Recherche par clientOrderId (l'id du doc client_orders)
-    // OU par internalOrderId si le doc orders a été créé avec un id différent
+    // ── Notifications ──────────────────────────────────────────────────
     try {
-      final snap = await _db.collection('orders')
-          .where('clientOrderId', isEqualTo: orderId)
-          .limit(1)
-          .get();
-      if (snap.docs.isNotEmpty) {
-        final orderUpdate = <String, dynamic>{
-          'clientOrderStatus': status.index,
-          'updatedAt': now,
-        };
-
-        // ── CAS CONFIRMATION : commande confirmée mais PAS encore en cuisine ──
-        // sentToKitchen reste false — l'admin cliquera "Envoyer en cuisine" ensuite
-        if (status == ClientOrderStatus.confirmed) {
-          orderUpdate['adminStatus']   = 'confirmed';
-          orderUpdate['status']        = 'pending';   // garde le statut pending jusqu'à envoi cuisine
-          orderUpdate['kitchenStatus'] = 'pending';
-          orderUpdate['confirmedAt']   = FieldValue.serverTimestamp();
-          // NE PAS mettre sentToKitchen=true ici — c'est sendToKitchen() qui le fait
-        }
-        // ── CAS PREPARING = "Envoyer en cuisine" ─────────────────────
-        else if (status == ClientOrderStatus.preparing) {
-          orderUpdate['sentToKitchen']   = true;
-          orderUpdate['kitchenStatus']   = 'waiting';
-          orderUpdate['sentToKitchenAt'] = FieldValue.serverTimestamp();
-          orderUpdate['status']          = OrderStatus.pending.index; // toujours pending (cuisine pas encore commencé)
-          orderUpdate['adminStatus']     = 'sent_to_kitchen';
-        }
-        // ── CAS READY (cuisine : prête) ────────────────────────────────
-        else if (status == ClientOrderStatus.ready) {
-          orderUpdate['status']        = 2; // OrderStatus.ready
-          orderUpdate['kitchenStatus'] = 'ready';
-          orderUpdate['readyAt']       = FieldValue.serverTimestamp();
-        }
-        // ── CAS DELIVERED (livré) ───────────────────────────────────────
-        else if (status == ClientOrderStatus.delivered) {
-          orderUpdate['status']           = 3; // OrderStatus.served
-          orderUpdate['kitchenStatus']    = 'served';
-          orderUpdate['paymentStatus']    = 'paid';
-          orderUpdate['settlementStatus'] = 'completed';
-          orderUpdate['servedAt']         = FieldValue.serverTimestamp();
-        }
-        // ── CAS CANCELLED ───────────────────────────────────────────────
-        else if (status == ClientOrderStatus.cancelled) {
-          orderUpdate['status']        = 4; // OrderStatus.cancelled
-          orderUpdate['kitchenStatus'] = 'cancelled';
-          orderUpdate['adminStatus']   = 'cancelled';
-          orderUpdate['sentToKitchen'] = false;
-        }
-
-        await snap.docs.first.reference.update(orderUpdate);
-        debugPrint('[updateOrderStatus] ✅ orders/${snap.docs.first.id} mis à jour → status=$status');
-      } else {
-        debugPrint('[updateOrderStatus] ⚠ Aucun doc orders trouvé pour clientOrderId=$orderId');
-      }
-    } catch (e) {
-      debugPrint('[updateOrderStatus] ❌ Erreur sync orders: $e');
-    }
-
-    // ── Notifications Firestore selon statut ──────────────────────────
-    try {
-      // Lire les infos de la commande pour construire le message
-      final orderDoc = await _db.collection('client_orders').doc(orderId).get();
+      final orderDoc = await _db.collection('orders').doc(orderId).get();
       if (orderDoc.exists) {
         final data = orderDoc.data()!;
         final clientName  = data['clientName'] as String? ?? 'Client';
@@ -575,34 +539,34 @@ class ClientFirebaseService {
 
         switch (status) {
           case ClientOrderStatus.confirmed:
-            notifTitle   = '🍳 Nouvelle commande en ligne confirmée';
-            notifMessage = 'Commande $orderNumber de $clientName — à préparer en cuisine';
+            notifTitle   = '🍳 Commande en ligne confirmée';
+            notifMessage = 'Commande $orderNumber de $clientName — confirmée';
             notifType    = 'kitchen_online_order';
             break;
           case ClientOrderStatus.preparing:
-            notifTitle   = 'Commande en cuisine';
-            notifMessage = 'Commande $orderNumber de $clientName en préparation';
+            notifTitle   = '🍳 Commande envoyée en cuisine';
+            notifMessage = 'Commande $orderNumber de $clientName — en cuisine';
             notifType    = 'order_preparing';
             break;
           case ClientOrderStatus.ready:
-            notifTitle   = 'Commande prête';
-            notifMessage = 'Commande $orderNumber de $clientName est PRÊTE — appeler Yango';
+            notifTitle   = '✅ Commande prête';
+            notifMessage = 'Commande $orderNumber de $clientName est PRÊTE';
             notifType    = 'order_ready';
             break;
           case ClientOrderStatus.delivering:
-            notifTitle   = 'En livraison';
+            notifTitle   = '🚗 En livraison';
             notifMessage = 'Commande $orderNumber — Yango en route vers $clientName';
             notifType    = 'order_delivering';
             break;
           case ClientOrderStatus.delivered:
-            notifTitle   = 'Solde à encaisser';
+            notifTitle   = '💰 Solde à encaisser';
             notifMessage = remaining > 0
                 ? 'Commande $orderNumber livrée — solde à encaisser'
                 : 'Commande $orderNumber livrée et soldée ✓';
             notifType    = 'order_settled';
             break;
           case ClientOrderStatus.cancelled:
-            notifTitle   = 'Commande annulée';
+            notifTitle   = '❌ Commande annulée';
             notifMessage = 'Commande $orderNumber de $clientName annulée';
             notifType    = 'order_cancelled';
             break;
@@ -613,15 +577,14 @@ class ClientFirebaseService {
         if (notifTitle != null) {
           final notifId = _uuid.v4();
           await _db.collection('notifications').doc(notifId).set({
-            'id': notifId,
-            'type': notifType,
-            'title': notifTitle,
-            'message': notifMessage,
-            'orderId': orderId,
-            'clientOrderId': orderId,
-            'clientName': clientName,
-            'createdAt': FieldValue.serverTimestamp(),
-            'read': false,
+            'id':          notifId,
+            'type':        notifType,
+            'title':       notifTitle,
+            'message':     notifMessage,
+            'orderId':     orderId,
+            'clientName':  clientName,
+            'createdAt':   FieldValue.serverTimestamp(),
+            'read':        false,
             'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
           });
         }
@@ -631,122 +594,53 @@ class ClientFirebaseService {
     }
   }
 
-  /// Synchronise le statut cuisine → client_orders
-  /// Appelé par AppProvider.updateOrderStatus() pour les commandes online
-  /// [internalOrderId] = id du doc dans 'orders'
+  /// SOURCE UNIQUE — syncKitchenStatusToClientOrder() supprimé.
+  /// Désormais, updateOrderStatus() écrit directement dans 'orders' (source unique).
+  /// Cette méthode est conservée comme stub vide pour compatibilité avec AppProvider
+  /// jusqu'à la prochaine mise à jour de app_provider.dart.
   Future<void> syncKitchenStatusToClientOrder({
     required String internalOrderId,
     required ClientOrderStatus clientStatus,
   }) async {
-    try {
-      // Chercher dans client_orders par internalOrderId
-      final snap = await _db.collection('client_orders')
-          .where('internalOrderId', isEqualTo: internalOrderId)
-          .limit(1)
-          .get();
-      if (snap.docs.isEmpty) {
-        debugPrint('[syncKitchenStatus] Aucun client_orders trouvé pour internalOrderId=$internalOrderId');
-        return;
-      }
-      final clientOrderId = snap.docs.first.id;
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final update = <String, dynamic>{
-        'status': clientStatus.index,
-        'updatedAt': now,
-      };
-      if (clientStatus == ClientOrderStatus.preparing) {
-        update['sentToKitchenAt'] = now;
-      } else if (clientStatus == ClientOrderStatus.ready) {
-        update['readyAt'] = now;
-      } else if (clientStatus == ClientOrderStatus.delivered) {
-        update['deliveredAt'] = now;
-      }
-      await _db.collection('client_orders').doc(clientOrderId).update(update);
-      debugPrint('[syncKitchenStatus] ✅ client_orders/$clientOrderId → $clientStatus');
-    } catch (e) {
-      debugPrint('[syncKitchenStatus] ❌ $e');
-    }
+    // NO-OP : source unique orders — plus de synchronisation client_orders nécessaire
+    debugPrint('[syncKitchenStatusToClientOrder] NO-OP (source unique orders) orderId=$internalOrderId status=$clientStatus');
   }
 
-  /// Envoie une commande en cuisine depuis l'écran admin.
-  /// Écrit dans client_orders ET dans orders (sync atomique).
-  /// [clientOrderId]   = id du doc client_orders
-  /// [internalOrderId] = id du doc orders (optionnel — accélère la recherche)
-  Future<void> sendToKitchen(String clientOrderId, {String? internalOrderId}) async {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    debugPrint('[sendToKitchen] START clientOrderId=$clientOrderId internalOrderId=$internalOrderId');
+  /// SOURCE UNIQUE : update direct du doc orders par orderId.
+  /// [orderId] = id du doc orders (widget.order.id depuis streamAdminOnlineOrders)
+  /// Plus de triple-stratégie, plus de client_orders.
+  Future<void> sendToKitchen(String orderId) async {
+    debugPrint('[sendToKitchen] START orderId=$orderId');
 
-    // 1. Mettre à jour client_orders
-    await _db.collection('client_orders').doc(clientOrderId).update({
-      'status':          ClientOrderStatus.preparing.index,
-      'sentToKitchenAt': now,
-      'updatedAt':       now,
+    await _db.collection('orders').doc(orderId).update({
+      'sentToKitchen':   true,
+      'kitchenStatus':   'pending',
+      'sentToKitchenAt': FieldValue.serverTimestamp(),
+      'status':          'pending',
+      'orderStatus':     'sent_to_kitchen',
+      'adminStatus':     'sent_to_kitchen',
+      'updatedAt':       FieldValue.serverTimestamp(),
     });
-    debugPrint('[sendToKitchen] ✅ client_orders/$clientOrderId mis à jour');
+    debugPrint('[sendToKitchen] ✅ orders/$orderId → sentToKitchen=true kitchenStatus=pending');
 
-    // 2. Trouver et mettre à jour le doc orders correspondant
-    // Stratégie triple : internalOrderId passé → chercher par clientOrderId → lire dans client_orders
+    // Notification Firestore
     try {
-      String? resolvedId = internalOrderId; // priorité au paramètre passé
-
-      if (resolvedId == null || resolvedId.isEmpty) {
-        // Tentative 1 : chercher par champ clientOrderId dans orders
-        final snap1 = await _db.collection('orders')
-            .where('clientOrderId', isEqualTo: clientOrderId)
-            .limit(1)
-            .get();
-        if (snap1.docs.isNotEmpty) {
-          resolvedId = snap1.docs.first.id;
-          debugPrint('[sendToKitchen] Trouvé via clientOrderId → $resolvedId');
-        } else {
-          // Tentative 2 : lire internalOrderId depuis client_orders
-          debugPrint('[sendToKitchen] ⚠ Aucun orders par clientOrderId=$clientOrderId, essai client_orders...');
-          final clientDoc = await _db.collection('client_orders').doc(clientOrderId).get();
-          final stored = clientDoc.data()?['internalOrderId'] as String?;
-          if (stored != null && stored.isNotEmpty) {
-            resolvedId = stored;
-            debugPrint('[sendToKitchen] internalOrderId depuis client_orders → $resolvedId');
-          } else {
-            debugPrint('[sendToKitchen] ❌ AUCUN internalOrderId trouvable pour clientOrderId=$clientOrderId');
-          }
-        }
-      } else {
-        debugPrint('[sendToKitchen] Utilise internalOrderId param → $resolvedId');
-      }
-
-      if (resolvedId != null && resolvedId.isNotEmpty) {
-        await _db.collection('orders').doc(resolvedId).update({
-          'sentToKitchen':     true,
-          'kitchenStatus':     'waiting',
-          'sentToKitchenAt':   FieldValue.serverTimestamp(),
-          'status':            'pending',
-          'adminStatus':       'sent_to_kitchen',
-          'clientOrderId':     clientOrderId,
-          'clientOrderStatus': ClientOrderStatus.preparing.index,
-          'updatedAt':         FieldValue.serverTimestamp(),
-        });
-        debugPrint('[sendToKitchen] ✅ orders/$resolvedId → sentToKitchen=true kitchenStatus=waiting');
-      }
-    } catch (e) {
-      debugPrint('[sendToKitchen] ❌ Erreur sync orders: $e');
-      rethrow; // rethrow pour que l'UI affiche l'erreur
-    }
-
-    // 3. Notifier dans Firestore
-    try {
-      final orderDoc = await _db.collection('client_orders').doc(clientOrderId).get();
+      final orderDoc = await _db.collection('orders').doc(orderId).get();
       if (orderDoc.exists) {
         final data = orderDoc.data()!;
-        final clientName  = data['clientName'] as String? ?? 'Client';
+        final clientName  = data['clientName']  as String? ?? 'Client';
         final orderNumber = data['orderNumber'] as String? ?? '';
         final notifId     = _uuid.v4();
         await _db.collection('notifications').doc(notifId).set({
-          'id':        notifId,
-          'type':      'order_preparing',
-          'message':   'Commande #$orderNumber de $clientName envoyée en cuisine',
-          'orderId':   clientOrderId,
-          'createdAt': FieldValue.serverTimestamp(),
-          'isRead':    false,
+          'id':          notifId,
+          'type':        'order_preparing',
+          'title':       '🍳 Commande envoyée en cuisine',
+          'message':     'Commande $orderNumber de $clientName envoyée en cuisine',
+          'orderId':     orderId,
+          'createdAt':   FieldValue.serverTimestamp(),
+          'isRead':      false,
+          'read':        false,
+          'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
         });
       }
     } catch (e) {
@@ -754,31 +648,29 @@ class ClientFirebaseService {
     }
   }
 
+  /// SOURCE UNIQUE : annule la commande dans 'orders' directement.
+  /// [orderId] = id du doc orders
   Future<void> cancelOrder(String orderId) async {
-    await _db.collection('client_orders').doc(orderId).update({
-      'status': ClientOrderStatus.cancelled.index,
-      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    await _db.collection('orders').doc(orderId).update({
+      'status':        ClientOrderStatus.cancelled.index,
+      'kitchenStatus': 'cancelled',
+      'adminStatus':   'cancelled',
+      'orderStatus':   'cancelled',
+      'sentToKitchen': false,
+      'updatedAt':     FieldValue.serverTimestamp(),
     });
+    debugPrint('[cancelOrder] ✅ orders/$orderId → cancelled');
   }
 
+  /// SOURCE UNIQUE : met à jour le statut Yango directement dans 'orders'.
+  /// [orderId] = id du doc orders
   Future<void> updateYangoStatus(String orderId, YangoDeliveryStatus yangoStatus) async {
-    await _db.collection('client_orders').doc(orderId).update({
-      'yangoStatus': yangoStatus.index,
-      'updatedAt': DateTime.now().millisecondsSinceEpoch,
+    await _db.collection('orders').doc(orderId).update({
+      'yangoStatus':      yangoStatus.index,
+      'yangoStatusLabel': yangoStatus.label,
+      'updatedAt':        FieldValue.serverTimestamp(),
     });
-    // Mettre à jour aussi dans la collection orders principale
-    try {
-      final snap = await _db.collection('orders')
-          .where('clientOrderId', isEqualTo: orderId)
-          .limit(1)
-          .get();
-      if (snap.docs.isNotEmpty) {
-        await snap.docs.first.reference.update({
-          'yangoStatus': yangoStatus.index,
-          'yangoStatusLabel': yangoStatus.label,
-        });
-      }
-    } catch (_) {}
+    debugPrint('[updateYangoStatus] ✅ orders/$orderId → yangoStatus=${yangoStatus.label}');
   }
 
   // ── Paramètres commandes en ligne ──────────────────────────────────────
@@ -885,14 +777,19 @@ class ClientFirebaseService {
   //
   // Appelé par updateOrderStatus() quand newStatus == delivered.
   // Incrémente aussi totalOrders et totalSpent — jamais à la création.
+  /// SOURCE UNIQUE : attribution des points fidélité depuis 'orders'.
+  /// [clientOrderId] = id du doc orders (source unique)
   Future<void> awardLoyaltyPoints({
     required String clientOrderId,
     required String clientId,
     required int pointsToAward,
   }) async {
-    // Vérification idempotence : lire la commande complète depuis Firestore
-    final orderDoc = await _db.collection('client_orders').doc(clientOrderId).get();
-    if (!orderDoc.exists) return;
+    // Vérification idempotence : lire depuis 'orders' (source unique)
+    final orderDoc = await _db.collection('orders').doc(clientOrderId).get();
+    if (!orderDoc.exists) {
+      debugPrintOrder('[loyalty] Doc orders/$clientOrderId introuvable — skip');
+      return;
+    }
     final data = orderDoc.data()!;
 
     // ── Idempotence : bloquer si déjà traité ──────────────────────────────
@@ -902,17 +799,12 @@ class ClientFirebaseService {
       return;
     }
 
-    // ── Vérification triple : payé + livré (lecture depuis Firestore) ─────
+    // ── Vérification : payé + livré/servi ─────────────────────────────────
     final deliveryStatusIndex = (data['status'] as num?)?.toInt() ?? -1;
     final paymentStatusIndex  = (data['paymentStatus'] as num?)?.toInt() ?? -1;
-    // Statut livraison : delivered = index 5 dans ClientOrderStatus
-    // Statut paiement : fullyPaid = index 2 dans ClientPaymentStatus
-    // Note : cashOnDelivery accepté si livré (paiement à la livraison)
-    final isDelivered = deliveryStatusIndex == 5; // ClientOrderStatus.delivered
-    final isFullyPaid = paymentStatusIndex == 2;  // ClientPaymentStatus.fullyPaid
-    // Pour paiement à la livraison (index 0 = cashOnDelivery),
-    // on considère payé à la livraison si livré.
-    final paymentMethod = (data['paymentMethod'] as num?)?.toInt() ?? -1;
+    final isDelivered  = deliveryStatusIndex == 5; // ClientOrderStatus.delivered
+    final isFullyPaid  = paymentStatusIndex  == 2; // ClientPaymentStatus.fullyPaid
+    final paymentMethod    = (data['paymentMethod'] as num?)?.toInt() ?? -1;
     final isCashOnDelivery = paymentMethod == 0;
     final paymentOk = isFullyPaid || (isCashOnDelivery && isDelivered);
 
@@ -922,13 +814,12 @@ class ClientFirebaseService {
     }
 
     // ── Marquer AVANT toute écriture (protection crash/double appel) ──────
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await _db.collection('client_orders').doc(clientOrderId).update({
-      'loyaltyPointsAwarded': true,
-      'loyaltyPointsAwardedAt': now,
+    await _db.collection('orders').doc(clientOrderId).update({
+      'loyaltyPointsAwarded':   true,
+      'loyaltyPointsAwardedAt': FieldValue.serverTimestamp(),
     });
 
-    // ── Incrémenter totalOrders et totalSpent (ici et seulement ici) ─────
+    // ── Incrémenter totalOrders et totalSpent ─────────────────────────────
     final totalAmount = (data['totalAmount'] as num?)?.toDouble() ?? 0;
     final deliveryFee = (data['deliveryFee'] as num?)?.toDouble() ?? 0;
     final grandTotal  = totalAmount + deliveryFee;
@@ -941,20 +832,17 @@ class ClientFirebaseService {
     if (pointsToAward > 0) {
       final txId = _uuid.v4();
       await _db.collection('loyalty_transactions').doc(txId).set({
-        'id': txId,
-        'clientId': clientId,
-        'type': LoyaltyType.earn.index,
-        'points': pointsToAward,
+        'id':          txId,
+        'clientId':    clientId,
+        'type':        LoyaltyType.earn.index,
+        'points':      pointsToAward,
         'description': 'Points fidélité — commande livrée et payée',
-        'orderId': clientOrderId,
-        'createdAt': now,
+        'orderId':     clientOrderId,
+        'createdAt':   DateTime.now().millisecondsSinceEpoch,
       });
-
-      // Incrémenter le solde de points
       await _db.collection('clients').doc(clientId).update({
         'loyaltyPoints': FieldValue.increment(pointsToAward),
       });
-
       debugPrintOrder('[loyalty] ✅ $pointsToAward pts + totalSpent+$grandTotal F → client $clientId');
     } else {
       debugPrintOrder('[loyalty] ✅ totalSpent+$grandTotal F (0 point à attribuer) → client $clientId');
