@@ -65,7 +65,8 @@ class AppProvider extends ChangeNotifier {
   List<Order> get pendingOrders => _orders.where((o) => o.status == OrderStatus.pending).toList();
   List<Order> get preparingOrders => _orders.where((o) => o.status == OrderStatus.preparing).toList();
   List<Order> get readyOrders => _orders.where((o) {
-    // Commandes en ligne : basé sur kitchenStatus
+    if (o.status == OrderStatus.cancelled) return false;
+    // Commandes en ligne : prêtes si kitchenStatus==ready (envoyées en cuisine)
     if (o.isOnlineOrder) return o.sentToKitchen && o.kitchenStatus == 'ready';
     // Commandes POS : basé sur status
     return o.status == OrderStatus.ready;
@@ -74,11 +75,19 @@ class AppProvider extends ChangeNotifier {
 
   // ── Getters caisse 2 étapes ─────────────────────────────────────────
   /// Commandes prêtes/servies non encore encaissées (Tab 1 — bouton Encaisser)
-  List<Order> get pendingCashoutOrders => _orders.where((o) =>
-    (o.status == OrderStatus.ready || o.status == OrderStatus.served) &&
-    o.cashStatus == CashStatus.pending_cashout &&
-    !o.isPaid
-  ).toList();
+  /// INCLUT les commandes online dont kitchenStatus=='ready' (flux source unique orders)
+  List<Order> get pendingCashoutOrders => _orders.where((o) {
+    if (o.isPaid) return false;
+    if (o.cashStatus != CashStatus.pending_cashout) return false;
+    // Commandes en ligne : prêtes si kitchenStatus==ready OU status==ready/served
+    if (o.isOnlineOrder) {
+      return o.kitchenStatus == 'ready' ||
+             o.status == OrderStatus.ready ||
+             o.status == OrderStatus.served;
+    }
+    // Commandes POS : basé sur status
+    return o.status == OrderStatus.ready || o.status == OrderStatus.served;
+  }).toList();
 
   /// Commandes avec facture d'encaissement provisoire, en attente de règlement (Tab 2 — bouton Régler)
   List<Order> get awaitingPaymentOrders => _orders.where((o) =>

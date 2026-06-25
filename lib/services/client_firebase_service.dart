@@ -354,8 +354,6 @@ class ClientFirebaseService {
                          : orderTypeInt == 2 ? 'Sur place'
                          : 'Livraison Yango';
 
-    final now = DateTime.now().millisecondsSinceEpoch;
-
     await _db.collection('orders').doc(orderId).set({
       // ── Identité ──────────────────────────────────────────────────────
       'id':            orderId,
@@ -392,7 +390,9 @@ class ClientFirebaseService {
       // ── Paiement ──────────────────────────────────────────────────────
       'paymentMethod':  order.paymentMethod.index,
       'paymentStatus':  order.paymentStatus.index,
-      'cashStatus':     order.depositAmount > 0 ? 'deposit_received' : 'pending_cashout',
+      // cashStatus en int pour compatibilité avec streamOrders() (CashStatus enum index)
+      // 0 = pending_cashout (prêt à encaisser — valeur par défaut)
+      'cashStatus':     0, // CashStatus.pending_cashout.index
       // ── Fidélité ──────────────────────────────────────────────────────
       'loyaltyPointsUsed':    order.loyaltyPointsUsed,
       'loyaltyPointsEarned':  order.loyaltyPointsEarned,
@@ -497,9 +497,10 @@ class ClientFirebaseService {
         update['orderStatus']     = 'sent_to_kitchen';
         break;
       case ClientOrderStatus.ready:
-        update['readyAt']       = FieldValue.serverTimestamp();
-        update['kitchenStatus'] = 'ready';
-        update['adminStatus']   = 'ready';
+        update['readyAt']          = FieldValue.serverTimestamp();
+        update['kitchenStatus']    = 'ready';
+        update['adminStatus']      = 'ready';
+        update['readyForCashier']  = true;  // Signal caisse : commande prête à encaisser
         break;
       case ClientOrderStatus.delivering:
         update['adminStatus'] = 'delivering';

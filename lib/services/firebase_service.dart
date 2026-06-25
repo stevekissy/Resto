@@ -318,6 +318,28 @@ class FirebaseService {
     return 'dine_in';
   }
 
+  /// Parse cashStatus depuis Firestore — accepte int (POS) ET String (commandes online).
+  /// 'pending_cashout' ou 'deposit_received' → CashStatus.pending_cashout (index 0)
+  /// 'awaiting_payment' → CashStatus.awaiting_payment (index 1)
+  /// 'paid' → CashStatus.paid (index 2)
+  CashStatus _parseCashStatus(dynamic raw) {
+    if (raw == null) return CashStatus.pending_cashout;
+    if (raw is int) {
+      if (raw >= 0 && raw < CashStatus.values.length) return CashStatus.values[raw];
+      return CashStatus.pending_cashout;
+    }
+    if (raw is String) {
+      switch (raw) {
+        case 'awaiting_payment': return CashStatus.awaiting_payment;
+        case 'paid':             return CashStatus.paid;
+        case 'pending_cashout':
+        case 'deposit_received':
+        default:                 return CashStatus.pending_cashout;
+      }
+    }
+    return CashStatus.pending_cashout;
+  }
+
   OrderStatus _parseOrderStatus(dynamic raw) {
     if (raw == null) return OrderStatus.pending;
     if (raw is int) {
@@ -362,9 +384,8 @@ class FirebaseService {
             paymentMethod: data['paymentMethod'] as String?,
             amountPaid: (data['amountPaid'] as num?)?.toDouble() ?? 0,
             // ── Cycle de vie caisse 2 étapes ──────────────────────────
-            cashStatus: CashStatus.values[
-              (data['cashStatus'] as int?) ?? CashStatus.pending_cashout.index
-            ],
+            // cashStatus peut être stocké en int (POS) ou en String (commandes online)
+            cashStatus: _parseCashStatus(data['cashStatus']),
             cashoutInvoiceGenerated:
                 data['cashoutInvoiceGenerated'] as bool? ?? false,
             settlementInvoiceGenerated:
@@ -465,8 +486,9 @@ class FirebaseService {
       data['kitchenStatus'] = 'preparing';
     }
     if (status == OrderStatus.ready) {
-      data['readyAt']       = FieldValue.serverTimestamp();
-      data['kitchenStatus'] = 'ready';
+      data['readyAt']          = FieldValue.serverTimestamp();
+      data['kitchenStatus']    = 'ready';
+      data['readyForCashier']  = true;   // Signal caisse : commande prête à encaisser
     }
     if (status == OrderStatus.served) {
       data['servedAt']      = FieldValue.serverTimestamp();
