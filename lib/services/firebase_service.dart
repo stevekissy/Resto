@@ -1417,7 +1417,7 @@ class FirebaseService {
           'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
           'suppliers': true, 'productManagement': true, 'adminManagement': true,
           'reservations': true, 'accounting': true, 'notifications': true,
-          'onlineOrders': true,
+          'onlineOrders': true, 'cambuse': true,
         };
       case UserRole.manager:
         return {
@@ -1425,7 +1425,7 @@ class FirebaseService {
           'stock': true, 'personnel': true, 'messages': true, 'statistics': true,
           'suppliers': true, 'productManagement': true, 'adminManagement': false,
           'reservations': true, 'accounting': true, 'notifications': true,
-          'onlineOrders': true,
+          'onlineOrders': true, 'cambuse': true,
         };
       case UserRole.cashier:
         return {
@@ -1433,7 +1433,7 @@ class FirebaseService {
           'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
           'reservations': true, 'accounting': false, 'notifications': true,
-          'onlineOrders': false,
+          'onlineOrders': false, 'cambuse': false,
         };
       case UserRole.kitchen:
         return {
@@ -1441,7 +1441,7 @@ class FirebaseService {
           'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
           'reservations': false, 'accounting': false, 'notifications': true,
-          'onlineOrders': false,
+          'onlineOrders': false, 'cambuse': true,
         };
       case UserRole.server:
         return {
@@ -1449,7 +1449,7 @@ class FirebaseService {
           'stock': false, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
           'reservations': false, 'accounting': false, 'notifications': true,
-          'onlineOrders': false,
+          'onlineOrders': false, 'cambuse': false,
         };
       case UserRole.stockManager:
         return {
@@ -1457,7 +1457,7 @@ class FirebaseService {
           'stock': true, 'personnel': false, 'messages': true, 'statistics': false,
           'suppliers': true, 'productManagement': true, 'adminManagement': false,
           'reservations': false, 'accounting': false, 'notifications': true,
-          'onlineOrders': false,
+          'onlineOrders': false, 'cambuse': true,
         };
       case UserRole.client:
         // Les clients n'ont aucun accès à l'interface staff
@@ -1466,7 +1466,7 @@ class FirebaseService {
           'stock': false, 'personnel': false, 'messages': false, 'statistics': false,
           'suppliers': false, 'productManagement': false, 'adminManagement': false,
           'reservations': false, 'accounting': false, 'notifications': false,
-          'onlineOrders': false,
+          'onlineOrders': false, 'cambuse': false,
         };
     }
   }
@@ -2200,6 +2200,247 @@ class FirebaseService {
     final snap = await _db.collection('reservation_alerts')
         .where('reservationId', isEqualTo: reservationId).get();
     for (final doc in snap.docs) { await doc.reference.delete(); }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // CAMBUSE — Gestion des boissons
+  // Collection 'cambuse' + 'cambuse_movements'
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Stream temps réel de toutes les boissons cambuse (actives)
+  Stream<List<CambuseItem>> streamCambuseItems() {
+    return _db.collection('cambuse')
+        .where('isActive', isEqualTo: true)
+        .snapshots()
+        .map((snap) {
+      final items = snap.docs
+          .map((d) => CambuseItem.fromMap(d.data(), d.id))
+          .toList();
+      items.sort((a, b) => a.name.compareTo(b.name));
+      return items;
+    });
+  }
+
+  /// Stream historique des mouvements cambuse (50 derniers)
+  Stream<List<CambuseMovement>> streamCambuseMovements({String? cambuseItemId}) {
+    Query<Map<String, dynamic>> q = _db.collection('cambuse_movements');
+    if (cambuseItemId != null) {
+      q = q.where('cambuseItemId', isEqualTo: cambuseItemId);
+    }
+    return q.snapshots().map((snap) {
+      final list = snap.docs
+          .map((d) => CambuseMovement.fromMap(d.data(), d.id))
+          .toList();
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list.take(100).toList();
+    });
+  }
+
+  /// Ajouter une nouvelle boisson en cambuse
+  Future<String> addCambuseItem(CambuseItem item) async {
+    final ref = _db.collection('cambuse').doc(item.id.isEmpty ? null : item.id);
+    await ref.set({...item.toMap(), 'id': ref.id});
+    return ref.id;
+  }
+
+  /// Modifier une boisson cambuse
+  Future<void> updateCambuseItem(CambuseItem item) async {
+    await _db.collection('cambuse').doc(item.id).update({
+      ...item.toMap(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Supprimer (soft-delete) une boisson cambuse
+  Future<void> deleteCambuseItem(String id) async {
+    await _db.collection('cambuse').doc(id).update({
+      'isActive': false,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Approvisionner : ajouter du stock + enregistrer le mouvement
+  Future<void> approCambuse({
+    required String cambuseItemId,
+    required String cambuseItemName,
+    required int quantiteAjoutee,
+    required String createdBy,
+  }) async {
+    await _db.runTransaction((tx) async {
+      final ref = _db.collection('cambuse').doc(cambuseItemId);
+      final snap = await tx.get(ref);
+      if (!snap.exists) return;
+      final before = (snap.data()?['quantity'] as num?)?.toInt() ?? 0;
+      final after  = before + quantiteAjoutee;
+      tx.update(ref, {
+        'quantity':  after,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      // Mouvement
+      final movRef = _db.collection('cambuse_movements').doc();
+      tx.set(movRef, CambuseMovement(
+        id:              movRef.id,
+        cambuseItemId:   cambuseItemId,
+        cambuseItemName: cambuseItemName,
+        type:            CambuseMovementType.entree,
+        quantity:        quantiteAjoutee,
+        quantityBefore:  before,
+        quantityAfter:   after,
+        createdBy:       createdBy,
+        createdAt:       DateTime.now(),
+      ).toMap());
+    });
+  }
+
+  /// Ajustement manuel (inventaire / correction)
+  Future<void> adjustCambuseManual({
+    required String cambuseItemId,
+    required String cambuseItemName,
+    required int newQuantity,
+    required String createdBy,
+    CambuseMovementType type = CambuseMovementType.inventaire,
+  }) async {
+    await _db.runTransaction((tx) async {
+      final ref  = _db.collection('cambuse').doc(cambuseItemId);
+      final snap = await tx.get(ref);
+      if (!snap.exists) return;
+      final before = (snap.data()?['quantity'] as num?)?.toInt() ?? 0;
+      final delta  = (newQuantity - before).abs();
+      tx.update(ref, {
+        'quantity':  newQuantity,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      final movRef = _db.collection('cambuse_movements').doc();
+      tx.set(movRef, CambuseMovement(
+        id:              movRef.id,
+        cambuseItemId:   cambuseItemId,
+        cambuseItemName: cambuseItemName,
+        type:            type,
+        quantity:        delta,
+        quantityBefore:  before,
+        quantityAfter:   newQuantity,
+        createdBy:       createdBy,
+        createdAt:       DateTime.now(),
+      ).toMap());
+    });
+  }
+
+  /// Déduire automatiquement le stock cambuse lors d'une commande.
+  /// Identifie les boissons par cambuseItem.productId == orderItem.productId.
+  /// 1 article vendu = -1 en cambuse. Simple, pas de liaison complexe.
+  Future<void> deductCambuseForOrder({
+    required Order order,
+    required List<CambuseItem> cambuseItems,
+    required String createdBy,
+  }) async {
+    if (cambuseItems.isEmpty) return;
+
+    // Construire map productId → CambuseItem pour accès O(1)
+    final Map<String, CambuseItem> byProductId = {};
+    for (final ci in cambuseItems) {
+      if (ci.productId != null && ci.productId!.isNotEmpty) {
+        byProductId[ci.productId!] = ci;
+      }
+    }
+    if (byProductId.isEmpty) return;
+
+    for (final item in order.items) {
+      final cambuseItem = byProductId[item.productId];
+      if (cambuseItem == null) continue;
+
+      final deduct = item.quantity; // 1 vendu = -1 cambuse
+      final ref = _db.collection('cambuse').doc(cambuseItem.id);
+
+      await _db.runTransaction((tx) async {
+        final snap   = await tx.get(ref);
+        if (!snap.exists) return;
+        final before = (snap.data()?['quantity'] as num?)?.toInt() ?? 0;
+        final after  = (before - deduct).clamp(0, 999999);
+        tx.update(ref, {
+          'quantity':  after,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        final movRef = _db.collection('cambuse_movements').doc();
+        tx.set(movRef, CambuseMovement(
+          id:              movRef.id,
+          cambuseItemId:   cambuseItem.id,
+          cambuseItemName: cambuseItem.name,
+          type:            CambuseMovementType.sortieCommande,
+          quantity:        deduct,
+          quantityBefore:  before,
+          quantityAfter:   after,
+          orderId:         order.id,
+          orderNumber:     '#${order.orderNumber}',
+          createdBy:       createdBy,
+          createdAt:       DateTime.now(),
+        ).toMap());
+      });
+
+      // Alerte si stock bas après déduction
+      final newQty = (cambuseItem.quantity - deduct).clamp(0, 999999);
+      if (newQty <= cambuseItem.alertThreshold) {
+        final niveau = newQty <= 0 ? 'RUPTURE' : 'STOCK FAIBLE';
+        final notifRef = _db.collection('notifications').doc();
+        await notifRef.set({
+          'id':          notifRef.id,
+          'type':        newQty <= 0 ? 'cambuse_rupture' : 'cambuse_low_stock',
+          'title':       '🍺 Cambuse — $niveau',
+          'message':     '${cambuseItem.name} : $newQty unité(s) restante(s)',
+          'cambuseItemId': cambuseItem.id,
+          'quantity':    newQty,
+          'createdAt':   FieldValue.serverTimestamp(),
+          'read':        false,
+          'targetRoles': ['admin', 'manager', 'kitchen'],
+        });
+      }
+    }
+  }
+
+  /// Restituer le stock cambuse si une commande est annulée
+  Future<void> restoreCambuseForOrder({
+    required Order order,
+    required List<CambuseItem> cambuseItems,
+    required String createdBy,
+  }) async {
+    if (cambuseItems.isEmpty) return;
+    final Map<String, CambuseItem> byProductId = {};
+    for (final ci in cambuseItems) {
+      if (ci.productId != null && ci.productId!.isNotEmpty) {
+        byProductId[ci.productId!] = ci;
+      }
+    }
+    if (byProductId.isEmpty) return;
+
+    for (final item in order.items) {
+      final cambuseItem = byProductId[item.productId];
+      if (cambuseItem == null) continue;
+      final restore = item.quantity;
+      final ref = _db.collection('cambuse').doc(cambuseItem.id);
+      await _db.runTransaction((tx) async {
+        final snap   = await tx.get(ref);
+        if (!snap.exists) return;
+        final before = (snap.data()?['quantity'] as num?)?.toInt() ?? 0;
+        final after  = before + restore;
+        tx.update(ref, {
+          'quantity':  after,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        final movRef = _db.collection('cambuse_movements').doc();
+        tx.set(movRef, CambuseMovement(
+          id:              movRef.id,
+          cambuseItemId:   cambuseItem.id,
+          cambuseItemName: cambuseItem.name,
+          type:            CambuseMovementType.sortieManuelle,
+          quantity:        restore,
+          quantityBefore:  before,
+          quantityAfter:   after,
+          orderId:         order.id,
+          orderNumber:     '#${order.orderNumber}',
+          createdBy:       createdBy,
+          createdAt:       DateTime.now(),
+        ).toMap());
+      });
+    }
   }
 }
 

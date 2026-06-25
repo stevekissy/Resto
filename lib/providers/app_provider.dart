@@ -44,6 +44,8 @@ class AppProvider extends ChangeNotifier {
   StreamSubscription? _subReservations;
   StreamSubscription? _subReservationPayments;
   StreamSubscription? _subReservationAlerts;
+  StreamSubscription<List<CambuseItem>>?    _subCambuse;
+  StreamSubscription<List<CambuseMovement>>? _subCambuseMovements;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
@@ -98,6 +100,17 @@ class AppProvider extends ChangeNotifier {
   List<Order> get settledOrders => _orders.where((o) =>
     o.settlementInvoiceGenerated && o.isPaid
   ).toList();
+
+  // =================== CAMBUSE ===================
+  List<CambuseItem>    _cambuseItems     = [];
+  List<CambuseMovement> _cambuseMovements = [];
+
+  List<CambuseItem>    get cambuseItems     => _cambuseItems;
+  List<CambuseMovement> get cambuseMovements => _cambuseMovements;
+
+  /// Nombre de boissons en stock faible ou en rupture (badge menu Cambuse)
+  int get cambuseAlertCount =>
+      _cambuseItems.where((i) => i.isLowStock || i.isOutOfStock).length;
 
   // =================== PRODUCTS ===================
   List<Product> _products = [];
@@ -881,6 +894,39 @@ class AppProvider extends ChangeNotifier {
       cancelOnError: false,
     );
 
+    // Stream Cambuse — boissons en stock
+    _subCambuse = _firebase.streamCambuseItems().listen(
+      (list) {
+        // Détecter les nouvelles alertes Cambuse (rupture / stock faible)
+        for (final item in list) {
+          final prev = _cambuseItems.firstWhere(
+            (c) => c.id == item.id, orElse: () => item,
+          );
+          if (!prev.isOutOfStock && item.isOutOfStock) {
+            NotificationService().trigger(
+              NotifEvent.ruptureStock,
+              message: '🍺 Cambuse RUPTURE : ${item.name}',
+            );
+          } else if (!prev.isLowStock && item.isLowStock) {
+            NotificationService().trigger(
+              NotifEvent.stockFaible,
+              message: '⚠️ Cambuse stock faible : ${item.name} (${item.quantity} restants)',
+            );
+          }
+        }
+        _cambuseItems = list;
+        notifyListeners();
+      },
+      onError: (e) { debugPrint('[stream.cambuse] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
+    _subCambuseMovements = _firebase.streamCambuseMovements().listen(
+      (list) { _cambuseMovements = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.cambuseMovements] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
     // Stream appels entrants (pour l'utilisateur connecté)
     final uid = _currentUser?.id;
     if (uid != null) {
@@ -917,6 +963,8 @@ class AppProvider extends ChangeNotifier {
     _subReservations?.cancel();
     _subReservationPayments?.cancel();
     _subReservationAlerts?.cancel();
+    _subCambuse?.cancel();
+    _subCambuseMovements?.cancel();
   }
 
   /// Déconnexion complète : signOut Firebase + nettoyage local.
@@ -939,6 +987,7 @@ class AppProvider extends ChangeNotifier {
     _users = []; _orders = []; _products = []; _stockItems = [];
     _suppliers = []; _supplierOrders = []; _supplierPayments = []; _messages = []; _attendances = [];
     _charges = []; _invoiceHistory = []; _incomingCall = null; _activeCallId = null;
+    _cambuseItems = []; _cambuseMovements = [];
     notifyListeners();
   }
 
@@ -958,6 +1007,7 @@ class AppProvider extends ChangeNotifier {
     _users = []; _orders = []; _products = []; _stockItems = [];
     _suppliers = []; _supplierOrders = []; _supplierPayments = []; _messages = []; _attendances = [];
     _charges = []; _invoiceHistory = []; _incomingCall = null; _activeCallId = null;
+    _cambuseItems = []; _cambuseMovements = [];
     notifyListeners();
   }
 
@@ -1015,6 +1065,17 @@ class AppProvider extends ChangeNotifier {
     ).catchError((e) {
       debugPrint('[stock.deduct] Erreur déduction stock: $e');
     });
+
+    // Déduction automatique Cambuse (boissons) — fire-and-forget
+    if (_cambuseItems.isNotEmpty) {
+      _firebase.deductCambuseForOrder(
+        order: order,
+        cambuseItems: _cambuseItems,
+        createdBy: _currentUser?.name ?? 'Inconnu',
+      ).catchError((e) {
+        debugPrint('[cambuse.deduct] Erreur déduction cambuse: $e');
+      });
+    }
 
     onNewOrder?.call(order);
     return order;
@@ -1083,6 +1144,17 @@ class AppProvider extends ChangeNotifier {
       ).catchError((e) {
         debugPrint('[stock.restore] Erreur restauration stock: $e');
       });
+
+      // Restauration Cambuse (boissons) lors de l'annulation — fire-and-forget
+      if (_cambuseItems.isNotEmpty) {
+        _firebase.restoreCambuseForOrder(
+          order: order,
+          cambuseItems: _cambuseItems,
+          createdBy: cancelledBy,
+        ).catchError((e) {
+          debugPrint('[cambuse.restore] Erreur restauration cambuse: $e');
+        });
+      }
     }
 
     await _firebase.cancelOrder(
@@ -2033,6 +2105,60 @@ class AppProvider extends ChangeNotifier {
     );
     await _firebase.savePayrollReport(report);
   }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  CAMBUSE — CRUD boissons
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Crée ou met à jour une boisson en cambuse.
+  Future<void> saveCambuseItem(CambuseItem item, {required bool isNew}) async {
+    if (isNew) {
+      await _firebase.addCambuseItem(item);
+    } else {
+      await _firebase.updateCambuseItem(item);
+    }
+    // Le stream Firestore met _cambuseItems à jour automatiquement
+  }
+
+  /// Approvisionne une boisson (entrée + mouvement)
+  Future<void> approCambuse({
+    required CambuseItem item,
+    required int quantite,
+  }) async {
+    final createdBy = _currentUser?.name ?? 'Admin';
+    await _firebase.approCambuse(
+      cambuseItemId: item.id,
+      cambuseItemName: item.name,
+      quantiteAjoutee: quantite,
+      createdBy: createdBy,
+    );
+    // Le stream Firestore met _cambuseItems à jour automatiquement
+  }
+
+  /// Supprime une boisson de la cambuse
+  Future<void> deleteCambuseItem(String id) async {
+    await _firebase.deleteCambuseItem(id);
+  }
+
+  /// Ajustement manuel de la quantité (ex : inventaire)
+  Future<void> adjustCambuseManual({
+    required String cambuseItemId,
+    required String cambuseItemName,
+    required int newQuantity,
+  }) async {
+    final createdBy = _currentUser?.name ?? 'Admin';
+    await _firebase.adjustCambuseManual(
+      cambuseItemId: cambuseItemId,
+      cambuseItemName: cambuseItemName,
+      newQuantity: newQuantity,
+      createdBy: createdBy,
+      type: CambuseMovementType.inventaire,
+    );
+  }
+
+  /// Stream des mouvements d'une boisson spécifique
+  Stream<List<CambuseMovement>> streamCambuseMovementsForItem(String cambuseItemId) =>
+      _firebase.streamCambuseMovements(cambuseItemId: cambuseItemId);
 
   // ── RÉSERVATIONS CRUD ────────────────────────────────────────────────────
 

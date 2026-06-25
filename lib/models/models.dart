@@ -2093,3 +2093,141 @@ class ReservationAlert {
         isRead:        m['isRead']        as bool? ?? false,
       );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CAMBUSE — Gestion des boissons
+// Collection Firestore : 'cambuse' (boissons) + 'cambuse_movements' (historique)
+// Logique simple : 1 boisson vendue = -1 en cambuse (pas de liaison complexe)
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum CambuseMovementType {
+  entree,                 // approvisionnement manuel
+  sortieCommande,         // vente via commande (automatique)
+  sortieManuelle,         // ajustement manuel négatif
+  inventaire,             // correction d'inventaire
+}
+
+extension CambuseMovementTypeLabel on CambuseMovementType {
+  String get label {
+    switch (this) {
+      case CambuseMovementType.entree:          return 'Entrée';
+      case CambuseMovementType.sortieCommande:  return 'Vente';
+      case CambuseMovementType.sortieManuelle:  return 'Sortie manuelle';
+      case CambuseMovementType.inventaire:      return 'Inventaire';
+    }
+  }
+  bool get isEntry => this == CambuseMovementType.entree || this == CambuseMovementType.inventaire;
+}
+
+// ── CambuseItem : boisson en stock Cambuse ───────────────────────────────
+class CambuseItem {
+  final String id;
+  String name;
+  String category;       // ex: 'Sodas', 'Bières', 'Jus', 'Eaux', 'Alcools'
+  int quantity;          // quantité disponible (unités)
+  int alertThreshold;    // seuil d'alerte stock faible
+  double sellingPrice;   // prix de vente unitaire
+  String? productId;     // id du produit Firestore associé (optionnel, pour auto-déduction)
+  bool isActive;
+  DateTime createdAt;
+  DateTime? updatedAt;
+
+  CambuseItem({
+    required this.id,
+    required this.name,
+    required this.category,
+    required this.quantity,
+    this.alertThreshold = 10,
+    required this.sellingPrice,
+    this.productId,
+    this.isActive = true,
+    required this.createdAt,
+    this.updatedAt,
+  });
+
+  bool get isLowStock => quantity <= alertThreshold && quantity > 0;
+  bool get isOutOfStock => quantity <= 0;
+
+  Map<String, dynamic> toMap() => {
+    'id':             id,
+    'name':           name,
+    'category':       category,
+    'quantity':       quantity,
+    'alertThreshold': alertThreshold,
+    'sellingPrice':   sellingPrice,
+    'productId':      productId,
+    'isActive':       isActive,
+    'createdAt':      createdAt.millisecondsSinceEpoch,
+    'updatedAt':      updatedAt?.millisecondsSinceEpoch,
+  };
+
+  factory CambuseItem.fromMap(Map<String, dynamic> m, String docId) => CambuseItem(
+    id:             docId,
+    name:           m['name']           as String? ?? '',
+    category:       m['category']       as String? ?? 'Boissons',
+    quantity:       (m['quantity']      as num?)?.toInt() ?? 0,
+    alertThreshold: (m['alertThreshold'] as num?)?.toInt() ?? 10,
+    sellingPrice:   (m['sellingPrice']  as num?)?.toDouble() ?? 0,
+    productId:      m['productId']      as String?,
+    isActive:       m['isActive']       as bool? ?? true,
+    createdAt:      _parseDTNullable(m['createdAt']) ?? DateTime.now(),
+    updatedAt:      _parseDTNullable(m['updatedAt']),
+  );
+}
+
+// ── CambuseMovement : historique des mouvements cambuse ──────────────────
+class CambuseMovement {
+  final String id;
+  final String cambuseItemId;
+  final String cambuseItemName;
+  final CambuseMovementType type;
+  final int quantity;          // quantité bougée (toujours positive)
+  final int quantityBefore;    // stock avant le mouvement
+  final int quantityAfter;     // stock après le mouvement
+  final String? orderId;       // commande liée (si sortieCommande)
+  final String? orderNumber;   // numéro lisible de la commande
+  final String createdBy;      // nom utilisateur
+  final DateTime createdAt;
+
+  CambuseMovement({
+    required this.id,
+    required this.cambuseItemId,
+    required this.cambuseItemName,
+    required this.type,
+    required this.quantity,
+    required this.quantityBefore,
+    required this.quantityAfter,
+    this.orderId,
+    this.orderNumber,
+    required this.createdBy,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id':               id,
+    'cambuseItemId':    cambuseItemId,
+    'cambuseItemName':  cambuseItemName,
+    'type':             type.index,
+    'quantity':         quantity,
+    'quantityBefore':   quantityBefore,
+    'quantityAfter':    quantityAfter,
+    'orderId':          orderId,
+    'orderNumber':      orderNumber,
+    'createdBy':        createdBy,
+    'createdAt':        createdAt.millisecondsSinceEpoch,
+  };
+
+  factory CambuseMovement.fromMap(Map<String, dynamic> m, String docId) => CambuseMovement(
+    id:              docId,
+    cambuseItemId:   m['cambuseItemId']   as String? ?? '',
+    cambuseItemName: m['cambuseItemName'] as String? ?? '',
+    type:            CambuseMovementType.values[(m['type'] as num?)?.toInt() ?? 0],
+    quantity:        (m['quantity']       as num?)?.toInt() ?? 0,
+    quantityBefore:  (m['quantityBefore'] as num?)?.toInt() ?? 0,
+    quantityAfter:   (m['quantityAfter']  as num?)?.toInt() ?? 0,
+    orderId:         m['orderId']         as String?,
+    orderNumber:     m['orderNumber']     as String?,
+    createdBy:       m['createdBy']       as String? ?? '',
+    createdAt:       _parseDTNullable(m['createdAt']) ?? DateTime.now(),
+  );
+}
