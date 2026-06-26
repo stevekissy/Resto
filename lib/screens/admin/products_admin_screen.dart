@@ -68,20 +68,14 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
       return catOk && searchOk;
     }).toList();
 
-    final isWide = MediaQuery.of(context).size.width >= 600;
     return Scaffold(
-      floatingActionButton: isWide
-          ? FloatingActionButton.extended(
-              onPressed: () => _showProductDialog(context, provider, null),
-              backgroundColor: AppTheme.primary,
-              icon: const Icon(Icons.add),
-              label: const Text('Nouveau Produit'),
-            )
-          : FloatingActionButton(
-              onPressed: () => _showProductDialog(context, provider, null),
-              backgroundColor: AppTheme.primary,
-              child: const Icon(Icons.add),
-            ),
+      floatingActionButton: FloatingActionButton.small(
+        onPressed: () => _showProductDialog(context, provider, null),
+        backgroundColor: AppTheme.primary.withValues(alpha: 0.85),
+        elevation: 2,
+        tooltip: 'Nouveau produit',
+        child: const Icon(Icons.add, size: 20),
+      ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: Column(
         children: [
@@ -138,7 +132,7 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.only(left: 12, right: 12, bottom: 80),
+                  padding: const EdgeInsets.only(left: 12, right: 12, bottom: 72),
                   itemCount: filtered.length,
                   itemBuilder: (context, i) => _ProductAdminCard(
                     product: filtered[i],
@@ -157,7 +151,6 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
     final priceCtrl = TextEditingController(text: existing?.price.toStringAsFixed(0) ?? '');
     final prepTimeCtrl = TextEditingController(text: existing?.prepTime.toStringAsFixed(0) ?? '10');
-    final stockCtrl = TextEditingController(text: existing?.stockQuantity.toString() ?? '0');
     final descCtrl = TextEditingController(text: existing?.description ?? '');
     final cats = provider.customCategories;
     String category = existing?.category ?? (cats.isNotEmpty ? cats.first : 'Plats');
@@ -299,8 +292,6 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
                   const SizedBox(height: 8),
                   TextField(controller: prepTimeCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Temps de préparation (minutes)')),
                   const SizedBox(height: 8),
-                  TextField(controller: stockCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Quantité en stock')),
-                  const SizedBox(height: 8),
                   TextField(controller: descCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Description (optionnel)'), maxLines: 2),
                 ],
               ),
@@ -344,9 +335,9 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
                     category: category,
                     price: price,
                     prepTime: double.tryParse(prepTimeCtrl.text) ?? 10,
-                    stockQuantity: int.tryParse(stockCtrl.text) ?? 0,
+                    stockQuantity: existing?.stockQuantity ?? 0,
                     description: descCtrl.text.isEmpty ? null : descCtrl.text,
-                    isAvailable: (int.tryParse(stockCtrl.text) ?? 0) > 0,
+                    isAvailable: existing?.isAvailable ?? true,
                     imageUrl: finalImageUrl,
                     // Conserver les champs existants
                     ingredients: existing?.ingredients ?? {},
