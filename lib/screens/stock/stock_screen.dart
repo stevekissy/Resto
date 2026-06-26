@@ -296,7 +296,6 @@ class _StockTabState extends State<_StockTab> {
   // ── Dialog Modifier article ─────────────────────────────────────────────
   void _showEditDialog(BuildContext context, StockItem item, AppProvider provider, List<String> categories) {
     final nameCtrl = TextEditingController(text: item.name);
-    final unitCtrl = TextEditingController(text: item.unit);
     final minCtrl  = TextEditingController(text: item.minQuantity.toString());
     String category = item.category;
 
@@ -355,10 +354,6 @@ class _StockTabState extends State<_StockTab> {
                   onChanged: (v) => setS(() => category = v!),
                 ),
                 const SizedBox(height: 10),
-                TextField(controller: unitCtrl, style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(labelText: 'Unité (kg, L, pcs…)',
-                        prefixIcon: Icon(Icons.straighten, color: AppTheme.primary))),
-                const SizedBox(height: 10),
                 TextField(controller: minCtrl,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     style: const TextStyle(color: Colors.white),
@@ -381,7 +376,7 @@ class _StockTabState extends State<_StockTab> {
                 final updated = StockItem(
                   id: item.id,
                   name: nameCtrl.text.trim(),
-                  unit: unitCtrl.text.trim().isEmpty ? item.unit : unitCtrl.text.trim(),
+                  unit: item.unit,
                   currentQuantity: item.currentQuantity,
                   minQuantity: double.tryParse(minCtrl.text) ?? item.minQuantity,
                   maxQuantity: item.maxQuantity,
@@ -548,7 +543,6 @@ class _StockTabState extends State<_StockTab> {
   void _showAddStockDialog(BuildContext context, AppProvider provider, List<String> categories) {
     final nameCtrl     = TextEditingController();
     final qtyCtrl      = TextEditingController(text: '0');
-    final unitCtrl     = TextEditingController();
     final minCtrl      = TextEditingController(text: '0');
     final priceCtrl    = TextEditingController();
     final noteCtrl     = TextEditingController();
@@ -598,12 +592,6 @@ class _StockTabState extends State<_StockTab> {
                     style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(labelText: 'Quantité initiale *',
                         prefixIcon: Icon(Icons.inventory_2, color: AppTheme.primary))),
-                const SizedBox(height: 10),
-                // Unité
-                TextField(controller: unitCtrl, style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(labelText: 'Unité (kg, L, pcs, boîtes…)',
-                        hintText: 'Laisser vide = pcs automatique',
-                        prefixIcon: Icon(Icons.straighten, color: AppTheme.primary))),
                 const SizedBox(height: 10),
                 // Seuil d'alerte
                 TextField(controller: minCtrl,
@@ -658,7 +646,6 @@ class _StockTabState extends State<_StockTab> {
               label: const Text('Créer'),
               onPressed: () async {
                 final name = nameCtrl.text.trim();
-                final unit = unitCtrl.text.trim();
                 final qty  = double.tryParse(qtyCtrl.text) ?? 0;
                 final cat  = selectedCategory ?? 'Autres';
 
@@ -671,13 +658,10 @@ class _StockTabState extends State<_StockTab> {
                 final id = FirebaseFirestore.instance.collection('stock').doc().id;
                 final minQty = double.tryParse(minCtrl.text) ?? 0;
                 final unitCost = double.tryParse(priceCtrl.text) ?? 0;
-                // Unité optionnelle : si vide → 'pcs' par défaut
-                final finalUnit = unit.isEmpty ? 'pcs' : unit;
-
                 final newItem = StockItem(
                   id: id,
                   name: name,
-                  unit: finalUnit,
+                  unit: 'pcs',
                   currentQuantity: qty,
                   minQuantity: minQty,
                   maxQuantity: qty > 0 ? qty * 2 : 100,
