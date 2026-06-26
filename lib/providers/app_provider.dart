@@ -1307,7 +1307,8 @@ class AppProvider extends ChangeNotifier {
 
     final cashierId   = _currentUser?.id   ?? '';
     final cashierName = _currentUser?.name ?? 'Caissier';
-    final invoiceNumber = PrintService.generateReceiptNumber(order.orderNumber);
+    // Toujours utiliser le format FAC-YYYYMMDD-OOOO pour garantir un numéro lisible
+    final invoiceNumber = PrintService.generateFacNumber(order.orderNumber);
 
     await _firebase.cashoutOrder(
       orderId: orderId,
@@ -1368,6 +1369,41 @@ class AppProvider extends ChangeNotifier {
       message: '💰 Paiement enregistré : ${amountDue.toStringAsFixed(0)} F CFA — Commande #${order.orderNumber} ($paymentMethod)',
     );
     // Le stream Firestore met _orders à jour automatiquement
+  }
+
+  /// Corrige les factures provisoires sans numéro dans cashout_invoices
+  Future<void> patchMissingCashoutNumbers() =>
+      _firebase.patchMissingCashoutNumbers();
+
+  /// Règle une facture provisoire depuis l'Historique (sans passer par Tab 2)
+  Future<String> settleFromHistory({
+    required String cashoutInvoiceId,
+    required String paymentMethod,
+    required double amountDue,
+    required double amountPaid,
+    required double changeAmount,
+    required int orderNumber,
+    required String tableNumber,
+    required List<Map<String, dynamic>> items,
+    String? orderId,
+    String? serverName,
+  }) async {
+    final cashierId   = _currentUser?.id   ?? '';
+    final cashierName = _currentUser?.name ?? 'Caissier';
+    return _firebase.settleFromHistory(
+      cashoutInvoiceId: cashoutInvoiceId,
+      cashierId: cashierId,
+      cashierName: cashierName,
+      paymentMethod: paymentMethod,
+      amountDue: amountDue,
+      amountPaid: amountPaid,
+      changeAmount: changeAmount,
+      orderNumber: orderNumber,
+      tableNumber: tableNumber,
+      items: items,
+      orderId: orderId,
+      serverName: serverName,
+    );
   }
 
   /// Sauvegarde un reçu dans Firestore (collection receipts)

@@ -1699,6 +1699,144 @@ class FirebaseService {
     return 0;
   }
 
+  // ── Correction numéros manquants ──────────────────────────────────────
+
+  /// Patch toutes les factures provisoires sans numéro dans cashout_invoices.
+  /// Génère un numéro FAC-YYYYMMDD-OOOO à partir de cashoutAtMs + orderNumber.
+  Future<void> patchMissingCashoutNumbers() async {
+    final snap = await _db.collection('cashout_invoices').get();
+    final batch = _db.batch();
+    int patched = 0;
+
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      // Un doc est invalide si son id est vide ou "Sans numéro"
+      final currentId = doc.id;
+      final hasValidId = currentId.isNotEmpty &&
+          currentId != 'Sans numéro' &&
+          !currentId.startsWith(' ');
+      if (hasValidId) continue;
+
+      // Générer un nouveau numéro depuis les données du doc
+      final orderNumber = (data['orderNumber'] as num?)?.toInt() ?? 0;
+      final ts = (data['cashoutAtMs'] as num?)?.toInt() ??
+                 (data['cashoutAt'] as num?)?.toInt() ??
+                 DateTime.now().millisecondsSinceEpoch;
+      final date = DateTime.fromMillisecondsSinceEpoch(ts);
+      final datePart = '${date.year}${date.month.toString().padLeft(2, '0')}${date.day.toString().padLeft(2, '0')}';
+      final newNum = 'FAC-$datePart-${orderNumber.toString().padLeft(4, '0')}';
+
+      // Copier le doc avec le bon id (on ne peut pas renommer un doc Firestore)
+      final newRef = _db.collection('cashout_invoices').doc(newNum);
+      batch.set(newRef, {...data, 'id': newNum, 'cashoutInvoiceNumber': newNum});
+      batch.delete(doc.reference);
+      patched++;
+    }
+
+    if (patched > 0) await batch.commit();
+    debugPrint('[FirebaseService] patchMissingCashoutNumbers: $patched doc(s) corrigé(s)');
+  }
+
+  // ── Règlement depuis l'historique ────────────────────────────────────
+
+  /// Règle une facture provisoire directement depuis l'Historique.
+  /// Crée une settlement_invoice + met à jour cashout_invoice + orders (si orderId fourni).
+  Future<String> settleFromHistory({
+    required String cashoutInvoiceId,
+    required String cashierId,
+    required String cashierName,
+    required String paymentMethod,
+    required double amountDue,
+    required double amountPaid,
+    required double changeAmount,
+    required int orderNumber,
+    required String tableNumber,
+    required List<Map<String, dynamic>> items,
+    String? orderId,
+    String? serverName,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final _now = DateTime.now();
+    final _datePart = '${_now.year}${_now.month.toString().padLeft(2,'0')}${_now.day.toString().padLeft(2,'0')}';
+    final settlementNum = 'REG-$_datePart-${orderNumber.toString().padLeft(4, '0')}';
+
+    final batch = _db.batch();
+
+    // 1. Mettre à jour la facture provisoire (status → réglée)
+    final cashoutRef = _db.collection('cashout_invoices').doc(cashoutInvoiceId);
+    batch.update(cashoutRef, {
+      'status': 'reglée',
+      'settlementInvoiceNumber': settlementNum,
+      'settledAtMs': nowMs,
+      'paymentMethod': paymentMethod,
+      'amountPaid': amountPaid,
+      'changeAmount': changeAmount,
+    });
+
+    // 2. Créer la facture définitive
+    final settlRef = _db.collection('settlement_invoices').doc(settlementNum);
+    batch.set(settlRef, {
+      'id': settlementNum,
+      'cashoutInvoiceNumber': cashoutInvoiceId,
+      'orderId': orderId ?? '',
+      'orderNumber': orderNumber,
+      'tableNumber': tableNumber,
+      'serverName': serverName,
+      'cashierId': cashierId,
+      'cashierName': cashierName,
+      'paymentMethod': paymentMethod,
+      'amountDue': amountDue,
+      'amountPaid': amountPaid,
+      'changeAmount': changeAmount,
+      'items': items,
+      'status': 'definitif',
+      'createdAt': FieldValue.serverTimestamp(),
+      'settledAtMs': nowMs,
+    });
+
+    // 3. Créer cash_report
+    final reportId = 'CR-$settlementNum';
+    final reportRef = _db.collection('cash_reports').doc(reportId);
+    batch.set(reportRef, {
+      'id': reportId,
+      'settlementInvoiceNumber': settlementNum,
+      'orderId': orderId ?? '',
+      'orderNumber': orderNumber,
+      'tableNumber': tableNumber,
+      'cashierId': cashierId,
+      'cashierName': cashierName,
+      'paymentMethod': paymentMethod,
+      'amount': amountDue,
+      'amountPaid': amountPaid,
+      'changeAmount': changeAmount,
+      'type': 'encaissement_client',
+      'createdAt': FieldValue.serverTimestamp(),
+      'settledAtMs': nowMs,
+    });
+
+    // 4. Si orderId connu, mettre à jour la commande Firestore
+    if (orderId != null && orderId.isNotEmpty) {
+      final orderRef = _db.collection('orders').doc(orderId);
+      batch.update(orderRef, {
+        'cashStatus': CashStatus.paid.index,
+        'settlementInvoiceGenerated': true,
+        'settlementInvoiceNumber': settlementNum,
+        'settledAt': nowMs,
+        'isPaid': true,
+        'paymentStatus': 'paid',
+        'settlementStatus': 'completed',
+        'paymentMethod': paymentMethod,
+        'amountPaid': amountPaid,
+        'changeAmount': changeAmount,
+        'status': OrderStatus.served.index,
+      });
+    }
+
+    await batch.commit();
+    debugPrint('[FirebaseService] settleFromHistory: $cashoutInvoiceId → $settlementNum');
+    return settlementNum;
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   //  APPELS TEMPS RÉEL
   // ══════════════════════════════════════════════════════════════════════

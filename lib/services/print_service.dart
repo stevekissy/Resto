@@ -730,6 +730,15 @@ $prtBtn
     return '$timePart-$orderPart';
   }
 
+  /// Génère un numéro de facture provisoire au format FAC-YYYYMMDD-OOOO
+  /// Exemple : FAC-20250712-0042
+  /// Utilisé comme identifiant garanti non-vide pour les factures provisoires.
+  static String generateFacNumber(int orderNumber) {
+    final now = DateTime.now();
+    final datePart = DateFormat('yyyyMMdd').format(now);
+    return 'FAC-$datePart-${orderNumber.toString().padLeft(4, '0')}';
+  }
+
   /// Génère un numéro de règlement unique
   static String generateSettlementNumber(int orderNumber) {
     final now = DateTime.now();
