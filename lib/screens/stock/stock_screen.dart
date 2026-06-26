@@ -1317,12 +1317,7 @@ class _StockItemCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(item.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
-                    Row(
-                      children: [
-                        Text('${item.currentQuantity} ${item.unit}', style: TextStyle(color: statusColor, fontWeight: FontWeight.w700, fontSize: 13)),
-                        Text(' / ${item.maxQuantity} ${item.unit}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                      ],
-                    ),
+                    Text('${item.currentQuantity} ${item.unit}', style: TextStyle(color: statusColor, fontWeight: FontWeight.w700, fontSize: 13)),
                     Text(item.category, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
                   ],
                 ),
