@@ -909,15 +909,22 @@ class _ProductCardState extends State<_ProductCard>
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Miniature image (si disponible)
-                  if (widget.product.imageUrl != null && widget.product.imageUrl!.isNotEmpty) ...[
-                    ProductImageSmall(
-                      imageUrl: widget.product.imageUrl,
-                      size: 56,
-                      radius: 8,
-                    ),
-                    const SizedBox(width: 12),
-                  ],
+                  // Miniature image — placeholder toujours visible
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: (widget.product.imageUrl != null && widget.product.imageUrl!.isNotEmpty)
+                        ? ProductImageSmall(imageUrl: widget.product.imageUrl, size: 52, radius: 8)
+                        : Container(
+                            width: 52,
+                            height: 52,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1A1A3E),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.restaurant_menu, color: Color(0xFF3A3A6A), size: 22),
+                          ),
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -949,8 +956,11 @@ class _ProductCardState extends State<_ProductCard>
                           ),
                         ],
                         const SizedBox(height: 4),
-                        // Prix + badge panier
-                        Row(
+                        // Prix + badge Stock + badge panier
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Text(
                               '${widget.product.price.toStringAsFixed(0)} F',
@@ -960,8 +970,27 @@ class _ProductCardState extends State<_ProductCard>
                                 fontSize: 14,
                               ),
                             ),
-                            if (inCart) ...[
-                              const SizedBox(width: 8),
+                            // Badge Stock (toujours affiché)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: widget.product.stockQuantity <= widget.product.minStockAlert
+                                    ? AppTheme.warning.withValues(alpha: 0.12)
+                                    : AppTheme.success.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                'Stock: ${widget.product.stockQuantity}',
+                                style: TextStyle(
+                                  color: widget.product.stockQuantity <= widget.product.minStockAlert
+                                      ? AppTheme.warning
+                                      : AppTheme.success,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (inCart)
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                                 decoration: BoxDecoration(
@@ -978,7 +1007,6 @@ class _ProductCardState extends State<_ProductCard>
                                   ),
                                 ),
                               ),
-                            ],
                           ],
                         ),
                       ],
@@ -992,12 +1020,12 @@ class _ProductCardState extends State<_ProductCard>
               // ── LIGNE 2 : Contrôles quantité + bouton Ajouter ───
               Row(
                 children: [
-                  // Bouton −
+                  // Bouton − (sombre neutre comme sur la capture)
                   _QtyButton(
                     icon: Icons.remove,
                     onTap: _decrement,
                     enabled: _qty > 1,
-                    color: AppTheme.error,
+                    color: const Color(0xFF8888AA),
                   ),
                   // Quantité
                   Container(
@@ -1012,12 +1040,12 @@ class _ProductCardState extends State<_ProductCard>
                       ),
                     ),
                   ),
-                  // Bouton +
+                  // Bouton + (vert avec bordure comme sur la capture)
                   _QtyButton(
                     icon: Icons.add,
                     onTap: _increment,
                     enabled: true,
-                    color: AppTheme.primary,
+                    color: AppTheme.success,
                   ),
                   const SizedBox(width: 10),
                   // Bouton Ajouter
@@ -1213,7 +1241,7 @@ class _CambuseCardState extends State<_CambuseCard>
               // Contrôles quantité
               Row(
                 children: [
-                  _QtyButton(icon: Icons.remove, onTap: () { if (_qty > 1) setState(() => _qty--); }, enabled: _qty > 1, color: AppTheme.error),
+                  _QtyButton(icon: Icons.remove, onTap: () { if (_qty > 1) setState(() => _qty--); }, enabled: _qty > 1, color: const Color(0xFF8888AA)),
                   Container(
                     width: 44,
                     alignment: Alignment.center,
