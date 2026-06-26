@@ -2305,6 +2305,13 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
   late List<OrderItem> _items;
   AppUser? _selectedServer;
 
+  /// Vrai si la commande est déjà en préparation (ou plus avancée) → ajout bloqué
+  bool get _isLocked =>
+      widget.order.status == OrderStatus.preparing ||
+      widget.order.status == OrderStatus.ready ||
+      widget.order.status == OrderStatus.served ||
+      widget.order.kitchenStatus == 'preparing';
+
   @override
   void initState() {
     super.initState();
@@ -2315,6 +2322,8 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
       quantity: i.quantity,
       unitPrice: i.unitPrice,
       specialComment: i.specialComment,
+      isCambuse: i.isCambuse,
+      cambuseItemId: i.cambuseItemId,
     )).toList();
     // Pré-sélectionner le serveur actuel si présent
     if (widget.order.serverId != null) {
@@ -2339,6 +2348,79 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
   List<AppUser> get _servers => widget.provider.users
       .where((u) => u.role == UserRole.server && u.isActive)
       .toList();
+
+  // ── Ajout d'articles ──────────────────────────────────────────────────────
+
+  /// Ajoute ou incrémente un plat (Product) dans _items
+  void _addProduct(Product product, int qty) {
+    setState(() {
+      final idx = _items.indexWhere(
+        (i) => !i.isCambuse && i.productId == product.id,
+      );
+      if (idx >= 0) {
+        _items[idx].quantity = (_items[idx].quantity + qty).clamp(1, 99);
+      } else {
+        _items.add(OrderItem(
+          productId: product.id,
+          productName: product.name,
+          quantity: qty,
+          unitPrice: product.price,
+          isCambuse: false,
+        ));
+      }
+    });
+  }
+
+  /// Ajoute ou incrémente un article cambuse (CambuseItem) dans _items
+  void _addCambuseItem(CambuseItem item, int qty) {
+    setState(() {
+      final idx = _items.indexWhere(
+        (i) => i.isCambuse && i.cambuseItemId == item.id,
+      );
+      if (idx >= 0) {
+        _items[idx].quantity = (_items[idx].quantity + qty).clamp(1, 99);
+      } else {
+        _items.add(OrderItem(
+          productId: item.productId ?? item.id,
+          productName: item.name,
+          quantity: qty,
+          unitPrice: item.sellingPrice,
+          isCambuse: true,
+          cambuseItemId: item.id,
+        ));
+      }
+    });
+  }
+
+  /// Ouvre la bottom-sheet de sélection d'articles
+  void _showAddArticleDialog() {
+    // Blocage côté logique (sécurité supplémentaire)
+    if (_isLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Commande déjà en préparation, ajout impossible.'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _AddArticleSheet(
+        provider: widget.provider,
+        onAddProduct: (p, qty) {
+          _addProduct(p, qty);
+        },
+        onAddCambuseItem: (c, qty) {
+          _addCambuseItem(c, qty);
+        },
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2410,6 +2492,12 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                 ),
                 child: Row(
                   children: [
+                    // Icône cambuse vs plat
+                    if (item.isCambuse)
+                      const Padding(
+                        padding: EdgeInsets.only(right: 6),
+                        child: Icon(Icons.local_bar, size: 14, color: Color(0xFF42A5F5)),
+                      ),
                     Expanded(
                       child: Text(item.productName, style: const TextStyle(color: Colors.white, fontSize: 12)),
                     ),
@@ -2429,7 +2517,7 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                     ),
                     const SizedBox(width: 4),
                     IconButton(
-                      onPressed: () => setState(() => _items.removeWhere((i) => i.productId == item.productId)),
+                      onPressed: () => setState(() => _items.removeWhere((i) => i.productId == item.productId && i.isCambuse == item.isCambuse)),
                       icon: const Icon(Icons.close, size: 16, color: AppTheme.textSecondary),
                       padding: EdgeInsets.zero, constraints: const BoxConstraints(),
                     ),
@@ -2437,6 +2525,25 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                 ),
               )).toList(),
               const SizedBox(height: 8),
+              // ── Bouton "+ Ajouter article" (masqué si commande en préparation) ──
+              if (!_isLocked)
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _showAddArticleDialog,
+                    icon: const Icon(Icons.add, size: 16, color: AppTheme.primary),
+                    label: const Text(
+                      '+ Ajouter article',
+                      style: TextStyle(color: AppTheme.primary, fontSize: 12),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppTheme.primary, width: 1),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                ),
+              if (!_isLocked) const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -2485,6 +2592,325 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white),
         ),
       ],
+    );
+  }
+}
+
+// ── Bottom-sheet sélection d'articles ────────────────────────────────────────
+class _AddArticleSheet extends StatefulWidget {
+  final AppProvider provider;
+  final void Function(Product, int) onAddProduct;
+  final void Function(CambuseItem, int) onAddCambuseItem;
+
+  const _AddArticleSheet({
+    required this.provider,
+    required this.onAddProduct,
+    required this.onAddCambuseItem,
+  });
+
+  @override
+  State<_AddArticleSheet> createState() => _AddArticleSheetState();
+}
+
+class _AddArticleSheetState extends State<_AddArticleSheet>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabCtrl;
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _search = '';
+  // Quantités temporaires par article (id → qty)
+  final Map<String, int> _productQty = {};
+  final Map<String, int> _cambuseQty = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _tabCtrl = TabController(length: 2, vsync: this);
+    _searchCtrl.addListener(() => setState(() => _search = _searchCtrl.text.toLowerCase()));
+  }
+
+  @override
+  void dispose() {
+    _tabCtrl.dispose();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Product> get _filteredProducts => widget.provider.availableProducts
+      .where((p) => _search.isEmpty || p.name.toLowerCase().contains(_search))
+      .toList();
+
+  List<CambuseItem> get _filteredCambuse => widget.provider.cambuseItems
+      .where((c) => !c.isOutOfStock)
+      .where((c) => _search.isEmpty || c.name.toLowerCase().contains(_search))
+      .toList();
+
+  // Retourne la quantité sélectionnée (min 0)
+  int _pQty(String id) => _productQty[id] ?? 0;
+  int _cQty(String id) => _cambuseQty[id] ?? 0;
+
+  // Compte total des articles sélectionnés
+  int get _totalSelected =>
+      _productQty.values.fold(0, (s, v) => s + v) +
+      _cambuseQty.values.fold(0, (s, v) => s + v);
+
+  void _confirm() {
+    // Ajouter tous les produits avec qty > 0
+    for (final entry in _productQty.entries) {
+      if (entry.value > 0) {
+        final product = widget.provider.availableProducts
+            .firstWhere((p) => p.id == entry.key);
+        widget.onAddProduct(product, entry.value);
+      }
+    }
+    for (final entry in _cambuseQty.entries) {
+      if (entry.value > 0) {
+        final item = widget.provider.cambuseItems
+            .firstWhere((c) => c.id == entry.key);
+        widget.onAddCambuseItem(item, entry.value);
+      }
+    }
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.75,
+      minChildSize: 0.5,
+      maxChildSize: 0.92,
+      expand: false,
+      builder: (_, scrollCtrl) => Column(
+        children: [
+          // Poignée
+          const SizedBox(height: 8),
+          Container(
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+              color: AppTheme.textSecondary.withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Titre
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Icon(Icons.add_shopping_cart, color: AppTheme.primary, size: 20),
+                SizedBox(width: 8),
+                Text(
+                  'Ajouter des articles',
+                  style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Recherche
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _searchCtrl,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Rechercher…',
+                hintStyle: TextStyle(color: AppTheme.textSecondary.withValues(alpha: 0.6), fontSize: 12),
+                prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary, size: 18),
+                contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Tabs Plats / Boissons
+          TabBar(
+            controller: _tabCtrl,
+            indicatorColor: AppTheme.primary,
+            labelColor: AppTheme.primary,
+            unselectedLabelColor: AppTheme.textSecondary,
+            labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            tabs: [
+              Tab(
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.restaurant_menu, size: 14),
+                  const SizedBox(width: 4),
+                  Text('Plats (${_filteredProducts.length})'),
+                ]),
+              ),
+              Tab(
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.local_bar, size: 14),
+                  const SizedBox(width: 4),
+                  Text('Boissons (${_filteredCambuse.length})'),
+                ]),
+              ),
+            ],
+          ),
+          // Liste
+          Expanded(
+            child: TabBarView(
+              controller: _tabCtrl,
+              children: [
+                // ── Onglet Plats ──
+                _filteredProducts.isEmpty
+                    ? const Center(child: Text('Aucun plat disponible', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)))
+                    : ListView.builder(
+                        controller: scrollCtrl,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        itemCount: _filteredProducts.length,
+                        itemBuilder: (_, i) {
+                          final p = _filteredProducts[i];
+                          final qty = _pQty(p.id);
+                          return _ArticleRow(
+                            name: p.name,
+                            category: p.category,
+                            price: p.price,
+                            quantity: qty,
+                            accentColor: AppTheme.primary,
+                            onDecrement: qty > 0
+                                ? () => setState(() => _productQty[p.id] = qty - 1)
+                                : null,
+                            onIncrement: () => setState(() => _productQty[p.id] = qty + 1),
+                          );
+                        },
+                      ),
+                // ── Onglet Boissons ──
+                _filteredCambuse.isEmpty
+                    ? const Center(child: Text('Aucune boisson disponible', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)))
+                    : ListView.builder(
+                        controller: scrollCtrl,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        itemCount: _filteredCambuse.length,
+                        itemBuilder: (_, i) {
+                          final c = _filteredCambuse[i];
+                          final qty = _cQty(c.id);
+                          return _ArticleRow(
+                            name: c.name,
+                            category: c.category,
+                            price: c.sellingPrice,
+                            quantity: qty,
+                            accentColor: const Color(0xFF42A5F5),
+                            onDecrement: qty > 0
+                                ? () => setState(() => _cambuseQty[c.id] = qty - 1)
+                                : null,
+                            onIncrement: () => setState(() => _cambuseQty[c.id] = qty + 1),
+                          );
+                        },
+                      ),
+              ],
+            ),
+          ),
+          // Bouton Confirmer
+          SafeArea(
+            top: false,
+            minimum: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _totalSelected > 0 ? _confirm : null,
+                icon: const Icon(Icons.check, size: 16),
+                label: Text(
+                  _totalSelected > 0
+                      ? 'Ajouter $_totalSelected article${_totalSelected > 1 ? 's' : ''}'
+                      : 'Sélectionnez des articles',
+                  style: const TextStyle(fontSize: 13),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: AppTheme.surfaceLight,
+                  disabledForegroundColor: AppTheme.textSecondary,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Ligne article dans la bottom-sheet ───────────────────────────────────────
+class _ArticleRow extends StatelessWidget {
+  final String name;
+  final String category;
+  final double price;
+  final int quantity;
+  final Color accentColor;
+  final VoidCallback? onDecrement;
+  final VoidCallback onIncrement;
+
+  const _ArticleRow({
+    required this.name,
+    required this.category,
+    required this.price,
+    required this.quantity,
+    required this.accentColor,
+    required this.onDecrement,
+    required this.onIncrement,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isSelected = quantity > 0;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: isSelected
+            ? accentColor.withValues(alpha: 0.10)
+            : AppTheme.surfaceLight,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isSelected ? accentColor.withValues(alpha: 0.5) : const Color(0xFF2A2A5A),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name,
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+                Text('${category.isNotEmpty ? "$category · " : ""}${price.toStringAsFixed(0)} F',
+                    style: TextStyle(color: AppTheme.textSecondary.withValues(alpha: 0.8), fontSize: 11)),
+              ],
+            ),
+          ),
+          // Contrôle quantité
+          IconButton(
+            onPressed: onDecrement,
+            icon: Icon(Icons.remove_circle_outline, size: 20,
+                color: onDecrement != null ? AppTheme.error : AppTheme.textSecondary.withValues(alpha: 0.3)),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: SizedBox(
+              width: 22,
+              child: Text(
+                '$quantity',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : AppTheme.textSecondary,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: onIncrement,
+            icon: Icon(Icons.add_circle_outline, size: 20, color: accentColor),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
     );
   }
 }
