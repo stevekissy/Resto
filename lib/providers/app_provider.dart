@@ -65,8 +65,14 @@ class AppProvider extends ChangeNotifier {
   // =================== ORDERS ===================
   List<Order> _orders = [];
   List<Order> get orders => _orders;
-  List<Order> get pendingOrders => _orders.where((o) => o.status == OrderStatus.pending).toList();
+  /// Commandes POS en attente — exclure les commandes 100% Cambuse
+  /// (les boissons seules vont directement en caisse, pas en cuisine)
+  List<Order> get pendingOrders => _orders.where((o) =>
+    o.status == OrderStatus.pending && o.hasKitchenItems
+  ).toList();
+
   List<Order> get preparingOrders => _orders.where((o) => o.status == OrderStatus.preparing).toList();
+
   List<Order> get readyOrders => _orders.where((o) {
     if (o.status == OrderStatus.cancelled) return false;
     // Commandes en ligne : prêtes si kitchenStatus==ready (envoyées en cuisine)
@@ -74,13 +80,15 @@ class AppProvider extends ChangeNotifier {
     // Commandes POS : basé sur status
     return o.status == OrderStatus.ready;
   }).toList();
+
   List<Order> get servedOrders => _orders.where((o) => o.status == OrderStatus.served).toList();
 
   // ── Getters caisse 2 étapes ─────────────────────────────────────────
-  /// Tab 1 Caisse — commandes SERVIES avec facture provisoire, en attente de règlement.
-  /// RÈGLE MÉTIER : une commande n'entre en caisse QUE quand status == served.
-  /// "Prête" (ready) reste en Salle jusqu'à ce que le serveur clique "Servir".
-  /// La facture provisoire est créée automatiquement lors du passage à "served".
+  /// Tab 1 Caisse — commandes en attente de règlement (facture provisoire créée).
+  /// RÈGLE MÉTIER :
+  ///  - Commandes avec plats : entrent en caisse après status == served
+  ///  - Commandes Cambuse-only (boissons seules) : entrent en caisse dès la création
+  ///    (elles passent directement en caisse sans passer par la cuisine)
   List<Order> get pendingCashoutOrders => _orders.where((o) {
     if (o.isPaid) return false;
     // Uniquement les commandes en attente de règlement (facture provisoire déjà créée)
@@ -89,7 +97,9 @@ class AppProvider extends ChangeNotifier {
     if (o.isOnlineOrder) {
       return o.status == OrderStatus.served || o.kitchenStatus == 'served';
     }
-    // Commandes POS : status doit être served
+    // Commandes POS Cambuse-only : visibles en caisse dès la création (pending ou served)
+    if (o.isCambuseOnly) return true;
+    // Commandes POS avec plats : status doit être served
     return o.status == OrderStatus.served;
   }).toList();
 
@@ -1059,6 +1069,18 @@ class AppProvider extends ChangeNotifier {
   }) async {
     // Numéro de commande unique via transaction Firestore (pas de RAM)
     final orderNumber = await _firebase.getNextOrderNumber();
+
+    // ── Déterminer le statut initial ────────────────────────────────────────
+    // Les commandes Cambuse-only (boissons seules) ne passent PAS par la cuisine.
+    // Elles sont créées directement en statut "served" et basculent en caisse.
+    final hasKitchen = items.any((i) => i.isKitchenItem);
+    final initialStatus = hasKitchen ? OrderStatus.pending : OrderStatus.served;
+
+    // Pour les commandes Cambuse-only : générer la facture provisoire immédiatement
+    final invoiceNumber = !hasKitchen
+        ? PrintService.generateFacNumber(orderNumber)
+        : null;
+
     final order = Order(
       id: _uuid.v4(),
       orderNumber: orderNumber,
@@ -1070,17 +1092,29 @@ class AppProvider extends ChangeNotifier {
       specialInstructions: specialInstructions,
       isUrgent: isUrgent,
       orderType: orderType,
+      // Cambuse-only : directement served + facture provisoire générée
+      status: initialStatus,
+      cashStatus: !hasKitchen ? CashStatus.awaiting_payment : CashStatus.pending_cashout,
+      cashoutInvoiceGenerated: !hasKitchen,
+      cashoutInvoiceNumber: invoiceNumber,
+      cashoutAt: !hasKitchen ? DateTime.now() : null,
+      cashierId: !hasKitchen ? (_currentUser?.id ?? '') : null,
+      cashierName: !hasKitchen ? (_currentUser?.name ?? 'Serveur') : null,
+      servedAt: !hasKitchen ? DateTime.now() : null,
     );
     await _firebase.saveOrder(order);
 
     // Déduction automatique du stock (fire-and-forget — non bloquant)
-    _firebase.deductStockForOrder(
-      order: order,
-      products: _products,
-      createdBy: _currentUser?.name ?? 'Inconnu',
-    ).catchError((e) {
-      debugPrint('[stock.deduct] Erreur déduction stock: $e');
-    });
+    // Uniquement si la commande contient des plats liés au stock
+    if (hasKitchen) {
+      _firebase.deductStockForOrder(
+        order: order,
+        products: _products,
+        createdBy: _currentUser?.name ?? 'Inconnu',
+      ).catchError((e) {
+        debugPrint('[stock.deduct] Erreur déduction stock: $e');
+      });
+    }
 
     // Déduction automatique Cambuse (boissons) — fire-and-forget
     if (_cambuseItems.isNotEmpty) {
@@ -1093,7 +1127,10 @@ class AppProvider extends ChangeNotifier {
       });
     }
 
-    onNewOrder?.call(order);
+    // Notifier la cuisine uniquement si la commande contient des plats
+    if (hasKitchen) {
+      onNewOrder?.call(order);
+    }
     return order;
   }
 

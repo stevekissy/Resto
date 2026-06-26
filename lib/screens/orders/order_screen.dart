@@ -114,6 +114,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
           quantity: qty,
           unitPrice: product.price,
           category: product.category,
+          itemType: 'menu',     // plat cuisine
         ));
       }
     });
@@ -137,6 +138,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
           isCambuse:     true,
           cambuseItemId: item.id,
           category:      item.category,
+          itemType:      'cambuse',   // boisson — ne passe PAS en cuisine
         ));
       }
     });
@@ -204,9 +206,20 @@ class _NewOrderTabState extends State<NewOrderTab> {
       _selectedServer = null;
     });
 
+    // Message adapté : boissons seules → directement en caisse, plats → envoi cuisine
+    final hasKitchen = order.items.any((i) => i.isKitchenItem);
+    final hasCambuse = order.items.any((i) => i.isCambuse);
+    final String snackMsg;
+    if (!hasKitchen && hasCambuse) {
+      snackMsg = 'Commande #${order.orderNumber} — Boissons en caisse directement !';
+    } else if (hasKitchen && hasCambuse) {
+      snackMsg = 'Commande #${order.orderNumber} — Plats en cuisine, boissons en caisse !';
+    } else {
+      snackMsg = 'Commande #${order.orderNumber} envoyée en cuisine !';
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Commande #${order.orderNumber} envoyée en cuisine !'),
+        content: Text(snackMsg),
         backgroundColor: AppTheme.success,
         behavior: SnackBarBehavior.floating,
       ),
@@ -1627,22 +1640,35 @@ class _CartBottomSheetState extends State<_CartBottomSheet> {
                   ),
                   const SizedBox(height: 10),
                   // Bouton envoyer
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton.icon(
-                      onPressed: widget.cartItems.isEmpty ? null : widget.onSubmit,
-                      icon: const Icon(Icons.send, size: 18),
-                      label: const Text('Envoyer en Cuisine', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primary,
-                        foregroundColor: Colors.white,
-                        disabledBackgroundColor: const Color(0xFF2A2A5A),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
-                        elevation: 4,
+                  Builder(builder: (ctx) {
+                    // Adapter le bouton selon le contenu du panier
+                    final hasKitchen = widget.cartItems.any((i) => i.isKitchenItem);
+                    final hasCambuse = widget.cartItems.any((i) => i.isCambuse);
+                    final btnLabel = !hasKitchen && hasCambuse
+                        ? 'Valider la commande boissons'
+                        : hasKitchen && hasCambuse
+                            ? 'Envoyer cuisine + caisse'
+                            : 'Envoyer en Cuisine';
+                    final btnIcon = !hasKitchen && hasCambuse
+                        ? Icons.local_bar
+                        : Icons.send;
+                    return SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: widget.cartItems.isEmpty ? null : widget.onSubmit,
+                        icon: Icon(btnIcon, size: 18),
+                        label: Text(btnLabel, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primary,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: const Color(0xFF2A2A5A),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                          elevation: 4,
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                 ],       // SafeArea Column children
               ),         // SafeArea Column
             ),           // SafeArea

@@ -71,6 +71,9 @@ class _KitchenScreenState extends State<KitchenScreen> {
     final activeOrders = provider.orders.where((o) {
       // Ignorer les commandes annulées
       if (o.status == OrderStatus.cancelled) return false;
+      // ── RÈGLE MÉTIER : exclure les commandes sans plats cuisine ──────────
+      // Les commandes 100% Cambuse (boissons seules) ne passent JAMAIS en cuisine
+      if (!o.hasKitchenItems) return false;
       // Commandes en ligne : exiger sentToKitchen == true
       if (o.isOnlineOrder) {
         if (!o.sentToKitchen) return false;

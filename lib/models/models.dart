@@ -297,6 +297,9 @@ class OrderItem {
   final String? cambuseItemId;
   /// catégorie d'affichage (plat ou catégorie cambuse)
   final String? category;
+  /// Type d'article : "menu" (plat cuisine) ou "cambuse" (boisson)
+  /// Utilisé pour séparer le flux cuisine du flux caisse
+  final String itemType;
 
   OrderItem({
     required this.productId,
@@ -307,7 +310,11 @@ class OrderItem {
     this.isCambuse = false,
     this.cambuseItemId,
     this.category,
-  });
+    String? itemType,
+  }) : itemType = itemType ?? (isCambuse ? 'cambuse' : 'menu');
+
+  /// true si cet article doit passer en cuisine
+  bool get isKitchenItem => itemType == 'menu' && !isCambuse;
 
   double get totalPrice => unitPrice * quantity;
 
@@ -320,18 +327,25 @@ class OrderItem {
     'isCambuse':    isCambuse,
     'cambuseItemId': cambuseItemId,
     'category':     category,
+    'itemType':     itemType,
   };
 
-  factory OrderItem.fromMap(Map<String, dynamic> map) => OrderItem(
-    productId:     map['productId']    as String? ?? '',
-    productName:   map['productName']  as String? ?? '',
-    quantity:      (map['quantity']    as num?)?.toInt() ?? 0,
-    unitPrice:     (map['unitPrice']   as num?)?.toDouble() ?? 0,
-    specialComment: map['specialComment'] as String?,
-    isCambuse:     map['isCambuse']    as bool? ?? false,
-    cambuseItemId: map['cambuseItemId'] as String?,
-    category:      map['category']     as String?,
-  );
+  factory OrderItem.fromMap(Map<String, dynamic> map) {
+    // Rétrocompatibilité : si itemType absent, dériver de isCambuse
+    final isCamb = map['isCambuse'] as bool? ?? false;
+    final type   = map['itemType'] as String? ?? (isCamb ? 'cambuse' : 'menu');
+    return OrderItem(
+      productId:     map['productId']    as String? ?? '',
+      productName:   map['productName']  as String? ?? '',
+      quantity:      (map['quantity']    as num?)?.toInt() ?? 0,
+      unitPrice:     (map['unitPrice']   as num?)?.toDouble() ?? 0,
+      specialComment: map['specialComment'] as String?,
+      isCambuse:     isCamb,
+      cambuseItemId: map['cambuseItemId'] as String?,
+      category:      map['category']     as String?,
+      itemType:      type,
+    );
+  }
 }
 
 // =================== ORDER MODEL ===================
@@ -458,6 +472,12 @@ class Order {
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.totalPrice);
   double get totalAmount => subtotal - discount;
+
+  /// true si la commande contient au moins un plat à envoyer en cuisine
+  bool get hasKitchenItems => items.any((i) => i.isKitchenItem);
+
+  /// true si la commande contient uniquement des boissons Cambuse (aucun plat)
+  bool get isCambuseOnly => items.isNotEmpty && !hasKitchenItems;
 
   /// Libellé de table affiché partout (cuisine, caisse, facture)
   String get tableLabel => isTakeaway ? 'À emporter' : 'Table $tableNumber';
