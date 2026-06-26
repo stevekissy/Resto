@@ -566,6 +566,7 @@ class _RolePermissionCard extends StatelessWidget {
     'notifications': 'Notifications',
     'adminManagement': 'Gestion Admins',
     'onlineOrders': 'Commandes en ligne',
+    'cambuse': 'Cambuse',
   };
 
   static const Map<String, IconData> _moduleIcons = {
@@ -584,6 +585,7 @@ class _RolePermissionCard extends StatelessWidget {
     'notifications': Icons.notifications,
     'adminManagement': Icons.admin_panel_settings,
     'onlineOrders': Icons.storefront_outlined,
+    'cambuse': Icons.liquor,
   };
 
   @override

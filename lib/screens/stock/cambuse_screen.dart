@@ -42,6 +42,54 @@ class _CambuseScreenState extends State<CambuseScreen>
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
+
+    // ── Guard d'accès : vérifier la permission 'cambuse' ──────────────────
+    final role = provider.currentUser?.role ?? UserRole.server;
+    if (!provider.hasPermission(role, 'cambuse')) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0A0A2E),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.lock, color: Colors.red, size: 48),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Accès refusé',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Vous n\'avez pas l\'autorisation d\'accéder au module Cambuse.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFF8888AA), fontSize: 14),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Contactez votre administrateur.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFF8888AA), fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     final items    = provider.cambuseItems;
     final lowCount = items.where((i) => i.isLowStock || i.isOutOfStock).length;
 
