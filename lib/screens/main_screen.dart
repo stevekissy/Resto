@@ -24,9 +24,9 @@ import 'notifications/notification_screen.dart';
 import '../services/notification_service.dart';
 import 'login_screen.dart';
 
-// ── Constantes de build — identifiant de version visible dans le drawer ──
-const String _kBuildCommit = '1ed2a4f';
-const String _kBuildDate = '23/06 20:30';
+// ── Constante de version — badge discret dans le drawer ──
+const String _kBuildCommit = 'd19ed7b';
+const String _kBuildDate = '26/06 04:21';
 
 /// Widget affiché quand un utilisateur tente d'accéder à un module interdit.
 class _AccessDeniedScreen extends StatelessWidget {
@@ -429,7 +429,7 @@ class _MainScreenState extends State<MainScreen> {
               },
             ),
           ),
-          // ── Badge LIVE BUILD (admin/manager uniquement) ──
+          // ── Badge DERNIÈRE VERSION (admin/manager uniquement) ──
           if (provider.currentUser?.role == UserRole.admin ||
               provider.currentUser?.role == UserRole.manager)
             Padding(
@@ -444,21 +444,15 @@ class _MainScreenState extends State<MainScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      width: 6, height: 6,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF4CAF50),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
+                    const Icon(Icons.check_circle, color: Color(0xFF4CAF50), size: 10),
                     const SizedBox(width: 6),
                     Text(
-                      'LIVE · $_kBuildCommit · $_kBuildDate',
+                      'DERNIÈRE VERSION · $_kBuildCommit · $_kBuildDate',
                       style: const TextStyle(
                         color: Colors.white38,
                         fontSize: 9,
                         fontWeight: FontWeight.w600,
-                        letterSpacing: 0.5,
+                        letterSpacing: 0.4,
                         fontFamily: 'monospace',
                       ),
                     ),
