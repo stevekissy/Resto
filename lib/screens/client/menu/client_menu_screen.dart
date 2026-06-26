@@ -157,7 +157,7 @@ class _ClientMenuScreenState extends State<ClientMenuScreen>
               ? _NoResults(query: _searchQuery)
               : GridView.builder(
                   controller: _scrollController,
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, cartCount > 0 ? 110 : 30),
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, cartCount > 0 ? 88 : 30),
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: MediaQuery.of(context).size.width >= 600 ? 3 : 2,
                     crossAxisSpacing: 12,
@@ -167,52 +167,89 @@ class _ClientMenuScreenState extends State<ClientMenuScreen>
                   itemCount: filtered.length,
                   itemBuilder: (ctx, i) => _ProductCard(product: filtered[i]),
                 ),
-      // Bouton panier flottant
+      // Bouton panier flottant — compact, safe-area, ombre discrète
       floatingActionButton: cartCount > 0
-          ? GestureDetector(
-              onTap: () => _openCheckout(context),
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [AppTheme.primary, Color(0xFF0D47A1)],
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppTheme.primary.withValues(alpha: 0.4),
-                      blurRadius: 20,
-                      offset: const Offset(0, 4),
+          ? SafeArea(
+              top: false,
+              child: GestureDetector(
+                onTap: () => _openCheckout(context),
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 20),
+                  height: 46,                        // réduit de ~30 %
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [AppTheme.primary, Color(0xFF0D47A1)],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
                     ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
+                    borderRadius: BorderRadius.circular(13),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppTheme.primary.withValues(alpha: 0.28),
+                        blurRadius: 10,
+                        spreadRadius: 0,
+                        offset: const Offset(0, 3),
+                      ),
+                      const BoxShadow(
+                        color: Color(0x26000000),
+                        blurRadius: 5,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
                       children: [
+                        // Badge compteur
                         Container(
-                          width: 28, height: 28,
+                          width: 24, height: 24,
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.25),
-                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.white.withValues(alpha: 0.22),
+                            borderRadius: BorderRadius.circular(7),
                           ),
                           child: Center(
-                            child: Text('$cartCount',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 13)),
+                            child: Text(
+                              '$cartCount',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 11,
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 10),
-                        const Text('Voir le panier',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+                        // Label
+                        const Expanded(
+                          child: Text(
+                            'Voir le panier',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        // Montant
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${fmt.format(cartTotal)} F',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
-                    Text('${fmt.format(cartTotal)} F',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
-                  ],
+                  ),
                 ),
               ),
             )

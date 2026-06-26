@@ -510,7 +510,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
                       subtitle: 'Modifiez votre recherche ou la catégorie',
                     )
                   : ListView(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 90),
                       children: [
                         // ── Plats du menu ─────────────────────────────
                         if (filteredProducts.isNotEmpty) ...[
@@ -580,13 +580,17 @@ class _NewOrderTabState extends State<NewOrderTab> {
 
         // ── ZONE 4 : FAB Panier flottant ────────────────────────────
         Positioned(
-          bottom: 16,
-          left: 16,
-          right: 16,
-          child: _CartFab(
-            count: _cartCount,
-            total: _cartTotal,
-            onTap: _cartCount > 0 ? _openCart : null,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            top: false,
+            minimum: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: _CartFab(
+              count: _cartCount,
+              total: _cartTotal,
+              onTap: _cartCount > 0 ? _openCart : null,
+            ),
           ),
         ),
       ],
@@ -605,73 +609,92 @@ class _CartFab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasItems = count > 0;
+    // N'afficher que lorsqu'il y a des articles
+    if (!hasItems) return const SizedBox.shrink();
+
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
-        height: 56,
+        height: 44,                          // réduit de 56 → 44 (−21 %)
         decoration: BoxDecoration(
-          color: hasItems ? AppTheme.primary : const Color(0xFF1A2340),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: hasItems
-              ? [BoxShadow(color: AppTheme.primary.withValues(alpha: 0.45), blurRadius: 16, offset: const Offset(0, 4))]
-              : [const BoxShadow(color: Color(0x33000000), blurRadius: 8, offset: Offset(0, 2))],
-          border: Border.all(
-            color: hasItems ? AppTheme.primary : const Color(0xFF2A2A5A),
-            width: hasItems ? 0 : 1,
-          ),
+          color: AppTheme.primary,
+          borderRadius: BorderRadius.circular(13),
+          boxShadow: [
+            BoxShadow(
+              color: AppTheme.primary.withValues(alpha: 0.30),
+              blurRadius: 10,
+              spreadRadius: 0,
+              offset: const Offset(0, 3),
+            ),
+            const BoxShadow(
+              color: Color(0x28000000),
+              blurRadius: 6,
+              offset: Offset(0, 1),
+            ),
+          ],
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
+              // Icône + badge
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Icon(Icons.shopping_cart_outlined,
-                      color: hasItems ? Colors.white : AppTheme.textSecondary, size: 24),
-                  if (hasItems)
-                    Positioned(
-                      top: -6,
-                      right: -6,
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Text(
-                          '$count',
-                          style: TextStyle(
-                            color: AppTheme.primary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900,
-                          ),
+                  const Icon(Icons.shopping_cart_outlined,
+                      color: Colors.white, size: 20),
+                  Positioned(
+                    top: -5,
+                    right: -5,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '$count',
+                        style: TextStyle(
+                          color: AppTheme.primary,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
                         ),
                       ),
                     ),
+                  ),
                 ],
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
+              // Label
               Expanded(
                 child: Text(
-                  hasItems ? 'Voir le panier ($count article${count > 1 ? 's' : ''})' : 'Panier vide',
-                  style: TextStyle(
-                    color: hasItems ? Colors.white : AppTheme.textSecondary,
+                  'Voir le panier · $count article${count > 1 ? 's' : ''}',
+                  style: const TextStyle(
+                    color: Colors.white,
                     fontWeight: FontWeight.w700,
-                    fontSize: 14,
+                    fontSize: 13,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (hasItems)
-                Text(
+              const SizedBox(width: 8),
+              // Montant
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
                   '${total.toStringAsFixed(0)} F',
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,
-                    fontSize: 15,
+                    fontSize: 12,
                   ),
                 ),
+              ),
             ],
           ),
         ),
