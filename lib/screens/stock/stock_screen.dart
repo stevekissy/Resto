@@ -20,7 +20,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -43,7 +43,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
               unselectedLabelColor: AppTheme.textSecondary,
               tabs: const [
                 Tab(text: 'Stocks', icon: Icon(Icons.inventory, size: 16)),
-                Tab(text: 'Produits Disponibles', icon: Icon(Icons.restaurant_menu, size: 16)),
                 Tab(text: 'Inventaire', icon: Icon(Icons.playlist_add_check, size: 16)),
                 Tab(text: 'Historique', icon: Icon(Icons.history, size: 16)),
               ],
@@ -54,7 +53,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
               controller: _tabController,
               children: const [
                 _StockTab(),
-                _AvailableProductsTab(),
                 InventoryTab(),
                 _StockHistoryTab(),
               ],
@@ -1428,244 +1426,6 @@ class _StockItemCard extends StatelessWidget {
   }
 
   String _formatDate(DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
-}
-
-// =================== AVAILABLE PRODUCTS TAB ===================
-class _AvailableProductsTab extends StatefulWidget {
-  const _AvailableProductsTab();
-
-  @override
-  State<_AvailableProductsTab> createState() => _AvailableProductsTabState();
-}
-
-class _AvailableProductsTabState extends State<_AvailableProductsTab> {
-  String _selectedCategory = 'Tous';
-  String _searchQuery = '';
-
-  @override
-  Widget build(BuildContext context) {
-    final provider = context.watch<AppProvider>();
-
-    // Uniquement les produits actifs (isAvailable = true)
-    final activeProducts = provider.products.where((p) => p.isAvailable).toList();
-
-    // Catégories dynamiques depuis les produits actifs
-    final cats = activeProducts.map((p) => p.category).toSet().toList()..sort();
-    final categories = ['Tous', ...cats];
-
-    // Filtrage par catégorie
-    var filtered = _selectedCategory == 'Tous'
-        ? activeProducts
-        : activeProducts.where((p) => p.category == _selectedCategory).toList();
-
-    // Filtrage par recherche
-    if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      filtered = filtered
-          .where((p) => p.name.toLowerCase().contains(q) || p.category.toLowerCase().contains(q))
-          .toList();
-    }
-
-    // Tri alphabétique
-    filtered.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-
-    return Scaffold(
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
-                // ── Barre de recherche ──────────────────────────────────
-                TextField(
-                  onChanged: (v) => setState(() => _searchQuery = v),
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: 'Rechercher par nom, catégorie…',
-                    prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary, size: 18),
-                    suffixIcon: _searchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, color: AppTheme.textSecondary, size: 16),
-                            onPressed: () => setState(() => _searchQuery = ''),
-                          )
-                        : null,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 8),
-
-                // ── Chips catégories ────────────────────────────────────
-                SizedBox(
-                  height: 34,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: categories.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 6),
-                    itemBuilder: (context, i) {
-                      final cat = categories[i];
-                      final selected = _selectedCategory == cat;
-                      return GestureDetector(
-                        onTap: () => setState(() => _selectedCategory = cat),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: selected ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.surfaceLight,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: selected ? AppTheme.primary : const Color(0xFF2A2A5A),
-                            ),
-                          ),
-                          child: Text(
-                            cat,
-                            style: TextStyle(
-                              color: selected ? AppTheme.primary : AppTheme.textSecondary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // ── Liste des produits ────────────────────────────────────────
-          Expanded(
-            child: filtered.isEmpty
-                ? EmptyState(
-                    icon: Icons.restaurant_menu,
-                    title: _searchQuery.isNotEmpty
-                        ? 'Aucun résultat pour "$_searchQuery"'
-                        : activeProducts.isEmpty
-                            ? 'Aucun produit disponible'
-                            : 'Aucun produit dans cette catégorie',
-                    subtitle: null,
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: filtered.length,
-                    itemBuilder: (context, i) => _ProductAvailCard(product: filtered[i]),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ProductAvailCard extends StatelessWidget {
-  final Product product;
-
-  const _ProductAvailCard({required this.product});
-
-  @override
-  Widget build(BuildContext context) {
-    // Calcul du statut
-    final Color statusColor;
-    final String statusLabel;
-    final IconData statusIcon;
-
-    if (product.stockQuantity <= 0) {
-      statusColor = AppTheme.error;
-      statusLabel = 'RUPTURE';
-      statusIcon = Icons.cancel;
-    } else if (product.stockQuantity <= product.minStockAlert) {
-      statusColor = AppTheme.warning;
-      statusLabel = 'FAIBLE';
-      statusIcon = Icons.warning;
-    } else {
-      statusColor = AppTheme.success;
-      statusLabel = 'DISPONIBLE';
-      statusIcon = Icons.check_circle;
-    }
-
-    // Formatage prix
-    final priceStr = product.price >= 1000
-        ? '${(product.price / 1000).toStringAsFixed(product.price % 1000 == 0 ? 0 : 1)} 000 F'
-        : '${product.price.toStringAsFixed(0)} F';
-
-    return GlassCard(
-      margin: const EdgeInsets.only(bottom: 10),
-      border: Border.all(color: statusColor.withValues(alpha: 0.3)),
-      child: Row(
-        children: [
-          // ── Icône statut ──────────────────────────────────────────
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(statusIcon, color: statusColor, size: 20),
-          ),
-          const SizedBox(width: 12),
-
-          // ── Infos produit ─────────────────────────────────────────
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Nom
-                Text(
-                  product.name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                // Catégorie
-                Text(
-                  product.category,
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
-                ),
-                const SizedBox(height: 4),
-                // Quantité + Unité
-                Row(
-                  children: [
-                    Icon(Icons.inventory_2_outlined, color: statusColor, size: 12),
-                    const SizedBox(width: 3),
-                    Text(
-                      '${product.stockQuantity} portion${product.stockQuantity > 1 ? 's' : ''}',
-                      style: TextStyle(
-                        color: statusColor,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          // ── Prix + Badge ──────────────────────────────────────────
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              StatusBadge(label: statusLabel, color: statusColor, fontSize: 9),
-              const SizedBox(height: 6),
-              Text(
-                priceStr,
-                style: const TextStyle(
-                  color: AppTheme.primary,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 13,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 // =================== ONGLET HISTORIQUE STOCK ===================
