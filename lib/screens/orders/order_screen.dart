@@ -853,6 +853,9 @@ class _ProductCardState extends State<_ProductCard>
     );
     final inCart = cartItem.productId.isNotEmpty;
     final cartQty = inCart ? cartItem.quantity : 0;
+    // Stock effectif — bloque le bouton + et Ajouter si épuisé
+    final effectiveStock = widget.product.computedStock(widget.stockItems);
+    final isOutOfStock = effectiveStock <= 0;
 
     return ScaleTransition(
       scale: _scaleAnim,
@@ -940,37 +943,25 @@ class _ProductCardState extends State<_ProductCard>
                                 fontSize: 14,
                               ),
                             ),
-                            // Badge Stock réel — via stockLinks si disponible, sinon stockQuantity
+                            // Badge Stock — utilise stockQuantity synchronisé en RAM
+                            // (mis à jour automatiquement depuis stockLinks via le stream stock)
                             Builder(builder: (_) {
-                              // Calculer le stock réel depuis les liaisons StockItem
-                              int realStock = widget.product.stockQuantity;
-                              if (widget.product.stockLinks.isNotEmpty) {
-                                // Prendre le stock du premier ingrédient obligatoire (ou premier lien)
-                                final link = widget.product.stockLinks.firstWhere(
-                                  (l) => l.mandatory,
-                                  orElse: () => widget.product.stockLinks.first,
-                                );
-                                final si = widget.stockItems.firstWhere(
-                                  (s) => s.id == link.stockItemId,
-                                  orElse: () => StockItem(id: '', name: '', unit: '', currentQuantity: -1, minQuantity: 0, maxQuantity: 0, unitCost: 0, category: ''),
-                                );
-                                if (si.id.isNotEmpty && link.quantityUsed > 0) {
-                                  realStock = (si.currentQuantity / link.quantityUsed).floor();
-                                }
-                              }
-                              final isLow = realStock <= widget.product.minStockAlert;
+                              final realStock = widget.product.computedStock(widget.stockItems);
+                              final isOut  = realStock <= 0;
+                              final isLow  = !isOut && realStock <= widget.product.minStockAlert;
+                              final color  = isOut
+                                  ? AppTheme.error
+                                  : isLow ? AppTheme.warning : AppTheme.success;
                               return Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: isLow
-                                      ? AppTheme.warning.withValues(alpha: 0.12)
-                                      : AppTheme.success.withValues(alpha: 0.12),
+                                  color: color.withValues(alpha: 0.12),
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
-                                  'Stock: $realStock',
+                                  isOut ? 'Épuisé' : 'Stock: $realStock',
                                   style: TextStyle(
-                                    color: isLow ? AppTheme.warning : AppTheme.success,
+                                    color: color,
                                     fontSize: 10,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -1031,21 +1022,24 @@ class _ProductCardState extends State<_ProductCard>
                   _QtyButton(
                     icon: Icons.add,
                     onTap: _increment,
-                    enabled: true,
+                    enabled: !isOutOfStock,
                     color: AppTheme.success,
                   ),
                   // Espace flexible entre quantité et bouton Ajouter
                   const Spacer(),
                   // Bouton Ajouter — compact, aligné à droite
+                  // Grisé et désactivé si stock épuisé
                   GestureDetector(
-                    onTap: _addToCart,
+                    onTap: isOutOfStock ? null : _addToCart,
                     child: Container(
                       height: 36,
                       padding: const EdgeInsets.symmetric(horizontal: 14),
                       decoration: BoxDecoration(
-                        color: AppTheme.primary,
+                        color: isOutOfStock
+                            ? AppTheme.textSecondary.withValues(alpha: 0.25)
+                            : AppTheme.primary,
                         borderRadius: BorderRadius.circular(9),
-                        boxShadow: [
+                        boxShadow: isOutOfStock ? [] : [
                           BoxShadow(
                             color: AppTheme.primary.withValues(alpha: 0.35),
                             blurRadius: 5,
@@ -1053,12 +1047,27 @@ class _ProductCardState extends State<_ProductCard>
                           ),
                         ],
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.add_shopping_cart, size: 15, color: Colors.white),
-                          SizedBox(width: 6),
-                          Text('Ajouter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                          Icon(
+                            isOutOfStock ? Icons.block : Icons.add_shopping_cart,
+                            size: 15,
+                            color: isOutOfStock
+                                ? AppTheme.textSecondary
+                                : Colors.white,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            isOutOfStock ? 'Épuisé' : 'Ajouter',
+                            style: TextStyle(
+                              color: isOutOfStock
+                                  ? AppTheme.textSecondary
+                                  : Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
                         ],
                       ),
                     ),

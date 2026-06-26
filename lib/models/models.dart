@@ -258,6 +258,35 @@ class Product {
   /// true si au moins un lien stock est défini
   bool get hasStockLinks => stockLinks.isNotEmpty;
 
+  /// Calcule le stock effectif depuis les liaisons StockItem.
+  ///
+  /// Règle : pour chaque lien obligatoire (mandatory=true), le stock disponible
+  /// est floor(stockItem.currentQuantity / link.quantityUsed).
+  /// On retourne le minimum parmi tous les liens obligatoires.
+  /// Si aucun lien obligatoire n'est défini, on retourne [stockQuantity].
+  ///
+  /// [stockItems] : liste courante des StockItem (depuis le provider).
+  int computedStock(List<StockItem> stockItems) {
+    final mandatoryLinks = stockLinks.where((l) => l.mandatory).toList();
+    if (mandatoryLinks.isEmpty) return stockQuantity;
+
+    int min = 999999;
+    for (final link in mandatoryLinks) {
+      if (link.quantityUsed <= 0) continue;
+      final si = stockItems.firstWhere(
+        (s) => s.id == link.stockItemId,
+        orElse: () => StockItem(
+          id: '', name: '', unit: '',
+          currentQuantity: 0, minQuantity: 0, maxQuantity: 0,
+          unitCost: 0, category: '',
+        ),
+      );
+      final portions = (si.currentQuantity / link.quantityUsed).floor();
+      if (portions < min) min = portions;
+    }
+    return min == 999999 ? stockQuantity : min;
+  }
+
   Map<String, dynamic> toMap() => {
     'id': id, 'name': name, 'category': category, 'price': price,
     'prepTime': prepTime, 'description': description, 'imageUrl': imageUrl,

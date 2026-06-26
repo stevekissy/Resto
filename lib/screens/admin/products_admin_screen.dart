@@ -739,7 +739,9 @@ class _ProductAdminCardState extends State<_ProductAdminCard> {
   Widget build(BuildContext context) {
     final product = widget.product;
     final provider = widget.provider;
-    final isAvail = product.isAvailable && product.stockQuantity > 0;
+    // Stock effectif : calculé depuis stockLinks si présents, sinon stockQuantity manuel
+    final effectiveStock = provider.productEffectiveStock(product);
+    final isAvail = product.isAvailable && effectiveStock > 0;
     final hasLinks = product.stockLinks.isNotEmpty;
 
     return GlassCard(
@@ -798,11 +800,13 @@ class _ProductAdminCardState extends State<_ProductAdminCard> {
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          'Stock: ${product.stockQuantity}',
+                          hasLinks
+                              ? 'Stock lié: $effectiveStock'
+                              : 'Stock: $effectiveStock',
                           style: TextStyle(
-                            color: product.stockQuantity == 0
+                            color: effectiveStock == 0
                                 ? AppTheme.error
-                                : product.stockQuantity < 5
+                                : effectiveStock < 5
                                     ? AppTheme.warning
                                     : AppTheme.success,
                             fontSize: 12,

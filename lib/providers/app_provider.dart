@@ -135,7 +135,19 @@ class AppProvider extends ChangeNotifier {
   // =================== PRODUCTS ===================
   List<Product> _products = [];
   List<Product> get products => _products;
-  List<Product> get availableProducts => _products.where((p) => p.isAvailable && p.stockQuantity > 0).toList();
+
+  /// Retourne le stock effectif d'un produit :
+  /// - Si le produit a des liens stock obligatoires → calculé depuis StockItem.currentQuantity
+  /// - Sinon → Product.stockQuantity (valeur manuelle)
+  int productEffectiveStock(Product p) => p.computedStock(_stockItems);
+
+  /// Produits disponibles : isAvailable=true ET stock effectif > 0.
+  /// Le stock effectif est calculé depuis les stockLinks si présents,
+  /// sinon depuis stockQuantity (champ manuel).
+  List<Product> get availableProducts => _products.where((p) {
+    if (!p.isAvailable) return false;
+    return productEffectiveStock(p) > 0;
+  }).toList();
 
   // =================== STOCK ===================
   List<StockItem> _stockItems = [];
@@ -679,7 +691,12 @@ class AppProvider extends ChangeNotifier {
       cancelOnError: false,
     );
     _subProducts = _firebase.streamProducts().listen(
-      (list) { _products = list; notifyListeners(); },
+      (list) {
+        _products = list;
+        // Synchroniser stockQuantity depuis les StockItem déjà chargés
+        _syncProductStockQuantities();
+        notifyListeners();
+      },
       onError: (e) { debugPrint('[stream.products] ERREUR: $e'); },
       cancelOnError: false,
     );
@@ -747,6 +764,11 @@ class AppProvider extends ChangeNotifier {
           }
         }
         _stockItems = list;
+        // ── Recalcul stockQuantity des produits liés ─────────────────────
+        // Quand le stock change, mettre à jour Product.stockQuantity en RAM
+        // pour que tous les widgets (admin, commandes, disponibilité) soient
+        // cohérents sans requête Firestore supplémentaire.
+        _syncProductStockQuantities();
         notifyListeners();
       },
       onError: (e) { debugPrint('[stream.stock] ERREUR: $e'); },
@@ -1107,8 +1129,16 @@ class AppProvider extends ChangeNotifier {
     await _firebase.saveOrder(order);
 
     // Déduction automatique du stock (fire-and-forget — non bloquant)
-    // Uniquement si la commande contient des plats liés au stock
-    if (hasKitchen) {
+    // Déclenchée dès qu'au moins un article de la commande a des stockLinks,
+    // que la commande soit cuisine (hasKitchen) ou cambuse-only.
+    final hasAnyStockLinks = items.any((item) {
+      final product = _products.firstWhere(
+        (p) => p.id == item.productId,
+        orElse: () => Product(id: '', name: '', category: '', price: 0, prepTime: 0),
+      );
+      return product.stockLinks.isNotEmpty;
+    });
+    if (hasAnyStockLinks) {
       _firebase.deductStockForOrder(
         order: order,
         products: _products,
@@ -1577,6 +1607,21 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> deleteProduct(String id) async {
     await _firebase.deleteProduct(id);
+  }
+
+  /// Synchronise Product.stockQuantity en RAM depuis les StockItem liés.
+  ///
+  /// Appelé automatiquement à chaque changement du stream stock.
+  /// Aucune écriture Firestore — mise à jour locale uniquement pour les
+  /// widgets (affichage badge stock, filtre availableProducts, etc.).
+  void _syncProductStockQuantities() {
+    for (final p in _products) {
+      if (p.stockLinks.isEmpty) continue;
+      final computed = p.computedStock(_stockItems);
+      if (p.stockQuantity != computed) {
+        p.stockQuantity = computed;
+      }
+    }
   }
 
   /// Met à jour uniquement l'imageUrl d'un produit (null = supprimer l'image).
