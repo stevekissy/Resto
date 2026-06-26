@@ -1994,6 +1994,179 @@ class FirebaseService {
   }
 
   // ══════════════════════════════════════════════════════════════════════
+  //  INVENTAIRE CAMBUSE — Collections séparées du stock cuisine
+  //  cambuse_inventory_sessions  /  cambuse_inventory_items
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Crée une nouvelle session d'inventaire cambuse + une ligne par article
+  Future<CambuseInventorySession> createCambuseInventorySession({
+    required String responsibleId,
+    required String responsibleName,
+    required String site,
+    required List<CambuseItem> cambuseItems,
+  }) async {
+    final sessionId = const Uuid().v4();
+    final session = CambuseInventorySession(
+      id:              sessionId,
+      date:            DateTime.now(),
+      responsibleId:   responsibleId,
+      responsibleName: responsibleName,
+      site:            site,
+      status:          CambuseInventoryStatus.inProgress,
+      totalProducts:   cambuseItems.length,
+    );
+
+    final batch = _db.batch();
+    batch.set(
+      _db.collection('cambuse_inventory_sessions').doc(sessionId),
+      session.toMap(),
+    );
+
+    // Une ligne par article cambuse, triée par catégorie puis nom
+    final sorted = List<CambuseItem>.from(cambuseItems)
+      ..sort((a, b) {
+        final catCmp = a.category.compareTo(b.category);
+        return catCmp != 0 ? catCmp : a.name.compareTo(b.name);
+      });
+
+    for (final item in sorted) {
+      final lineId = const Uuid().v4();
+      final line = CambuseInventoryItem(
+        id:              lineId,
+        sessionId:       sessionId,
+        cambuseItemId:   item.id,
+        cambuseItemName: item.name,
+        category:        item.category,
+        unit:            'unité',          // CambuseItem n'a pas de champ unit
+        theoreticalQty:  item.quantity,    // stock actuel en unités entières
+        unitCost:        item.sellingPrice, // prix de vente pour valeur d'écart
+      );
+      batch.set(
+        _db.collection('cambuse_inventory_items').doc(lineId),
+        line.toMap(),
+      );
+    }
+
+    await batch.commit();
+    return session;
+  }
+
+  /// Liste des sessions cambuse triées par date desc
+  Future<List<CambuseInventorySession>> fetchCambuseInventorySessions() async {
+    final snap = await _db
+        .collection('cambuse_inventory_sessions')
+        .orderBy('date', descending: true)
+        .get();
+    return snap.docs
+        .map((d) => CambuseInventorySession.fromMap(d.data(), d.id))
+        .toList();
+  }
+
+  /// Lignes d'une session cambuse donnée
+  Future<List<CambuseInventoryItem>> fetchCambuseInventoryItems(
+      String sessionId) async {
+    final snap = await _db
+        .collection('cambuse_inventory_items')
+        .where('sessionId', isEqualTo: sessionId)
+        .get();
+    final items = snap.docs
+        .map((d) => CambuseInventoryItem.fromMap(d.data(), d.id))
+        .toList()
+      ..sort((a, b) {
+        final catCmp = a.category.compareTo(b.category);
+        return catCmp != 0 ? catCmp : a.cambuseItemName.compareTo(b.cambuseItemName);
+      });
+    return items;
+  }
+
+  /// Met à jour une ligne cambuse (quantité comptée + commentaire)
+  Future<void> saveCambuseInventoryLine(CambuseInventoryItem line) async {
+    await _db
+        .collection('cambuse_inventory_items')
+        .doc(line.id)
+        .update({
+      'countedQty': line.countedQty,
+      'comment':    line.comment,
+    });
+  }
+
+  /// Termine la session cambuse et enregistre les totaux
+  Future<void> completeCambuseInventorySession(
+    String sessionId,
+    List<CambuseInventoryItem> items,
+  ) async {
+    final counted = items.where((i) => i.countedQty != null).length;
+    final missing = items.where((i) => i.status == CambuseInventoryItemStatus.missing).length;
+    final surplus = items.where((i) => i.status == CambuseInventoryItemStatus.surplus).length;
+
+    await _db
+        .collection('cambuse_inventory_sessions')
+        .doc(sessionId)
+        .update({
+      'status':       CambuseInventoryStatus.completed.key,
+      'totalCounted': counted,
+      'totalMissing': missing,
+      'totalSurplus': surplus,
+      'completedAt':  DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// Applique les corrections cambuse : met à jour currentQuantity + crée des mouvements
+  Future<void> applyCambuseInventoryCorrections({
+    required String sessionId,
+    required List<CambuseInventoryItem> items,
+    required String validatedByName,
+  }) async {
+    final batch = _db.batch();
+
+    for (final item in items) {
+      if (item.countedQty == null) continue;
+      final gap = item.gap;
+      if (gap == 0) continue; // pas d'écart
+
+      // Mettre à jour le stock cambuse (champ 'quantity' dans la collection cambuse)
+      batch.update(
+        _db.collection('cambuse').doc(item.cambuseItemId),
+        {'quantity': item.countedQty},
+      );
+
+      // Mouvement cambuse pour traçabilité
+      final mvtId = const Uuid().v4();
+      batch.set(_db.collection('cambuse_movements').doc(mvtId), {
+        'id':              mvtId,
+        'cambuseItemId':   item.cambuseItemId,
+        'cambuseItemName': item.cambuseItemName,
+        'type':            CambuseMovementType.inventaire.index,
+        'quantity':        gap.abs(),
+        'quantityBefore':  item.theoreticalQty,
+        'quantityAfter':   item.countedQty,
+        'orderId':         null,
+        'orderNumber':     null,
+        'createdBy':       validatedByName,
+        'createdAt':       DateTime.now().millisecondsSinceEpoch,
+      });
+    }
+
+    await batch.commit();
+  }
+
+  /// Supprime une session cambuse et toutes ses lignes
+  Future<void> deleteCambuseInventorySession(String sessionId) async {
+    final itemsSnap = await _db
+        .collection('cambuse_inventory_items')
+        .where('sessionId', isEqualTo: sessionId)
+        .get();
+    final batch = _db.batch();
+    for (final doc in itemsSnap.docs) {
+      batch.delete(doc.reference);
+    }
+    batch.delete(
+      _db.collection('cambuse_inventory_sessions').doc(sessionId),
+    );
+    await batch.commit();
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
   //  EMPLOYEE CONTRACTS
   // ══════════════════════════════════════════════════════════════════════
 

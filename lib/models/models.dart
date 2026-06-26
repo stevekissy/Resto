@@ -2275,3 +2275,182 @@ class CambuseMovement {
     createdAt:       _parseDTNullable(m['createdAt']) ?? DateTime.now(),
   );
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INVENTAIRE CAMBUSE — Collections Firestore séparées du stock cuisine
+//  cambuse_inventory_sessions  /  cambuse_inventory_items
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Statut de session d'inventaire cambuse ────────────────────────────────────
+enum CambuseInventoryStatus { inProgress, completed, cancelled }
+
+extension CambuseInventoryStatusX on CambuseInventoryStatus {
+  String get label {
+    switch (this) {
+      case CambuseInventoryStatus.inProgress: return 'En cours';
+      case CambuseInventoryStatus.completed:  return 'Terminé';
+      case CambuseInventoryStatus.cancelled:  return 'Annulé';
+    }
+  }
+
+  String get key {
+    switch (this) {
+      case CambuseInventoryStatus.inProgress: return 'in_progress';
+      case CambuseInventoryStatus.completed:  return 'completed';
+      case CambuseInventoryStatus.cancelled:  return 'cancelled';
+    }
+  }
+
+  static CambuseInventoryStatus fromKey(String k) {
+    switch (k) {
+      case 'completed':  return CambuseInventoryStatus.completed;
+      case 'cancelled':  return CambuseInventoryStatus.cancelled;
+      default:           return CambuseInventoryStatus.inProgress;
+    }
+  }
+}
+
+// ── Statut d'une ligne d'inventaire cambuse ───────────────────────────────────
+enum CambuseInventoryItemStatus { notCounted, compliant, missing, surplus }
+
+extension CambuseInventoryItemStatusX on CambuseInventoryItemStatus {
+  String get label {
+    switch (this) {
+      case CambuseInventoryItemStatus.notCounted: return 'Non compté';
+      case CambuseInventoryItemStatus.compliant:  return 'Conforme';
+      case CambuseInventoryItemStatus.missing:    return 'Manquant';
+      case CambuseInventoryItemStatus.surplus:    return 'Surplus';
+    }
+  }
+
+  static CambuseInventoryItemStatus compute(int? counted, int theoretical) {
+    if (counted == null) return CambuseInventoryItemStatus.notCounted;
+    final diff = counted - theoretical;
+    if (diff == 0) return CambuseInventoryItemStatus.compliant;
+    return diff < 0
+        ? CambuseInventoryItemStatus.missing
+        : CambuseInventoryItemStatus.surplus;
+  }
+}
+
+// ── Session d'inventaire Cambuse (document Firestore) ────────────────────────
+class CambuseInventorySession {
+  final String id;
+  final DateTime date;
+  final String responsibleId;
+  final String responsibleName;
+  final String site;
+  CambuseInventoryStatus status;
+  final int totalProducts;
+  final int totalCounted;
+  final int totalMissing;
+  final int totalSurplus;
+  final DateTime? completedAt;
+
+  CambuseInventorySession({
+    required this.id,
+    required this.date,
+    required this.responsibleId,
+    required this.responsibleName,
+    required this.site,
+    this.status = CambuseInventoryStatus.inProgress,
+    this.totalProducts = 0,
+    this.totalCounted  = 0,
+    this.totalMissing  = 0,
+    this.totalSurplus  = 0,
+    this.completedAt,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id':               id,
+    'date':             date.millisecondsSinceEpoch,
+    'responsibleId':    responsibleId,
+    'responsibleName':  responsibleName,
+    'site':             site,
+    'status':           status.key,
+    'totalProducts':    totalProducts,
+    'totalCounted':     totalCounted,
+    'totalMissing':     totalMissing,
+    'totalSurplus':     totalSurplus,
+    'completedAt':      completedAt?.millisecondsSinceEpoch,
+  };
+
+  factory CambuseInventorySession.fromMap(Map<String, dynamic> m, String docId) =>
+      CambuseInventorySession(
+        id:               docId,
+        date:             m['date'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(m['date'] as int)
+            : DateTime.now(),
+        responsibleId:    m['responsibleId']   as String? ?? '',
+        responsibleName:  m['responsibleName'] as String? ?? '',
+        site:             m['site']            as String? ?? '',
+        status: CambuseInventoryStatusX.fromKey(m['status'] as String? ?? ''),
+        totalProducts: (m['totalProducts'] as num?)?.toInt() ?? 0,
+        totalCounted:  (m['totalCounted']  as num?)?.toInt() ?? 0,
+        totalMissing:  (m['totalMissing']  as num?)?.toInt() ?? 0,
+        totalSurplus:  (m['totalSurplus']  as num?)?.toInt() ?? 0,
+        completedAt: m['completedAt'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(m['completedAt'] as int)
+            : null,
+      );
+}
+
+// ── Ligne d'inventaire Cambuse (document Firestore) ──────────────────────────
+class CambuseInventoryItem {
+  final String id;
+  final String sessionId;
+  final String cambuseItemId;
+  final String cambuseItemName;
+  final String category;
+  final String unit;
+  final int theoreticalQty;   // quantité théorique (entier pour boissons)
+  int? countedQty;            // null = pas encore compté
+  String comment;
+  final double unitCost;      // prix unitaire pour valeur écart
+
+  CambuseInventoryItem({
+    required this.id,
+    required this.sessionId,
+    required this.cambuseItemId,
+    required this.cambuseItemName,
+    required this.category,
+    required this.unit,
+    required this.theoreticalQty,
+    this.countedQty,
+    this.comment = '',
+    this.unitCost = 0,
+  });
+
+  int get gap => countedQty != null ? countedQty! - theoreticalQty : 0;
+  double get gapValue => gap * unitCost;
+
+  CambuseInventoryItemStatus get status =>
+      CambuseInventoryItemStatusX.compute(countedQty, theoreticalQty);
+
+  Map<String, dynamic> toMap() => {
+    'id':               id,
+    'sessionId':        sessionId,
+    'cambuseItemId':    cambuseItemId,
+    'cambuseItemName':  cambuseItemName,
+    'category':         category,
+    'unit':             unit,
+    'theoreticalQty':   theoreticalQty,
+    'countedQty':       countedQty,
+    'comment':          comment,
+    'unitCost':         unitCost,
+  };
+
+  factory CambuseInventoryItem.fromMap(Map<String, dynamic> m, String docId) =>
+      CambuseInventoryItem(
+        id:              docId,
+        sessionId:       m['sessionId']      as String? ?? '',
+        cambuseItemId:   m['cambuseItemId']  as String? ?? '',
+        cambuseItemName: m['cambuseItemName'] as String? ?? '',
+        category:        m['category']       as String? ?? '',
+        unit:            m['unit']           as String? ?? '',
+        theoreticalQty: (m['theoreticalQty'] as num?)?.toInt() ?? 0,
+        countedQty:     (m['countedQty']     as num?)?.toInt(),
+        comment:         m['comment']        as String? ?? '',
+        unitCost:        (m['unitCost']       as num?)?.toDouble() ?? 0,
+      );
+}

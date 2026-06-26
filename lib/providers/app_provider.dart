@@ -2000,6 +2000,51 @@ class AppProvider extends ChangeNotifier {
       _firebase.deleteInventorySession(sessionId);
 
   // ══════════════════════════════════════════════════════════════════════
+  //  INVENTAIRE CAMBUSE — séparé du stock cuisine
+  // ══════════════════════════════════════════════════════════════════════
+
+  Future<CambuseInventorySession> createCambuseInventorySession({
+    required String site,
+  }) {
+    final user = currentUser;
+    return _firebase.createCambuseInventorySession(
+      responsibleId:   user?.id   ?? 'unknown',
+      responsibleName: user?.name ?? 'Inconnu',
+      site:            site,
+      cambuseItems:    _cambuseItems,
+    );
+  }
+
+  Future<List<CambuseInventorySession>> fetchCambuseInventorySessions() =>
+      _firebase.fetchCambuseInventorySessions();
+
+  Future<List<CambuseInventoryItem>> fetchCambuseInventoryItems(
+          String sessionId) =>
+      _firebase.fetchCambuseInventoryItems(sessionId);
+
+  Future<void> saveCambuseInventoryLine(CambuseInventoryItem line) =>
+      _firebase.saveCambuseInventoryLine(line);
+
+  Future<void> completeCambuseInventorySession(
+    String sessionId,
+    List<CambuseInventoryItem> items,
+  ) =>
+      _firebase.completeCambuseInventorySession(sessionId, items);
+
+  Future<void> applyCambuseInventoryCorrections({
+    required String sessionId,
+    required List<CambuseInventoryItem> items,
+  }) =>
+      _firebase.applyCambuseInventoryCorrections(
+        sessionId:         sessionId,
+        items:             items,
+        validatedByName:   currentUser?.name ?? 'Inconnu',
+      );
+
+  Future<void> deleteCambuseInventorySession(String sessionId) =>
+      _firebase.deleteCambuseInventorySession(sessionId);
+
+  // ══════════════════════════════════════════════════════════════════════
   //  CONTRACTS — CRUD + alertes automatiques
   // ══════════════════════════════════════════════════════════════════════
 

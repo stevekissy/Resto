@@ -5,12 +5,15 @@ import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../../models/models.dart';
+import 'cambuse_inventory_screen.dart';
 
 // ════════════════════════════════════════════════════════════════════════════
 //  CambuseScreen — Gestion des boissons
 //  Tab 0 : Stock boissons   (liste + badges alerte)
 //  Tab 1 : Approvisionner   (ajout stock)
 //  Tab 2 : Historique       (mouvements)
+//  Tab 3 : Inventaire       (contrôle physique)
+//  Tab 4 : Catégories       (gestion catégories)
 // ════════════════════════════════════════════════════════════════════════════
 
 class CambuseScreen extends StatefulWidget {
@@ -27,7 +30,7 @@ class _CambuseScreenState extends State<CambuseScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
   }
 
   @override
@@ -129,6 +132,10 @@ class _CambuseScreenState extends State<CambuseScreen>
                       icon: Icon(Icons.history, size: 16),
                       text: 'Historique',
                     ),
+                    const Tab(
+                      icon: Icon(Icons.playlist_add_check, size: 16),
+                      text: 'Inventaire',
+                    ),
                     Tab(
                       icon: Badge(
                         label: Text('${provider.cambuseCategories.length}'),
@@ -151,6 +158,7 @@ class _CambuseScreenState extends State<CambuseScreen>
                 _StockTab(provider: provider, onEdit: (item) => _showAddOrEditDialog(context, provider, item: item)),
                 _ApproTab(provider: provider),
                 _HistoriqueTab(provider: provider),
+                const CambuseInventoryTab(),
                 _CategoriesTab(provider: provider),
               ],
             ),
