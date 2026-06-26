@@ -328,8 +328,15 @@ class _CaisseTabState extends State<_CaisseTab> {
     setState(() => _processing = true);
     try {
       // cashoutOrder() retourne le numéro généré ET sauvegardé en Firestore.
-      // On utilise ce même numéro pour le PDF — pas de double génération.
+      // Il lance une exception si la commande est introuvable ou si le numéro
+      // ne peut pas être généré — jamais de "Sans numéro".
       final invoiceNumber = await provider.cashoutOrder(order.id);
+
+      // Guard UI : si malgré tout le numéro est vide, refuser l'impression
+      if (invoiceNumber.isEmpty) {
+        throw Exception('Numéro de facture non généré. Veuillez réessayer.');
+      }
+
       PrintService().printCashoutInvoice(
         order: order,
         cashoutInvoiceNumber: invoiceNumber,
@@ -337,7 +344,7 @@ class _CaisseTabState extends State<_CaisseTab> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Facture d\'encaissement générée — En attente de règlement'),
+          content: Text('✅ Facture $invoiceNumber générée — En attente de règlement'),
           backgroundColor: AppTheme.primary,
           duration: const Duration(seconds: 3),
         ));
@@ -345,8 +352,9 @@ class _CaisseTabState extends State<_CaisseTab> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Erreur : $e'),
-            backgroundColor: Colors.red));
+            content: Text('Erreur encaissement : $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5)));
       }
     } finally {
       if (mounted) setState(() => _processing = false);
@@ -1988,7 +1996,7 @@ class _HistoriqueFacturesTab extends StatefulWidget {
 class _HistoriqueFacturesTabState extends State<_HistoriqueFacturesTab> {
   final _searchCtrl = TextEditingController();
   String _search = '';
-  String _filterKind  = 'tous';    // tous | cashout | settlement
+  String _filterKind  = 'settlement';  // settlement | tous  (jamais cashout par défaut)
   DateTime? _dateFrom;
   DateTime? _dateTo;
   bool _patching = false;
@@ -2022,8 +2030,9 @@ class _HistoriqueFacturesTabState extends State<_HistoriqueFacturesTab> {
   List<Map<String, dynamic>> _applyFilters(List<Map<String, dynamic>> all) {
     final q = _search.toLowerCase();
     return all.where((inv) {
-      // Filtre type
-      if (_filterKind != 'tous' && inv['invoiceKind'] != _filterKind) return false;
+      // Filtre type — n'afficher que les factures réglées (settlement) sauf si "Tous" sélectionné
+      if (_filterKind == 'settlement' && inv['invoiceKind'] != 'settlement') return false;
+      if (_filterKind == 'tous') { /* tout afficher */ }
 
       // Filtre date
       final ts = (inv['settledAt'] ?? inv['cashoutAt'] ?? 0) as int;
@@ -2076,17 +2085,13 @@ class _HistoriqueFacturesTabState extends State<_HistoriqueFacturesTab> {
               // ── Filtres ──────────────────────────────────────────────
               Row(
                 children: [
-                  _FilterChip(label: 'Tous', selected: _filterKind == 'tous',
-                      onTap: () => setState(() => _filterKind = 'tous'),
-                      color: AppTheme.primary),
-                  const SizedBox(width: 6),
-                  _FilterChip(label: 'Provisoires', selected: _filterKind == 'cashout',
-                      onTap: () => setState(() => _filterKind = 'cashout'),
-                      color: AppTheme.warning),
-                  const SizedBox(width: 6),
                   _FilterChip(label: 'Réglées', selected: _filterKind == 'settlement',
                       onTap: () => setState(() => _filterKind = 'settlement'),
                       color: AppTheme.success),
+                  const SizedBox(width: 6),
+                  _FilterChip(label: 'Toutes', selected: _filterKind == 'tous',
+                      onTap: () => setState(() => _filterKind = 'tous'),
+                      color: AppTheme.primary),
                   const Spacer(),
                   // Filtre date
                   IconButton(
@@ -2146,7 +2151,6 @@ class _HistoriqueFacturesTabState extends State<_HistoriqueFacturesTab> {
   }
 
   Widget _buildStatsRow(List<Map<String, dynamic>> filtered) {
-    final cashoutCount     = filtered.where((i) => i['invoiceKind'] == 'cashout').length;
     final settlementCount  = filtered.where((i) => i['invoiceKind'] == 'settlement').length;
     double totalSettled    = 0;
     for (final inv in filtered) {
@@ -2156,11 +2160,7 @@ class _HistoriqueFacturesTabState extends State<_HistoriqueFacturesTab> {
     }
     return Row(
       children: [
-        _StatMini(label: 'Total', value: '${filtered.length}', color: AppTheme.primary),
-        const SizedBox(width: 8),
-        _StatMini(label: 'Provisoires', value: '$cashoutCount', color: AppTheme.warning),
-        const SizedBox(width: 8),
-        _StatMini(label: 'Réglées', value: '$settlementCount', color: AppTheme.success),
+        _StatMini(label: 'Factures', value: '$settlementCount', color: AppTheme.success),
         const SizedBox(width: 8),
         _StatMini(label: 'Encaissé', value: '${_fmtAmt.format(totalSettled)} F',
             color: AppTheme.success),

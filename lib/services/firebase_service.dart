@@ -1376,6 +1376,11 @@ class FirebaseService {
     required String tableNumber,
     String? serverName,
   }) async {
+    // Guard absolu : refuser tout numéro vide en Firestore
+    if (cashoutInvoiceNumber.isEmpty) {
+      throw Exception('[cashoutOrder] cashoutInvoiceNumber est vide — opération annulée pour orderId=$orderId');
+    }
+
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
     // 1. Mettre à jour la commande
@@ -1389,7 +1394,7 @@ class FirebaseService {
       'discount': discount,
     });
 
-    // 2. Créer le document dans cashout_invoices
+    // 2. Créer le document dans cashout_invoices (doc ID = numéro facture)
     await _db.collection('cashout_invoices').doc(cashoutInvoiceNumber).set({
       'id': cashoutInvoiceNumber,
       'orderId': orderId,
@@ -1402,6 +1407,7 @@ class FirebaseService {
       'discount': discount,
       'items': items,
       'status': 'provisoire',
+      'invoiceKind': 'cashout',
       'createdAt': FieldValue.serverTimestamp(),
       'cashoutAtMs': nowMs,
     });
@@ -1426,6 +1432,11 @@ class FirebaseService {
     required List<Map<String, dynamic>> items,
     String? serverName,
   }) async {
+    // Guard absolu : refuser tout numéro vide en Firestore
+    if (settlementInvoiceNumber.isEmpty) {
+      throw Exception('[settleOrder] settlementInvoiceNumber est vide — opération annulée pour orderId=$orderId');
+    }
+
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
     // 1. Mettre à jour la commande (définitivement payée)
@@ -1448,6 +1459,7 @@ class FirebaseService {
     await _db.collection('settlement_invoices').doc(settlementInvoiceNumber).set({
       'id': settlementInvoiceNumber,
       'cashoutInvoiceNumber': cashoutInvoiceNumber,
+      'settlementInvoiceNumber': settlementInvoiceNumber,
       'orderId': orderId,
       'orderNumber': orderNumber,
       'tableNumber': tableNumber,
@@ -1460,6 +1472,8 @@ class FirebaseService {
       'changeAmount': changeAmount,
       'items': items,
       'status': 'definitif',
+      'invoiceKind': 'settlement',          // ← requis par invoiceHistoryStream
+      'settledAt': nowMs,                   // ← requis par _applyFilters (date)
       'createdAt': FieldValue.serverTimestamp(),
       'settledAtMs': nowMs,
     });

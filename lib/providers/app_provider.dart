@@ -85,25 +85,27 @@ class AppProvider extends ChangeNotifier {
 
   // ── Getters caisse 2 étapes ─────────────────────────────────────────
   /// Tab 1 Caisse — commandes en attente de règlement (facture provisoire créée).
-  /// RÈGLE MÉTIER :
-  ///  - Commandes avec plats : entrent en caisse après status == served
-  ///  - Commandes Cambuse-only (boissons seules) : entrent en caisse dès la création
-  ///    (elles passent directement en caisse sans passer par la cuisine)
+  /// TAB 1 — CAISSE : commandes SERVIES en attente d'encaissement (facture pas encore créée).
+  /// Règle : status == served ET cashStatus == pending_cashout (pas encore encaissées).
+  ///  - Commandes avec plats : status doit être served
+  ///  - Commandes Cambuse-only (boissons seules) : visibles dès création (served immédiat)
+  ///  - Commandes en ligne : servies si kitchenStatus==served OU status==served
   List<Order> get pendingCashoutOrders => _orders.where((o) {
     if (o.isPaid) return false;
-    // Uniquement les commandes en attente de règlement (facture provisoire déjà créée)
-    if (o.cashStatus != CashStatus.awaiting_payment) return false;
+    if (o.cashStatus == CashStatus.awaiting_payment) return false; // déjà en Tab 2
+    if (o.cashStatus != CashStatus.pending_cashout) return false;
     // Commandes en ligne : servies si kitchenStatus==served OU status==served
     if (o.isOnlineOrder) {
       return o.status == OrderStatus.served || o.kitchenStatus == 'served';
     }
-    // Commandes POS Cambuse-only : visibles en caisse dès la création (pending ou served)
-    if (o.isCambuseOnly) return true;
+    // Commandes POS Cambuse-only : visibles dès la création (status=served immédiat)
+    if (o.isCambuseOnly) return o.status == OrderStatus.served;
     // Commandes POS avec plats : status doit être served
     return o.status == OrderStatus.served;
   }).toList();
 
-  /// Commandes avec facture d'encaissement provisoire, en attente de règlement (Tab 2 — bouton Régler)
+  /// TAB 2 — FACTURES EN ATTENTE : commandes avec facture provisoire créée, pas encore réglées.
+  /// Règle : cashStatus == awaiting_payment ET pas encore payées.
   List<Order> get awaitingPaymentOrders => _orders.where((o) =>
     o.cashStatus == CashStatus.awaiting_payment && !o.isPaid
   ).toList();
@@ -1397,12 +1399,24 @@ class AppProvider extends ChangeNotifier {
       (o) => o.id == orderId,
       orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
     );
-    if (order.id.isEmpty) return '';
+    // Guard : commande introuvable → impossible d'encaisser
+    if (order.id.isEmpty) {
+      throw Exception('Commande introuvable (id=$orderId). Impossible de générer la facture.');
+    }
 
     final cashierId   = _currentUser?.id   ?? '';
     final cashierName = _currentUser?.name ?? 'Caissier';
-    // Toujours utiliser le format FAC-YYYYMMDD-OOOO pour garantir un numéro lisible
-    final invoiceNumber = PrintService.generateFacNumber(order.orderNumber);
+
+    // Garantie numéro non vide : generateFacNumber produit toujours FAC-YYYYMMDD-OOOO.
+    // On utilise le numéro déjà enregistré si la facture a déjà été générée (idempotence).
+    String invoiceNumber = order.cashoutInvoiceNumber ?? '';
+    if (invoiceNumber.isEmpty) {
+      invoiceNumber = PrintService.generateFacNumber(order.orderNumber);
+    }
+    // Double-vérification paranoïaque : ne jamais envoyer un numéro vide en Firestore
+    if (invoiceNumber.isEmpty) {
+      throw Exception('Impossible de générer le numéro de facture pour la commande #${order.orderNumber}.');
+    }
 
     await _firebase.cashoutOrder(
       orderId: orderId,
