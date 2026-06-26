@@ -1180,9 +1180,11 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
     final mins = elapsedSecs ~/ 60;
     final secs = elapsedSecs % 60;
 
-    final maxCookTime = order.items.isEmpty
+    // Ne calculer le temps de préparation que sur les articles cuisine (pas les boissons)
+    final kitchenOnlyItems = order.items.where((i) => !i.isCambuse).toList();
+    final maxCookTime = kitchenOnlyItems.isEmpty
         ? 20
-        : order.items.fold<double>(0, (m, i) {
+        : kitchenOnlyItems.fold<double>(0, (m, i) {
             final product = widget.provider.products.firstWhere(
               (p) => p.id == i.productId,
               orElse: () => Product(
@@ -1434,23 +1436,26 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
             ),
           ),
 
-          // Items
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              itemCount: order.items.length,
-              itemBuilder: (context, i) {
-                final item = order.items[i];
-                return _KitchenItemRow(
-                  item: item,
-                  onChangeQty: (newQty) {
-                    widget.provider.updateOrderItemQuantity(
-                        order.id, item.productId, newQty);
-                  },
-                );
-              },
-            ),
-          ),
+          // Items — les boissons Cambuse (isCambuse==true) ne passent PAS en cuisine
+          Builder(builder: (ctx) {
+            final kitchenItems = order.items.where((i) => !i.isCambuse).toList();
+            return Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                itemCount: kitchenItems.length,
+                itemBuilder: (context, i) {
+                  final item = kitchenItems[i];
+                  return _KitchenItemRow(
+                    item: item,
+                    onChangeQty: (newQty) {
+                      widget.provider.updateOrderItemQuantity(
+                          order.id, item.productId, newQty);
+                    },
+                  );
+                },
+              ),
+            );
+          }),
 
           if (order.specialInstructions != null) ...[
             Container(
@@ -1701,7 +1706,7 @@ class _ReadyOrderCard extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '${order.items.fold(0, (s, i) => s + i.quantity)} articles',
+                  '${order.items.where((i) => !i.isCambuse).fold(0, (s, i) => s + i.quantity)} articles',
                   style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
                 ),
               ],

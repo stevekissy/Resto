@@ -388,26 +388,40 @@ class _NewOrderTabState extends State<NewOrderTab> {
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
 
-    // Catégories plats triées
-    final rawCats = provider.availableProducts.map((p) => p.category).toSet().toList()
+    // ── Catégories plats (issues des produits disponibles) ──────────
+    final rawPlatCats = provider.availableProducts.map((p) => p.category).toSet().toList()
       ..sort((a, b) => a.compareTo(b));
-    final categories = ['Tous', ...rawCats];
 
-    // Filtrage plats : nom + catégorie + prix
+    // ── Catégories Cambuse : union de (catégories paramétrées + catégories utilisées) ──
+    // Prendre les catégories paramétrées en priorité, compléter avec celles des items
+    final paramCambuseCatNames = provider.cambuseCategories.map((c) => c.name).toSet();
+    final usedCambuseCatNames  = provider.cambuseItems.map((i) => i.category).toSet();
+    final allCambuseCatNames   = {...paramCambuseCatNames, ...usedCambuseCatNames}.toList()..sort();
+
+    // Détermine si la catégorie sélectionnée est une catégorie Cambuse
+    final isCambuseCatSelected = allCambuseCatNames.contains(_selectedCategory);
+
+    // Filtrage plats : masqués si catégorie Cambuse sélectionnée
     final q = _searchQuery.toLowerCase();
-    final filteredProducts = provider.availableProducts.where((p) {
-      final catMatch = _selectedCategory == 'Tous' || p.category == _selectedCategory;
-      if (!catMatch) return false;
-      if (q.isEmpty) return true;
-      return p.name.toLowerCase().contains(q) ||
-             p.category.toLowerCase().contains(q) ||
-             p.price.toStringAsFixed(0).contains(q);
-    }).toList()
-      ..sort((a, b) => _naturalCompare(a.name, b.name));
+    final filteredProducts = isCambuseCatSelected
+        ? <Product>[]    // catégorie cambuse → aucun plat affiché
+        : provider.availableProducts.where((p) {
+            final catMatch = _selectedCategory == 'Tous' || p.category == _selectedCategory;
+            if (!catMatch) return false;
+            if (q.isEmpty) return true;
+            return p.name.toLowerCase().contains(q) ||
+                   p.category.toLowerCase().contains(q) ||
+                   p.price.toStringAsFixed(0).contains(q);
+          }).toList()
+            ..sort((a, b) => _naturalCompare(a.name, b.name));
 
-    // Boissons Cambuse disponibles (qty > 0), filtrées par recherche
+    // Boissons Cambuse disponibles (qty > 0), filtrées par recherche + catégorie
     final cambuseItems = provider.cambuseItems.where((item) {
       if (item.isOutOfStock) return false;
+      // Filtre catégorie : si une catégorie Cambuse est sélectionnée, n'afficher que celle-ci
+      if (isCambuseCatSelected && item.category != _selectedCategory) return false;
+      // Si une catégorie PLAT est sélectionnée (pas Cambuse, pas Tous) → masquer les boissons
+      if (!isCambuseCatSelected && _selectedCategory != 'Tous') return false;
       if (q.isEmpty) return true;
       return item.name.toLowerCase().contains(q) ||
              item.category.toLowerCase().contains(q) ||
@@ -415,7 +429,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
     }).toList()
       ..sort((a, b) => a.name.compareTo(b.name));
 
-    // Catégories cambuse pour le regroupement
+    // Catégories cambuse présentes dans la liste filtrée (pour le regroupement)
     final cambuseCats = cambuseItems.map((i) => i.category).toSet().toList()..sort();
 
     return Stack(
@@ -455,45 +469,58 @@ class _NewOrderTabState extends State<NewOrderTab> {
               ),
             ),
 
-            // ── ZONE 2 : Catégories scrollables ────────────────────
+            // ── ZONE 2 : Catégories scrollables (Plats + Boissons) ─
             Container(
               color: AppTheme.surface,
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
               child: SizedBox(
                 height: 36,
-                child: ListView.separated(
+                child: ListView(
                   scrollDirection: Axis.horizontal,
-                  itemCount: categories.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, i) {
-                    final cat = categories[i];
-                    final selected = _selectedCategory == cat;
-                    return GestureDetector(
-                      onTap: () => setState(() => _selectedCategory = cat),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-                        decoration: BoxDecoration(
-                          color: selected ? AppTheme.primary : AppTheme.surfaceLight,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: selected ? AppTheme.primary : const Color(0xFF2A2A5A),
-                          ),
-                          boxShadow: selected
-                              ? [BoxShadow(color: AppTheme.primary.withValues(alpha: 0.35), blurRadius: 6, offset: const Offset(0, 2))]
-                              : [],
-                        ),
-                        child: Text(
-                          cat,
-                          style: TextStyle(
-                            color: selected ? Colors.white : AppTheme.textSecondary,
-                            fontSize: 12,
-                            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  children: [
+                    // ── Puce "Tous" ───────────────────────────────────
+                    _CategoryChip(
+                      label: 'Tous',
+                      selected: _selectedCategory == 'Tous',
+                      isCambuse: false,
+                      onTap: () => setState(() => _selectedCategory = 'Tous'),
+                    ),
+                    // ── Catégories Plats ──────────────────────────────
+                    ...rawPlatCats.map((cat) => Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: _CategoryChip(
+                        label: cat,
+                        selected: _selectedCategory == cat,
+                        isCambuse: false,
+                        onTap: () => setState(() => _selectedCategory = cat),
+                      ),
+                    )),
+                    // ── Séparateur vertical entre Plats et Boissons ───
+                    if (allCambuseCatNames.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Center(
+                          child: Container(
+                            width: 1,
+                            height: 22,
+                            color: const Color(0xFF42A5F5).withValues(alpha: 0.35),
                           ),
                         ),
                       ),
-                    );
-                  },
+                    // ── Catégories Cambuse / Boissons ─────────────────
+                    ...allCambuseCatNames.where((cat) =>
+                      // N'afficher que les catégories qui ont au moins 1 item actif
+                      provider.cambuseItems.any((i) => i.category == cat && !i.isOutOfStock)
+                    ).map((cat) => Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: _CategoryChip(
+                        label: cat,
+                        selected: _selectedCategory == cat,
+                        isCambuse: true,
+                        onTap: () => setState(() => _selectedCategory = cat),
+                      ),
+                    )),
+                  ],
                 ),
               ),
             ),
@@ -521,56 +548,69 @@ class _NewOrderTabState extends State<NewOrderTab> {
                             onAdd: (qty) => _addToCart(p, qty: qty),
                           )),
                         ],
-                        // ── Séparateur Boissons ───────────────────────
-                        if (cambuseItems.isNotEmpty &&
-                            (_selectedCategory == 'Tous' || cambuseCats.contains(_selectedCategory))) ...[
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.liquor, color: Color(0xFF42A5F5), size: 14),
-                                const SizedBox(width: 6),
-                                const Text(
-                                  'Boissons',
-                                  style: TextStyle(
-                                    color: Color(0xFF42A5F5),
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 13,
-                                    letterSpacing: 0.5,
+                        // ── Section Boissons Cambuse ──────────────────
+                        if (cambuseItems.isNotEmpty) ...[
+                          // En-tête "Boissons" uniquement si des plats sont aussi affichés
+                          if (filteredProducts.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.liquor, color: Color(0xFF42A5F5), size: 14),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    isCambuseCatSelected ? _selectedCategory : 'Boissons',
+                                    style: const TextStyle(
+                                      color: Color(0xFF42A5F5),
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                      letterSpacing: 0.5,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(child: Divider(color: const Color(0xFF42A5F5).withValues(alpha: 0.3), height: 1)),
-                              ],
-                            ),
-                          ),
-                          // Par catégorie cambuse
-                          ...cambuseCats.where((cat) =>
-                            _selectedCategory == 'Tous' || cat == _selectedCategory
-                          ).expand((cat) {
-                            final catItems = cambuseItems.where((i) => i.category == cat).toList();
-                            return [
-                              // En-tête sous-catégorie
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 6, top: 4),
-                                child: Text(
-                                  cat,
-                                  style: const TextStyle(
-                                    color: AppTheme.textSecondary,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 0.8,
-                                  ),
-                                ),
+                                  const SizedBox(width: 8),
+                                  Expanded(child: Divider(color: const Color(0xFF42A5F5).withValues(alpha: 0.3), height: 1)),
+                                ],
                               ),
-                              ...catItems.map((item) => _CambuseCard(
-                                key: ValueKey('cambuse_${item.id}'),
-                                item: item,
-                                cartItems: _cartItems,
-                                onAdd: (qty) => _addCambuseToCart(item, qty: qty),
-                              )),
-                            ];
-                          }),
+                            ),
+                          // Si catégorie Cambuse précise sélectionnée → pas de sous-titres
+                          if (isCambuseCatSelected)
+                            ...cambuseItems.map((item) => _CambuseCard(
+                              key: ValueKey('cambuse_${item.id}'),
+                              item: item,
+                              cartItems: _cartItems,
+                              onAdd: (qty) => _addCambuseToCart(item, qty: qty),
+                            ))
+                          else
+                            // Tous ou catégorie plat → regroupement par sous-catégorie Cambuse
+                            ...cambuseCats.expand((cat) {
+                              final catItems = cambuseItems.where((i) => i.category == cat).toList();
+                              return [
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 6, top: 8),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.local_drink, color: Color(0xFF42A5F5), size: 11),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        cat.toUpperCase(),
+                                        style: const TextStyle(
+                                          color: Color(0xFF42A5F5),
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 1.2,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                ...catItems.map((item) => _CambuseCard(
+                                  key: ValueKey('cambuse_${item.id}'),
+                                  item: item,
+                                  cartItems: _cartItems,
+                                  onAdd: (qty) => _addCambuseToCart(item, qty: qty),
+                                )),
+                              ];
+                            }),
                         ],
                       ],
                     ),
@@ -594,6 +634,69 @@ class _NewOrderTabState extends State<NewOrderTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// =================== PUCE CATÉGORIE ===================
+/// Puce de filtre catégorie — style différencié entre plats (violet) et boissons (bleu)
+class _CategoryChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final bool isCambuse; // true → couleur bleue (boissons)
+  final VoidCallback onTap;
+
+  const _CategoryChip({
+    required this.label,
+    required this.selected,
+    required this.isCambuse,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final activeColor = isCambuse ? const Color(0xFF42A5F5) : AppTheme.primary;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? activeColor : AppTheme.surfaceLight,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected
+                ? activeColor
+                : isCambuse
+                    ? const Color(0xFF42A5F5).withValues(alpha: 0.35)
+                    : const Color(0xFF2A2A5A),
+          ),
+          boxShadow: selected
+              ? [BoxShadow(color: activeColor.withValues(alpha: 0.35), blurRadius: 6, offset: const Offset(0, 2))]
+              : [],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isCambuse) ...[
+              Icon(Icons.local_drink, size: 11, color: selected ? Colors.white : const Color(0xFF42A5F5)),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                color: selected
+                    ? Colors.white
+                    : isCambuse
+                        ? const Color(0xFF42A5F5)
+                        : AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
