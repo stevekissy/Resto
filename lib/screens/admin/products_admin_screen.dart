@@ -1092,14 +1092,6 @@ class _ProductAdminCardState extends State<_ProductAdminCard> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: TextEditingController(text: unit),
-                  style: const TextStyle(color: Colors.white),
-                  decoration:
-                      const InputDecoration(labelText: 'Unité'),
-                  onChanged: (v) => setS(() => unit = v),
-                ),
-                const SizedBox(height: 10),
                 Row(
                   children: [
                     Switch(
