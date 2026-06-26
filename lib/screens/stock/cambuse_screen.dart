@@ -27,7 +27,7 @@ class _CambuseScreenState extends State<CambuseScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -129,6 +129,15 @@ class _CambuseScreenState extends State<CambuseScreen>
                       icon: Icon(Icons.history, size: 16),
                       text: 'Historique',
                     ),
+                    Tab(
+                      icon: Badge(
+                        label: Text('${provider.cambuseCategories.length}'),
+                        isLabelVisible: provider.cambuseCategories.isNotEmpty,
+                        backgroundColor: AppTheme.primary,
+                        child: const Icon(Icons.category, size: 16),
+                      ),
+                      text: 'Catégories',
+                    ),
                   ],
                 ),
               ],
@@ -142,6 +151,7 @@ class _CambuseScreenState extends State<CambuseScreen>
                 _StockTab(provider: provider, onEdit: (item) => _showAddOrEditDialog(context, provider, item: item)),
                 _ApproTab(provider: provider),
                 _HistoriqueTab(provider: provider),
+                _CategoriesTab(provider: provider),
               ],
             ),
           ),
@@ -156,6 +166,7 @@ class _CambuseScreenState extends State<CambuseScreen>
       context: context,
       builder: (ctx) => _CambuseItemDialog(
         existing: item,
+        availableCategories: provider.cambuseCustomCategories,
         onSave: (name, category, qty, threshold, price, productId) async {
           final id = item?.id ?? _uuid();
           final newItem = CambuseItem(
@@ -912,11 +923,13 @@ class _CambuseItemDialog extends StatefulWidget {
   final CambuseItem? existing;
   final Future<void> Function(String name, String category, int qty, int threshold, double price, String productId) onSave;
   final List<Product> products;
+  final List<String> availableCategories;
 
   const _CambuseItemDialog({
     required this.existing,
     required this.onSave,
     required this.products,
+    required this.availableCategories,
   });
 
   @override
@@ -925,11 +938,11 @@ class _CambuseItemDialog extends StatefulWidget {
 
 class _CambuseItemDialogState extends State<_CambuseItemDialog> {
   final _nameCtrl      = TextEditingController();
-  final _categoryCtrl  = TextEditingController();
   final _qtyCtrl       = TextEditingController(text: '0');
   final _threshCtrl    = TextEditingController(text: '10');
   final _priceCtrl     = TextEditingController(text: '0');
   String _linkedProductId = '';
+  String? _selectedCategory;
   bool _saving = false;
 
   @override
@@ -937,19 +950,23 @@ class _CambuseItemDialogState extends State<_CambuseItemDialog> {
     super.initState();
     final e = widget.existing;
     if (e != null) {
-      _nameCtrl.text      = e.name;
-      _categoryCtrl.text  = e.category;
-      _qtyCtrl.text       = '${e.quantity}';
-      _threshCtrl.text    = '${e.alertThreshold}';
-      _priceCtrl.text     = '${e.sellingPrice.toInt()}';
-      _linkedProductId    = e.productId ?? '';
+      _nameCtrl.text   = e.name;
+      _qtyCtrl.text    = '${e.quantity}';
+      _threshCtrl.text = '${e.alertThreshold}';
+      _priceCtrl.text  = '${e.sellingPrice.toInt()}';
+      _linkedProductId = e.productId ?? '';
+      // Retrouver la catégorie existante dans la liste
+      _selectedCategory = widget.availableCategories.contains(e.category) ? e.category : null;
+    }
+    // Si une seule catégorie, pré-sélectionner
+    if (_selectedCategory == null && widget.availableCategories.length == 1) {
+      _selectedCategory = widget.availableCategories.first;
     }
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
-    _categoryCtrl.dispose();
     _qtyCtrl.dispose();
     _threshCtrl.dispose();
     _priceCtrl.dispose();
@@ -981,7 +998,59 @@ class _CambuseItemDialogState extends State<_CambuseItemDialog> {
             children: [
               _FormField(label: 'Nom de la boisson *', controller: _nameCtrl, hint: 'ex: Coca-Cola 33cl'),
               const SizedBox(height: 12),
-              _FormField(label: 'Catégorie *', controller: _categoryCtrl, hint: 'ex: Sodas, Bières, Jus'),
+              // Dropdown catégorie (basé sur les catégories Cambuse créées)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Catégorie *', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  const SizedBox(height: 4),
+                  widget.availableCategories.isEmpty
+                    ? Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.warning.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppTheme.warning.withValues(alpha: 0.4)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.warning_amber, color: AppTheme.warning, size: 16),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Créez d\'abord une catégorie dans l\'onglet Catégories',
+                                style: TextStyle(color: AppTheme.warning, fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Container(
+                        decoration: BoxDecoration(
+                          color: AppTheme.surfaceLight,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppTheme.textSecondary.withValues(alpha: 0.3)),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _selectedCategory,
+                            hint: const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 12),
+                              child: Text('Sélectionner une catégorie', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                            ),
+                            isExpanded: true,
+                            dropdownColor: AppTheme.surface,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            items: widget.availableCategories.map((cat) => DropdownMenuItem(
+                              value: cat,
+                              child: Text(cat, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                            )).toList(),
+                            onChanged: (v) => setState(() => _selectedCategory = v),
+                          ),
+                        ),
+                      ),
+                ],
+              ),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -1069,7 +1138,7 @@ class _CambuseItemDialogState extends State<_CambuseItemDialog> {
 
   Future<void> _save() async {
     final name     = _nameCtrl.text.trim();
-    final category = _categoryCtrl.text.trim();
+    final category = _selectedCategory ?? '';
     if (name.isEmpty || category.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Nom et catégorie obligatoires'), backgroundColor: AppTheme.error,
@@ -1166,6 +1235,300 @@ class _ApproDialogState extends State<_ApproDialog> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  TAB 4 — Catégories Cambuse
+// ════════════════════════════════════════════════════════════════════════════
+class _CategoriesTab extends StatelessWidget {
+  final AppProvider provider;
+  const _CategoriesTab({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = provider.cambuseCategories;
+    final items      = provider.cambuseItems;
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showAddDialog(context, provider),
+        backgroundColor: const Color(0xFF42A5F5),
+        icon: const Icon(Icons.add, size: 18),
+        label: const Text('Nouvelle catégorie', style: TextStyle(fontSize: 13)),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      body: Column(
+        children: [
+          // Info banner
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF42A5F5).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF42A5F5).withValues(alpha: 0.25)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline, color: Color(0xFF42A5F5), size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${categories.length} catégorie(s) · Utilisées pour organiser vos boissons',
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Liste
+          Expanded(
+            child: categories.isEmpty
+              ? const EmptyState(
+                  icon: Icons.category,
+                  title: 'Aucune catégorie',
+                  subtitle: 'Exemples : Bières, Vins, Eau, Jus, Sucreries…',
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 100),
+                  itemCount: categories.length,
+                  itemBuilder: (ctx, i) {
+                    final cat       = categories[i];
+                    final useCount  = items.where((item) => item.category == cat.name).length;
+                    return _CategoryCard(
+                      category:  cat,
+                      useCount:  useCount,
+                      onRename:  () => _showRenameDialog(ctx, provider, cat),
+                      onDelete:  () => _confirmDelete(ctx, provider, cat, useCount),
+                    );
+                  },
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Ajouter ─────────────────────────────────────────────────────────────
+  void _showAddDialog(BuildContext context, AppProvider provider) {
+    final ctrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.add_circle, color: Color(0xFF42A5F5)),
+            SizedBox(width: 8),
+            Text('Nouvelle catégorie', style: TextStyle(color: Colors.white, fontSize: 15)),
+          ],
+        ),
+        content: _FormField(
+          label: 'Nom de la catégorie *',
+          controller: ctrl,
+          hint: 'ex: Bières, Vins, Eau, Jus…',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final name = ctrl.text.trim();
+              if (name.isEmpty) return;
+              await provider.addCambuseCategory(name);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF42A5F5), foregroundColor: Colors.white),
+            child: const Text('Créer'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Renommer ─────────────────────────────────────────────────────────────
+  void _showRenameDialog(BuildContext context, AppProvider provider, CambuseCategory cat) {
+    final ctrl = TextEditingController(text: cat.name);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.edit, color: Color(0xFF42A5F5)),
+            SizedBox(width: 8),
+            Text('Modifier catégorie', style: TextStyle(color: Colors.white, fontSize: 15)),
+          ],
+        ),
+        content: _FormField(
+          label: 'Nouveau nom *',
+          controller: ctrl,
+          hint: cat.name,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final name = ctrl.text.trim();
+              if (name.isEmpty) return;
+              await provider.renameCambuseCategory(cat.id, name);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF42A5F5), foregroundColor: Colors.white),
+            child: const Text('Renommer'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Supprimer ─────────────────────────────────────────────────────────────
+  void _confirmDelete(BuildContext context, AppProvider provider, CambuseCategory cat, int useCount) {
+    if (useCount > 0) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: AppTheme.warning),
+              SizedBox(width: 8),
+              Text('Impossible', style: TextStyle(color: Colors.white, fontSize: 15)),
+            ],
+          ),
+          content: Text(
+            '$useCount boisson(s) utilisent la catégorie "${cat.name}".\nModifiez-les d\'abord.',
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_outline, color: AppTheme.error),
+            SizedBox(width: 8),
+            Text('Supprimer ?', style: TextStyle(color: Colors.white, fontSize: 15)),
+          ],
+        ),
+        content: Text(
+          'Supprimer la catégorie "${cat.name}" ?',
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              await provider.deleteCambuseCategory(cat.id);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error, foregroundColor: Colors.white),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Carte catégorie cambuse ────────────────────────────────────────────────
+class _CategoryCard extends StatelessWidget {
+  final CambuseCategory category;
+  final int useCount;
+  final VoidCallback onRename;
+  final VoidCallback onDelete;
+
+  const _CategoryCard({
+    required this.category,
+    required this.useCount,
+    required this.onRename,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassCard(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          // Icône
+          Container(
+            width: 42, height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFF42A5F5).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Center(
+              child: Icon(Icons.local_bar, color: Color(0xFF42A5F5), size: 20),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Nom + compteur
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  category.name,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+                Text(
+                  useCount == 0 ? 'Aucune boisson' : '$useCount boisson(s)',
+                  style: TextStyle(
+                    color: useCount > 0 ? AppTheme.textSecondary : AppTheme.textSecondary.withValues(alpha: 0.5),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Actions
+          IconButton(
+            onPressed: onRename,
+            icon: const Icon(Icons.edit, color: Color(0xFF42A5F5), size: 18),
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(),
+            tooltip: 'Renommer',
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            onPressed: onDelete,
+            icon: Icon(Icons.delete_outline, color: useCount > 0 ? AppTheme.textSecondary : AppTheme.error, size: 18),
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(),
+            tooltip: 'Supprimer',
+          ),
+        ],
+      ),
     );
   }
 }

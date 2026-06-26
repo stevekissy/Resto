@@ -2239,6 +2239,36 @@ class FirebaseService {
   // Collection 'cambuse' + 'cambuse_movements'
   // ═══════════════════════════════════════════════════════════════════════
 
+  // ── Catégories Cambuse ────────────────────────────────────────────────
+
+  /// Stream temps réel de toutes les catégories cambuse
+  Stream<List<CambuseCategory>> streamCambuseCategories() {
+    return _db.collection('cambuse_categories')
+        .snapshots()
+        .map((snap) {
+      final cats = snap.docs
+          .map((d) => CambuseCategory.fromMap(d.data(), d.id))
+          .toList();
+      cats.sort((a, b) => a.name.compareTo(b.name));
+      return cats;
+    });
+  }
+
+  Future<void> addCambuseCategory(CambuseCategory cat) async {
+    final ref = _db.collection('cambuse_categories').doc(cat.id.isEmpty ? null : cat.id);
+    await ref.set({...cat.toMap(), 'id': ref.id});
+  }
+
+  Future<void> updateCambuseCategory(CambuseCategory cat) async {
+    await _db.collection('cambuse_categories').doc(cat.id).update({'name': cat.name});
+  }
+
+  Future<void> deleteCambuseCategory(String id) async {
+    await _db.collection('cambuse_categories').doc(id).delete();
+  }
+
+  // ── Produits Cambuse ─────────────────────────────────────────────────
+
   /// Stream temps réel de toutes les boissons cambuse (actives)
   Stream<List<CambuseItem>> streamCambuseItems() {
     return _db.collection('cambuse')
@@ -2358,7 +2388,7 @@ class FirebaseService {
   }
 
   /// Déduire automatiquement le stock cambuse lors d'une commande.
-  /// Identifie les boissons par cambuseItem.productId == orderItem.productId.
+  /// Deux modes : cambuseItemId direct (prioritaire) ou productId legacy.
   /// 1 article vendu = -1 en cambuse. Simple, pas de liaison complexe.
   Future<void> deductCambuseForOrder({
     required Order order,
@@ -2367,17 +2397,21 @@ class FirebaseService {
   }) async {
     if (cambuseItems.isEmpty) return;
 
-    // Construire map productId → CambuseItem pour accès O(1)
+    // Map id → CambuseItem (accès O(1))
+    final Map<String, CambuseItem> byId = {for (final ci in cambuseItems) ci.id: ci};
+    // Map productId → CambuseItem (fallback legacy)
     final Map<String, CambuseItem> byProductId = {};
     for (final ci in cambuseItems) {
       if (ci.productId != null && ci.productId!.isNotEmpty) {
         byProductId[ci.productId!] = ci;
       }
     }
-    if (byProductId.isEmpty) return;
 
     for (final item in order.items) {
-      final cambuseItem = byProductId[item.productId];
+      // Priorité : cambuseItemId direct → sinon fallback productId
+      final cambuseItem = (item.cambuseItemId != null && item.cambuseItemId!.isNotEmpty)
+          ? byId[item.cambuseItemId!]
+          : byProductId[item.productId];
       if (cambuseItem == null) continue;
 
       final deduct = item.quantity; // 1 vendu = -1 cambuse
@@ -2435,16 +2469,18 @@ class FirebaseService {
     required String createdBy,
   }) async {
     if (cambuseItems.isEmpty) return;
+    final Map<String, CambuseItem> byId = {for (final ci in cambuseItems) ci.id: ci};
     final Map<String, CambuseItem> byProductId = {};
     for (final ci in cambuseItems) {
       if (ci.productId != null && ci.productId!.isNotEmpty) {
         byProductId[ci.productId!] = ci;
       }
     }
-    if (byProductId.isEmpty) return;
 
     for (final item in order.items) {
-      final cambuseItem = byProductId[item.productId];
+      final cambuseItem = (item.cambuseItemId != null && item.cambuseItemId!.isNotEmpty)
+          ? byId[item.cambuseItemId!]
+          : byProductId[item.productId];
       if (cambuseItem == null) continue;
       final restore = item.quantity;
       final ref = _db.collection('cambuse').doc(cambuseItem.id);

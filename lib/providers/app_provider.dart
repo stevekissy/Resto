@@ -44,6 +44,7 @@ class AppProvider extends ChangeNotifier {
   StreamSubscription? _subReservations;
   StreamSubscription? _subReservationPayments;
   StreamSubscription? _subReservationAlerts;
+  StreamSubscription<List<CambuseCategory>>? _subCambuseCategories;
   StreamSubscription<List<CambuseItem>>?    _subCambuse;
   StreamSubscription<List<CambuseMovement>>? _subCambuseMovements;
 
@@ -102,11 +103,17 @@ class AppProvider extends ChangeNotifier {
   ).toList();
 
   // =================== CAMBUSE ===================
-  List<CambuseItem>    _cambuseItems     = [];
-  List<CambuseMovement> _cambuseMovements = [];
+  List<CambuseCategory> _cambuseCategories = [];
+  List<CambuseItem>     _cambuseItems      = [];
+  List<CambuseMovement> _cambuseMovements  = [];
 
-  List<CambuseItem>    get cambuseItems     => _cambuseItems;
-  List<CambuseMovement> get cambuseMovements => _cambuseMovements;
+  List<CambuseCategory> get cambuseCategories => _cambuseCategories;
+  List<CambuseItem>     get cambuseItems      => _cambuseItems;
+  List<CambuseMovement> get cambuseMovements  => _cambuseMovements;
+
+  /// Noms de catégories cambuse (triés)
+  List<String> get cambuseCustomCategories =>
+      _cambuseCategories.map((c) => c.name).toList();
 
   /// Nombre de boissons en stock faible ou en rupture (badge menu Cambuse)
   int get cambuseAlertCount =>
@@ -894,6 +901,13 @@ class AppProvider extends ChangeNotifier {
       cancelOnError: false,
     );
 
+    // Stream Cambuse — catégories
+    _subCambuseCategories = _firebase.streamCambuseCategories().listen(
+      (list) { _cambuseCategories = list; notifyListeners(); },
+      onError: (e) { debugPrint('[stream.cambuseCategories] ERREUR: $e'); },
+      cancelOnError: false,
+    );
+
     // Stream Cambuse — boissons en stock
     _subCambuse = _firebase.streamCambuseItems().listen(
       (list) {
@@ -963,6 +977,7 @@ class AppProvider extends ChangeNotifier {
     _subReservations?.cancel();
     _subReservationPayments?.cancel();
     _subReservationAlerts?.cancel();
+    _subCambuseCategories?.cancel();
     _subCambuse?.cancel();
     _subCambuseMovements?.cancel();
   }
@@ -987,7 +1002,7 @@ class AppProvider extends ChangeNotifier {
     _users = []; _orders = []; _products = []; _stockItems = [];
     _suppliers = []; _supplierOrders = []; _supplierPayments = []; _messages = []; _attendances = [];
     _charges = []; _invoiceHistory = []; _incomingCall = null; _activeCallId = null;
-    _cambuseItems = []; _cambuseMovements = [];
+    _cambuseCategories = []; _cambuseItems = []; _cambuseMovements = [];
     notifyListeners();
   }
 
@@ -1007,7 +1022,7 @@ class AppProvider extends ChangeNotifier {
     _users = []; _orders = []; _products = []; _stockItems = [];
     _suppliers = []; _supplierOrders = []; _supplierPayments = []; _messages = []; _attendances = [];
     _charges = []; _invoiceHistory = []; _incomingCall = null; _activeCallId = null;
-    _cambuseItems = []; _cambuseMovements = [];
+    _cambuseCategories = []; _cambuseItems = []; _cambuseMovements = [];
     notifyListeners();
   }
 
@@ -2128,6 +2143,37 @@ class AppProvider extends ChangeNotifier {
       totalPaye: list.fold(0, (s, e) => s + e.montantPaye),
     );
     await _firebase.savePayrollReport(report);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  CAMBUSE — CRUD catégories
+  // ══════════════════════════════════════════════════════════════════════
+
+  Future<void> addCambuseCategory(String name) async {
+    final cat = CambuseCategory(
+      id:        '',
+      name:      name.trim(),
+      createdAt: DateTime.now(),
+    );
+    await _firebase.addCambuseCategory(cat);
+  }
+
+  Future<void> renameCambuseCategory(String id, String newName) async {
+    final cat = _cambuseCategories.firstWhere((c) => c.id == id,
+        orElse: () => CambuseCategory(id: id, name: newName, createdAt: DateTime.now()));
+    cat.name = newName.trim();
+    await _firebase.updateCambuseCategory(cat);
+  }
+
+  Future<void> deleteCambuseCategory(String id) async {
+    // Refuser si des boissons utilisent cette catégorie
+    final inUse = _cambuseItems.any((i) {
+      final cat = _cambuseCategories.firstWhere((c) => c.id == id,
+          orElse: () => CambuseCategory(id: '', name: '', createdAt: DateTime.now()));
+      return i.category == cat.name;
+    });
+    if (inUse) throw Exception('Catégorie utilisée par des boissons — retirez les boissons d\'abord.');
+    await _firebase.deleteCambuseCategory(id);
   }
 
   // ══════════════════════════════════════════════════════════════════════

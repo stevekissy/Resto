@@ -102,7 +102,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
   void _addToCart(Product product, {int qty = 1}) {
     setState(() {
       final existing = _cartItems.firstWhere(
-        (i) => i.productId == product.id,
+        (i) => i.productId == product.id && !i.isCambuse,
         orElse: () => OrderItem(productId: '', productName: '', quantity: 0, unitPrice: 0),
       );
       if (existing.productId.isNotEmpty) {
@@ -113,6 +113,30 @@ class _NewOrderTabState extends State<NewOrderTab> {
           productName: product.name,
           quantity: qty,
           unitPrice: product.price,
+          category: product.category,
+        ));
+      }
+    });
+  }
+
+  /// Ajouter une boisson Cambuse au panier
+  void _addCambuseToCart(CambuseItem item, {int qty = 1}) {
+    setState(() {
+      final existing = _cartItems.firstWhere(
+        (i) => i.isCambuse && i.cambuseItemId == item.id,
+        orElse: () => OrderItem(productId: '', productName: '', quantity: 0, unitPrice: 0),
+      );
+      if (existing.productId.isNotEmpty || existing.cambuseItemId != null) {
+        existing.quantity += qty;
+      } else {
+        _cartItems.add(OrderItem(
+          productId:     'cambuse_${item.id}', // ID unique pour éviter collision
+          productName:   item.name,
+          quantity:      qty,
+          unitPrice:     item.sellingPrice,
+          isCambuse:     true,
+          cambuseItemId: item.id,
+          category:      item.category,
         ));
       }
     });
@@ -364,12 +388,12 @@ class _NewOrderTabState extends State<NewOrderTab> {
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
 
-    // Catégories triées
+    // Catégories plats triées
     final rawCats = provider.availableProducts.map((p) => p.category).toSet().toList()
       ..sort((a, b) => a.compareTo(b));
     final categories = ['Tous', ...rawCats];
 
-    // Filtrage : nom + catégorie + prix
+    // Filtrage plats : nom + catégorie + prix
     final q = _searchQuery.toLowerCase();
     final filteredProducts = provider.availableProducts.where((p) {
       final catMatch = _selectedCategory == 'Tous' || p.category == _selectedCategory;
@@ -380,6 +404,19 @@ class _NewOrderTabState extends State<NewOrderTab> {
              p.price.toStringAsFixed(0).contains(q);
     }).toList()
       ..sort((a, b) => _naturalCompare(a.name, b.name));
+
+    // Boissons Cambuse disponibles (qty > 0), filtrées par recherche
+    final cambuseItems = provider.cambuseItems.where((item) {
+      if (item.isOutOfStock) return false;
+      if (q.isEmpty) return true;
+      return item.name.toLowerCase().contains(q) ||
+             item.category.toLowerCase().contains(q) ||
+             item.sellingPrice.toStringAsFixed(0).contains(q);
+    }).toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+
+    // Catégories cambuse pour le regroupement
+    final cambuseCats = cambuseItems.map((i) => i.category).toSet().toList()..sort();
 
     return Stack(
       children: [
@@ -464,23 +501,78 @@ class _NewOrderTabState extends State<NewOrderTab> {
             // Séparateur
             const Divider(height: 1, color: Color(0xFF2A2A5A)),
 
-            // ── ZONE 3 : Liste des plats ────────────────────────────
+            // ── ZONE 3 : Liste des plats + boissons ─────────────────
             Expanded(
-              child: filteredProducts.isEmpty
+              child: (filteredProducts.isEmpty && cambuseItems.isEmpty)
                   ? const EmptyState(
                       icon: Icons.search_off,
-                      title: 'Aucun plat trouvé',
+                      title: 'Aucun article trouvé',
                       subtitle: 'Modifiez votre recherche ou la catégorie',
                     )
-                  : ListView.builder(
+                  : ListView(
                       padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
-                      itemCount: filteredProducts.length,
-                      itemBuilder: (context, i) => _ProductCard(
-                        key: ValueKey(filteredProducts[i].id),
-                        product: filteredProducts[i],
-                        cartItems: _cartItems,
-                        onAdd: (qty) => _addToCart(filteredProducts[i], qty: qty),
-                      ),
+                      children: [
+                        // ── Plats du menu ─────────────────────────────
+                        if (filteredProducts.isNotEmpty) ...[
+                          ...filteredProducts.map((p) => _ProductCard(
+                            key: ValueKey('plat_${p.id}'),
+                            product: p,
+                            cartItems: _cartItems,
+                            onAdd: (qty) => _addToCart(p, qty: qty),
+                          )),
+                        ],
+                        // ── Séparateur Boissons ───────────────────────
+                        if (cambuseItems.isNotEmpty &&
+                            (_selectedCategory == 'Tous' || cambuseCats.contains(_selectedCategory))) ...[
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.liquor, color: Color(0xFF42A5F5), size: 14),
+                                const SizedBox(width: 6),
+                                const Text(
+                                  'Boissons',
+                                  style: TextStyle(
+                                    color: Color(0xFF42A5F5),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(child: Divider(color: const Color(0xFF42A5F5).withValues(alpha: 0.3), height: 1)),
+                              ],
+                            ),
+                          ),
+                          // Par catégorie cambuse
+                          ...cambuseCats.where((cat) =>
+                            _selectedCategory == 'Tous' || cat == _selectedCategory
+                          ).expand((cat) {
+                            final catItems = cambuseItems.where((i) => i.category == cat).toList();
+                            return [
+                              // En-tête sous-catégorie
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6, top: 4),
+                                child: Text(
+                                  cat,
+                                  style: const TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
+                              ),
+                              ...catItems.map((item) => _CambuseCard(
+                                key: ValueKey('cambuse_${item.id}'),
+                                item: item,
+                                cartItems: _cartItems,
+                                onAdd: (qty) => _addCambuseToCart(item, qty: qty),
+                              )),
+                            ];
+                          }),
+                        ],
+                      ],
                     ),
             ),
           ],
@@ -815,6 +907,191 @@ class _ProductCardState extends State<_ProductCard>
                           ],
                         ),
                       ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// =================== CARTE BOISSON CAMBUSE ===================
+/// Carte boisson compacte — même style que _ProductCard mais pour Cambuse.
+/// - Icône 🍺 à la place de l'image produit
+/// - Pas d'envoi en cuisine, pas de liaison stock
+class _CambuseCard extends StatefulWidget {
+  final CambuseItem item;
+  final List<OrderItem> cartItems;
+  final void Function(int qty) onAdd;
+
+  const _CambuseCard({
+    super.key,
+    required this.item,
+    required this.cartItems,
+    required this.onAdd,
+  });
+
+  @override
+  State<_CambuseCard> createState() => _CambuseCardState();
+}
+
+class _CambuseCardState extends State<_CambuseCard>
+    with SingleTickerProviderStateMixin {
+  int _qty = 1;
+  late AnimationController _animCtrl;
+  late Animation<double> _scaleAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _animCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 200));
+    _scaleAnim = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.08), weight: 50),
+      TweenSequenceItem(tween: Tween(begin: 1.08, end: 1.0), weight: 50),
+    ]).animate(CurvedAnimation(parent: _animCtrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    super.dispose();
+  }
+
+  void _addToCart() {
+    widget.onAdd(_qty);
+    _animCtrl.forward(from: 0);
+    setState(() => _qty = 1);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cartItem = widget.cartItems.firstWhere(
+      (i) => i.isCambuse && i.cambuseItemId == widget.item.id,
+      orElse: () => OrderItem(productId: '', productName: '', quantity: 0, unitPrice: 0, isCambuse: true),
+    );
+    final inCart  = cartItem.cambuseItemId != null;
+    final cartQty = inCart ? cartItem.quantity : 0;
+    final isLow   = widget.item.isLowStock;
+
+    return ScaleTransition(
+      scale: _scaleAnim,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: inCart
+              ? const Color(0xFF42A5F5).withValues(alpha: 0.07)
+              : AppTheme.cardBg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: inCart
+                ? const Color(0xFF42A5F5).withValues(alpha: 0.45)
+                : const Color(0xFF2A2A5A),
+            width: inCart ? 1.5 : 1,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Icône boisson
+                  Container(
+                    width: 40, height: 40,
+                    margin: const EdgeInsets.only(right: 10, top: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF42A5F5).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.liquor, color: Color(0xFF42A5F5), size: 20),
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.item.name,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                          softWrap: true,
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Text(
+                              '${widget.item.sellingPrice.toStringAsFixed(0)} F',
+                              style: const TextStyle(color: Color(0xFF42A5F5), fontWeight: FontWeight.w800, fontSize: 14),
+                            ),
+                            const SizedBox(width: 8),
+                            // Stock badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: isLow
+                                    ? AppTheme.warning.withValues(alpha: 0.12)
+                                    : AppTheme.success.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                'Stock: ${widget.item.quantity}',
+                                style: TextStyle(
+                                  color: isLow ? AppTheme.warning : AppTheme.success,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (inCart) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.success.withValues(alpha: 0.18),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: AppTheme.success.withValues(alpha: 0.4)),
+                                ),
+                                child: Text(
+                                  '×$cartQty au panier',
+                                  style: const TextStyle(color: AppTheme.success, fontSize: 10, fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              // Contrôles quantité
+              Row(
+                children: [
+                  _QtyButton(icon: Icons.remove, onTap: () { if (_qty > 1) setState(() => _qty--); }, enabled: _qty > 1, color: AppTheme.error),
+                  Container(
+                    width: 44,
+                    alignment: Alignment.center,
+                    child: Text('$_qty', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                  ),
+                  _QtyButton(icon: Icons.add, onTap: () => setState(() => _qty++), enabled: true, color: AppTheme.success),
+                  const Spacer(),
+                  ElevatedButton.icon(
+                    onPressed: _addToCart,
+                    icon: const Icon(Icons.add_shopping_cart, size: 14),
+                    label: const Text('Ajouter', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF42A5F5),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      elevation: 0,
                     ),
                   ),
                 ],

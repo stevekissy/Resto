@@ -291,6 +291,12 @@ class OrderItem {
   int quantity;
   final double unitPrice;
   String? specialComment;
+  /// true si cet article provient de la Cambuse (boisson)
+  final bool isCambuse;
+  /// id Cambuse pour déduction directe (sans liaison productId)
+  final String? cambuseItemId;
+  /// catégorie d'affichage (plat ou catégorie cambuse)
+  final String? category;
 
   OrderItem({
     required this.productId,
@@ -298,20 +304,33 @@ class OrderItem {
     required this.quantity,
     required this.unitPrice,
     this.specialComment,
+    this.isCambuse = false,
+    this.cambuseItemId,
+    this.category,
   });
 
   double get totalPrice => unitPrice * quantity;
 
   Map<String, dynamic> toMap() => {
-    'productId': productId, 'productName': productName,
-    'quantity': quantity, 'unitPrice': unitPrice,
+    'productId':    productId,
+    'productName':  productName,
+    'quantity':     quantity,
+    'unitPrice':    unitPrice,
     'specialComment': specialComment,
+    'isCambuse':    isCambuse,
+    'cambuseItemId': cambuseItemId,
+    'category':     category,
   };
 
   factory OrderItem.fromMap(Map<String, dynamic> map) => OrderItem(
-    productId: map['productId'], productName: map['productName'],
-    quantity: map['quantity'], unitPrice: (map['unitPrice'] as num).toDouble(),
-    specialComment: map['specialComment'],
+    productId:     map['productId']    as String? ?? '',
+    productName:   map['productName']  as String? ?? '',
+    quantity:      (map['quantity']    as num?)?.toInt() ?? 0,
+    unitPrice:     (map['unitPrice']   as num?)?.toDouble() ?? 0,
+    specialComment: map['specialComment'] as String?,
+    isCambuse:     map['isCambuse']    as bool? ?? false,
+    cambuseItemId: map['cambuseItemId'] as String?,
+    category:      map['category']     as String?,
   );
 }
 
@@ -2099,6 +2118,31 @@ class ReservationAlert {
 // Collection Firestore : 'cambuse' (boissons) + 'cambuse_movements' (historique)
 // Logique simple : 1 boisson vendue = -1 en cambuse (pas de liaison complexe)
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── CambuseCategory : catégories personnalisables de la cambuse ──────────
+class CambuseCategory {
+  final String id;
+  String name;
+  final DateTime createdAt;
+
+  CambuseCategory({
+    required this.id,
+    required this.name,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id':        id,
+    'name':      name,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+  };
+
+  factory CambuseCategory.fromMap(Map<String, dynamic> m, String docId) => CambuseCategory(
+    id:        docId,
+    name:      m['name']      as String? ?? '',
+    createdAt: _parseDTNullable(m['createdAt']) ?? DateTime.now(),
+  );
+}
 
 enum CambuseMovementType {
   entree,                 // approvisionnement manuel
