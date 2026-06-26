@@ -550,7 +550,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
                       subtitle: 'Modifiez votre recherche ou la catégorie',
                     )
                   : ListView(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 90),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
                       children: [
                         // ── Plats du menu ─────────────────────────────
                         if (filteredProducts.isNotEmpty) ...[
@@ -558,6 +558,7 @@ class _NewOrderTabState extends State<NewOrderTab> {
                             key: ValueKey('plat_${p.id}'),
                             product: p,
                             cartItems: _cartItems,
+                            stockItems: provider.stockItems,
                             onAdd: (qty) => _addToCart(p, qty: qty),
                           )),
                         ],
@@ -631,14 +632,12 @@ class _NewOrderTabState extends State<NewOrderTab> {
           ],
         ),
 
-        // ── ZONE 4 : FAB Panier flottant ────────────────────────────
+        // ── ZONE 4 : FAB Panier flottant (compact, coin bas-droit) ─────
         Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
+          bottom: 12,
+          right: 16,
           child: SafeArea(
             top: false,
-            minimum: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: _CartFab(
               count: _cartCount,
               total: _cartTotal,
@@ -725,90 +724,59 @@ class _CartFab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasItems = count > 0;
-    // N'afficher que lorsqu'il y a des articles
     if (!hasItems) return const SizedBox.shrink();
 
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
-        height: 44,                          // réduit de 56 → 44 (−21 %)
+        height: 40,
         decoration: BoxDecoration(
           color: AppTheme.primary,
-          borderRadius: BorderRadius.circular(13),
+          borderRadius: BorderRadius.circular(11),
           boxShadow: [
             BoxShadow(
               color: AppTheme.primary.withValues(alpha: 0.30),
-              blurRadius: 10,
-              spreadRadius: 0,
-              offset: const Offset(0, 3),
-            ),
-            const BoxShadow(
-              color: Color(0x28000000),
-              blurRadius: 6,
-              offset: Offset(0, 1),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
           ],
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               // Icône + badge
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  const Icon(Icons.shopping_cart_outlined,
-                      color: Colors.white, size: 20),
+                  const Icon(Icons.shopping_cart_outlined, color: Colors.white, size: 18),
                   Positioned(
-                    top: -5,
-                    right: -5,
+                    top: -5, right: -6,
                     child: Container(
                       padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Text(
-                        '$count',
-                        style: TextStyle(
-                          color: AppTheme.primary,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
+                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                      child: Text('$count', style: TextStyle(color: AppTheme.primary, fontSize: 8, fontWeight: FontWeight.w900)),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(width: 10),
-              // Label
-              Expanded(
-                child: Text(
-                  'Voir le panier · $count article${count > 1 ? 's' : ''}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
+              const SizedBox(width: 8),
+              Text(
+                'Panier',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
               ),
               const SizedBox(width: 8),
-              // Montant
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.white.withValues(alpha: 0.20),
+                  borderRadius: BorderRadius.circular(7),
                 ),
                 child: Text(
                   '${total.toStringAsFixed(0)} F',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12,
-                  ),
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
                 ),
               ),
             ],
@@ -823,12 +791,14 @@ class _CartFab extends StatelessWidget {
 class _ProductCard extends StatefulWidget {
   final Product product;
   final List<OrderItem> cartItems;
+  final List<StockItem> stockItems;   // pour afficher le vrai stock physique
   final void Function(int qty) onAdd;
 
   const _ProductCard({
     super.key,
     required this.product,
     required this.cartItems,
+    required this.stockItems,
     required this.onAdd,
   });
 
@@ -970,26 +940,43 @@ class _ProductCardState extends State<_ProductCard>
                                 fontSize: 14,
                               ),
                             ),
-                            // Badge Stock (toujours affiché)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: widget.product.stockQuantity <= widget.product.minStockAlert
-                                    ? AppTheme.warning.withValues(alpha: 0.12)
-                                    : AppTheme.success.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                'Stock: ${widget.product.stockQuantity}',
-                                style: TextStyle(
-                                  color: widget.product.stockQuantity <= widget.product.minStockAlert
-                                      ? AppTheme.warning
-                                      : AppTheme.success,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
+                            // Badge Stock réel — via stockLinks si disponible, sinon stockQuantity
+                            Builder(builder: (_) {
+                              // Calculer le stock réel depuis les liaisons StockItem
+                              int realStock = widget.product.stockQuantity;
+                              if (widget.product.stockLinks.isNotEmpty) {
+                                // Prendre le stock du premier ingrédient obligatoire (ou premier lien)
+                                final link = widget.product.stockLinks.firstWhere(
+                                  (l) => l.mandatory,
+                                  orElse: () => widget.product.stockLinks.first,
+                                );
+                                final si = widget.stockItems.firstWhere(
+                                  (s) => s.id == link.stockItemId,
+                                  orElse: () => StockItem(id: '', name: '', unit: '', currentQuantity: -1, minQuantity: 0, maxQuantity: 0, unitCost: 0, category: ''),
+                                );
+                                if (si.id.isNotEmpty && link.quantityUsed > 0) {
+                                  realStock = (si.currentQuantity / link.quantityUsed).floor();
+                                }
+                              }
+                              final isLow = realStock <= widget.product.minStockAlert;
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: isLow
+                                      ? AppTheme.warning.withValues(alpha: 0.12)
+                                      : AppTheme.success.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(6),
                                 ),
-                              ),
-                            ),
+                                child: Text(
+                                  'Stock: $realStock',
+                                  style: TextStyle(
+                                    color: isLow ? AppTheme.warning : AppTheme.success,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              );
+                            }),
                             if (inCart)
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
@@ -1017,10 +1004,10 @@ class _ProductCardState extends State<_ProductCard>
 
               const SizedBox(height: 10),
 
-              // ── LIGNE 2 : Contrôles quantité + bouton Ajouter ───
+              // ── LIGNE 2 : Contrôles quantité + bouton Ajouter (même ligne) ───
               Row(
                 children: [
-                  // Bouton − (sombre neutre comme sur la capture)
+                  // Bouton −
                   _QtyButton(
                     icon: Icons.remove,
                     onTap: _decrement,
@@ -1029,7 +1016,7 @@ class _ProductCardState extends State<_ProductCard>
                   ),
                   // Quantité
                   Container(
-                    width: 44,
+                    width: 38,
                     alignment: Alignment.center,
                     child: Text(
                       '$_qty',
@@ -1040,39 +1027,39 @@ class _ProductCardState extends State<_ProductCard>
                       ),
                     ),
                   ),
-                  // Bouton + (vert avec bordure comme sur la capture)
+                  // Bouton +
                   _QtyButton(
                     icon: Icons.add,
                     onTap: _increment,
                     enabled: true,
                     color: AppTheme.success,
                   ),
-                  const SizedBox(width: 10),
-                  // Bouton Ajouter
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: _addToCart,
-                      child: Container(
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: AppTheme.primary,
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppTheme.primary.withValues(alpha: 0.35),
-                              blurRadius: 6,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add_shopping_cart, size: 16, color: Colors.white),
-                            SizedBox(width: 6),
-                            Text('Ajouter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
-                          ],
-                        ),
+                  // Espace flexible entre quantité et bouton Ajouter
+                  const Spacer(),
+                  // Bouton Ajouter — compact, aligné à droite
+                  GestureDetector(
+                    onTap: _addToCart,
+                    child: Container(
+                      height: 36,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary,
+                        borderRadius: BorderRadius.circular(9),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.primary.withValues(alpha: 0.35),
+                            blurRadius: 5,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add_shopping_cart, size: 15, color: Colors.white),
+                          SizedBox(width: 6),
+                          Text('Ajouter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                        ],
                       ),
                     ),
                   ),
