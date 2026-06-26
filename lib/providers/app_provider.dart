@@ -1081,7 +1081,8 @@ class AppProvider extends ChangeNotifier {
     return order;
   }
 
-  /// Modifie les articles / infos d'une commande existante (tant que non servie)
+  /// Modifie les articles / infos d'une commande existante.
+  /// ⛔ GUARD : impossible si la commande est en préparation ou au-delà.
   Future<void> updateOrderItems({
     required String orderId,
     required List<OrderItem> items,
@@ -1093,11 +1094,19 @@ class AppProvider extends ChangeNotifier {
     bool? isUrgent,
     double discount = 0,
   }) async {
-    // Récupérer l'ancienne commande pour le delta stock
-    final oldOrder = _orders.firstWhere(
+    // Guard côté provider (defense-in-depth avant appel Firebase)
+    final order = _orders.firstWhere(
       (o) => o.id == orderId,
       orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
     );
+    if (order.id.isNotEmpty &&
+        order.status != OrderStatus.pending &&
+        order.status != OrderStatus.cancelled) {
+      throw Exception('Commande déjà en préparation, modification impossible.');
+    }
+
+    // Récupérer l'ancienne commande pour le delta stock
+    final oldOrder = order;
 
     await _firebase.updateOrderItems(
       orderId: orderId,
@@ -1125,17 +1134,22 @@ class AppProvider extends ChangeNotifier {
   }
 
   /// Annule une commande (orderStatus = cancelled)
+  /// ⛔ GUARD : impossible si la commande est en préparation (status == preparing).
   Future<void> cancelOrder({
     required String orderId,
     required String cancelReason,
   }) async {
     final cancelledBy = _currentUser?.name ?? 'Inconnu';
 
-    // Restaurer le stock avant l'annulation (on a encore les items en mémoire)
+    // Guard côté provider (defense-in-depth avant appel Firebase)
     final order = _orders.firstWhere(
       (o) => o.id == orderId,
       orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
     );
+    if (order.id.isNotEmpty && order.status == OrderStatus.preparing) {
+      throw Exception('Commande déjà en préparation, annulation impossible depuis ce module.');
+    }
+
     if (order.id.isNotEmpty) {
       _firebase.restoreStockForOrder(
         order: order,

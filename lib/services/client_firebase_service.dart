@@ -650,15 +650,26 @@ class ClientFirebaseService {
   }
 
   /// SOURCE UNIQUE : annule la commande dans 'orders' directement.
+  /// ⛔ GUARD FIRESTORE : rejetée si la commande est déjà en préparation.
   /// [orderId] = id du doc orders
   Future<void> cancelOrder(String orderId) async {
-    await _db.collection('orders').doc(orderId).update({
-      'status':        ClientOrderStatus.cancelled.index,
-      'kitchenStatus': 'cancelled',
-      'adminStatus':   'cancelled',
-      'orderStatus':   'cancelled',
-      'sentToKitchen': false,
-      'updatedAt':     FieldValue.serverTimestamp(),
+    await _db.runTransaction((tx) async {
+      final ref  = _db.collection('orders').doc(orderId);
+      final snap = await tx.get(ref);
+      if (!snap.exists) throw Exception('Commande introuvable');
+      // Vérifier le kitchenStatus (source de vérité pour les commandes en ligne)
+      final ks = snap.data()?['kitchenStatus'] as String? ?? '';
+      if (ks == 'preparing') {
+        throw Exception('Commande déjà en préparation, annulation impossible.');
+      }
+      tx.update(ref, {
+        'status':        ClientOrderStatus.cancelled.index,
+        'kitchenStatus': 'cancelled',
+        'adminStatus':   'cancelled',
+        'orderStatus':   'cancelled',
+        'sentToKitchen': false,
+        'updatedAt':     FieldValue.serverTimestamp(),
+      });
     });
     debugPrint('[cancelOrder] ✅ orders/$orderId → cancelled');
   }

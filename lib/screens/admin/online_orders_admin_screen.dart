@@ -506,7 +506,9 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
       case ClientOrderStatus.confirmed:
         return [ClientOrderStatus.preparing, ClientOrderStatus.cancelled];
       case ClientOrderStatus.preparing:
-        return [ClientOrderStatus.ready];
+        // ⛔ Commande en préparation : seule la cuisine peut la gérer.
+        // Aucun statut de transition disponible depuis ce module (admin/en ligne).
+        return [];
       case ClientOrderStatus.ready:
         return [ClientOrderStatus.delivering, ClientOrderStatus.delivered];
       case ClientOrderStatus.delivering:
@@ -1314,6 +1316,34 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                         );
                       }).toList(),
                     ),
+            )
+          // ── Badge verrouillé : commande en préparation (cuisine) ─────
+          else if (!isClosed && status == ClientOrderStatus.preparing)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.preparing.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.preparing.withValues(alpha: 0.35)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.lock, color: AppTheme.preparing, size: 13),
+                    const SizedBox(width: 6),
+                    Text(
+                      'En préparation — gérée par la cuisine',
+                      style: TextStyle(
+                        color: AppTheme.preparing,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             )
           else if (isClosed)
             Padding(

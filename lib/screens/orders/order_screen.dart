@@ -1815,10 +1815,54 @@ class _OrderListCard extends StatelessWidget {
       }
     }
 
-    // Boutons Modifier + Annuler (seulement si non servie / non payée / non annulée)
+    // ── Verrouillage dès "En préparation" ─────────────────────────────
+    // Une commande en préparation (ou au-delà) est entièrement verrouillée :
+    // - Bouton Modifier : masqué pour tous les rôles
+    // - Bouton Annuler  : masqué pour tous les rôles
+    // - Un badge "Verrouillé" s'affiche à la place
+    final isLocked = order.status == OrderStatus.preparing ||
+                     order.status == OrderStatus.ready     ||
+                     order.status == OrderStatus.served;
+
+    // Bouton Modifier : visible uniquement si commande en attente (pending) et non payée
     final canEdit = !order.isPaid &&
-        order.status != OrderStatus.served &&
+        !isLocked &&
         order.status != OrderStatus.cancelled;
+
+    // Bouton Annuler : visible uniquement si commande en attente (pending) et non payée
+    final canCancel = !order.isPaid &&
+        !isLocked &&
+        order.status != OrderStatus.cancelled;
+
+    // Badge verrouillé affiché quand la commande est en cours/prête/servie
+    final lockBadge = isLocked
+        ? Tooltip(
+            message: 'Commande déjà en préparation, modification impossible.',
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppTheme.preparing.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.preparing.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.lock, color: AppTheme.preparing, size: 12),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Verrouillé',
+                    style: TextStyle(
+                      color: AppTheme.preparing,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        : null;
 
     final editBtn = canEdit
         ? OutlinedButton.icon(
@@ -1833,7 +1877,7 @@ class _OrderListCard extends StatelessWidget {
           )
         : null;
 
-    final cancelBtn = canEdit
+    final cancelBtn = canCancel
         ? OutlinedButton.icon(
             onPressed: () => _showCancelDialog(context, order, provider),
             icon: const Icon(Icons.cancel_outlined, size: 13),
@@ -1847,7 +1891,8 @@ class _OrderListCard extends StatelessWidget {
         : null;
 
     return [
-      if (cancelBtn != null) cancelBtn,
+      if (lockBadge != null) lockBadge,
+      if (cancelBtn != null) ...[const SizedBox(width: 6), cancelBtn],
       if (editBtn != null) ...[const SizedBox(width: 6), editBtn],
       if (progressBtn != null) ...[const SizedBox(width: 6), progressBtn],
     ];

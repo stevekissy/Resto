@@ -519,6 +519,7 @@ class FirebaseService {
   }
 
   /// Met à jour les articles et infos d'une commande (modification)
+  /// ⛔ GUARD FIRESTORE : rejetée si la commande est déjà en préparation (status >= preparing).
   Future<void> updateOrderItems({
     required String orderId,
     required List<OrderItem> items,
@@ -530,31 +531,56 @@ class FirebaseService {
     bool? isUrgent,
     double discount = 0,
   }) async {
-    final updates = <String, dynamic>{
-      'items': items.map((i) => i.toMap()).toList(),
-      'tableNumber': tableNumber,
-      'discount': discount,
-      'updatedAt': DateTime.now().millisecondsSinceEpoch,
-    };
-    if (serverName != null) updates['serverName'] = serverName;
-    if (serverId != null)   updates['serverId']   = serverId;
-    if (serverEmail != null) updates['serverEmail'] = serverEmail;
-    if (specialInstructions != null) updates['specialInstructions'] = specialInstructions;
-    if (isUrgent != null)   updates['isUrgent']   = isUrgent;
-    await _db.collection('orders').doc(orderId).update(updates);
+    // ── Guard Firestore : vérification atomique côté serveur ─────────
+    await _db.runTransaction((tx) async {
+      final ref  = _db.collection('orders').doc(orderId);
+      final snap = await tx.get(ref);
+      if (!snap.exists) throw Exception('Commande introuvable');
+      final currentStatus = (snap.data()?['status'] as num?)?.toInt() ?? 0;
+      // status >= 1 (preparing) → verrouillée
+      if (currentStatus >= OrderStatus.preparing.index) {
+        throw Exception('Commande déjà en préparation, modification impossible.');
+      }
+      final updates = <String, dynamic>{
+        'items':     items.map((i) => i.toMap()).toList(),
+        'tableNumber': tableNumber,
+        'discount':  discount,
+        'updatedAt': DateTime.now().millisecondsSinceEpoch,
+      };
+      if (serverName != null)        updates['serverName']        = serverName;
+      if (serverId != null)          updates['serverId']          = serverId;
+      if (serverEmail != null)       updates['serverEmail']       = serverEmail;
+      if (specialInstructions != null) updates['specialInstructions'] = specialInstructions;
+      if (isUrgent != null)          updates['isUrgent']          = isUrgent;
+      tx.update(ref, updates);
+    });
   }
 
   /// Annule une commande (orderStatus = cancelled)
+  /// ⛔ GUARD FIRESTORE : rejetée si la commande est en préparation (status == preparing).
+  /// Seule la cuisine peut annuler une commande en préparation — ce cas est géré
+  /// directement par updateOrderStatus(cancelled) depuis kitchen_screen.
   Future<void> cancelOrder({
     required String orderId,
     required String cancelledBy,
     required String cancelReason,
   }) async {
-    await _db.collection('orders').doc(orderId).update({
-      'status': OrderStatus.cancelled.index,
-      'cancelledAt': DateTime.now().millisecondsSinceEpoch,
-      'cancelledBy': cancelledBy,
-      'cancelReason': cancelReason,
+    // ── Guard Firestore : vérification atomique côté serveur ─────────
+    await _db.runTransaction((tx) async {
+      final ref  = _db.collection('orders').doc(orderId);
+      final snap = await tx.get(ref);
+      if (!snap.exists) throw Exception('Commande introuvable');
+      final currentStatus = (snap.data()?['status'] as num?)?.toInt() ?? 0;
+      // Interdire l'annulation si en préparation ou au-delà (ready, served)
+      if (currentStatus == OrderStatus.preparing.index) {
+        throw Exception('Commande déjà en préparation, annulation impossible depuis ce module.');
+      }
+      tx.update(ref, {
+        'status':      OrderStatus.cancelled.index,
+        'cancelledAt': DateTime.now().millisecondsSinceEpoch,
+        'cancelledBy': cancelledBy,
+        'cancelReason': cancelReason,
+      });
     });
   }
 
