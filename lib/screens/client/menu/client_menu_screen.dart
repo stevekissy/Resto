@@ -5,6 +5,7 @@ import '../../../providers/client_provider.dart';
 import '../../../sandbox/client_provider_proxy.dart';
 import '../../../models/models.dart';
 import '../../../utils/app_theme.dart';
+import '../../../widgets/product_image_widget.dart';
 import '../checkout/checkout_screen.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -257,14 +258,11 @@ class _ProductCard extends StatelessWidget {
           // Image / icône
           Stack(
             children: [
-              ClipRRect(
+              ProductImage(
+                imageUrl: product.imageUrl,
+                height: 100,
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                child: Container(
-                  height: 100,
-                  width: double.infinity,
-                  color: AppTheme.primary.withValues(alpha: 0.1),
-                  child: const Center(child: Icon(Icons.restaurant, color: AppTheme.primary, size: 36)),
-                ),
+                iconSize: 36,
               ),
               // Badge favori
               Positioned(

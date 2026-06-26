@@ -270,6 +270,12 @@ class FirebaseService {
     await _db.collection('products').doc(productId).delete();
   }
 
+  /// Met à jour uniquement l'imageUrl d'un produit dans Firestore.
+  /// Passer null pour supprimer l'image.
+  Future<void> updateProductImage(String productId, String? imageUrl) async {
+    await _db.collection('products').doc(productId).update({'imageUrl': imageUrl});
+  }
+
   // =================== ORDER COUNTER ===================
 
   /// Retourne le prochain numéro de commande unique via transaction Firestore.

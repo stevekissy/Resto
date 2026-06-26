@@ -1420,6 +1420,16 @@ class AppProvider extends ChangeNotifier {
     await _firebase.deleteProduct(id);
   }
 
+  /// Met à jour uniquement l'imageUrl d'un produit (null = supprimer l'image).
+  Future<void> updateProductImage(String productId, String? imageUrl) async {
+    await _firebase.updateProductImage(productId, imageUrl);
+    final idx = _products.indexWhere((p) => p.id == productId);
+    if (idx != -1) {
+      _products[idx].imageUrl = imageUrl;
+      notifyListeners();
+    }
+  }
+
   Future<void> toggleProductAvailability(String id) async {
     final p = _products.firstWhere((p) => p.id == id, orElse: () => Product(id: '', name: '', category: '', price: 0, prepTime: 0));
     if (p.id.isEmpty) return;

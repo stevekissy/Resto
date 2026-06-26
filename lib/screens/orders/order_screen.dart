@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
+import '../../widgets/product_image_widget.dart';
 import '../../models/models.dart';
 
 class OrderScreen extends StatefulWidget {
@@ -677,6 +678,15 @@ class _ProductCardState extends State<_ProductCard>
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Miniature image (si disponible)
+                  if (widget.product.imageUrl != null && widget.product.imageUrl!.isNotEmpty) ...[
+                    ProductImageSmall(
+                      imageUrl: widget.product.imageUrl,
+                      size: 56,
+                      radius: 8,
+                    ),
+                    const SizedBox(width: 12),
+                  ],
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

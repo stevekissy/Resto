@@ -5,6 +5,7 @@ import '../../../providers/client_provider.dart';
 import '../../../sandbox/client_provider_proxy.dart';
 import '../../../models/client_models.dart';
 import '../../../utils/app_theme.dart';
+import '../../../widgets/product_image_widget.dart';
 import '../menu/client_menu_screen.dart';
 import '../orders/client_orders_screen.dart';
 // ═══════════════════════════════════════════════════════════════════════════
@@ -473,13 +474,11 @@ class _ProductMiniCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
+          ProductImage(
+            imageUrl: product.imageUrl,
             height: 60,
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Center(child: Icon(Icons.restaurant, color: AppTheme.primary, size: 28)),
+            borderRadius: BorderRadius.circular(10),
+            iconSize: 28,
           ),
           const SizedBox(height: 8),
           Text(product.name, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis),

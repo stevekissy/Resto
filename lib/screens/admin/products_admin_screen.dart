@@ -1,9 +1,12 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
+import '../../widgets/product_image_widget.dart';
 import '../../models/models.dart';
 
 class ProductsAdminScreen extends StatefulWidget {
@@ -158,48 +161,185 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
     final descCtrl = TextEditingController(text: existing?.description ?? '');
     final cats = provider.customCategories;
     String category = existing?.category ?? (cats.isNotEmpty ? cats.first : 'Plats');
-    // Assurer que la catégorie est dans la liste
     if (!cats.contains(category)) category = cats.isNotEmpty ? cats.first : 'Plats';
+
+    // État image : URL existante + bytes temporaires pour prévisualisation
+    String? currentImageUrl = existing?.imageUrl;
+    Uint8List? previewBytes; // image choisie mais pas encore uploadée
+    bool imageChanged = false;
+    bool? deleteImage; // true = supprimer l'image lors de la sauvegarde
 
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          title: Text(isEdit ? 'Modifier ${existing.name}' : 'Ajouter un produit'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Nom du produit *')),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: category,
-                  style: const TextStyle(color: Colors.white),
-                  dropdownColor: AppTheme.cardBg,
-                  decoration: const InputDecoration(labelText: 'Catégorie'),
-                  items: cats.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                  onChanged: (v) => setS(() => category = v!),
-                ),
-                const SizedBox(height: 8),
-                TextField(controller: priceCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Prix (F CFA) *')),
-                const SizedBox(height: 8),
-                TextField(controller: prepTimeCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Temps de préparation (minutes)')),
-                const SizedBox(height: 8),
-                TextField(controller: stockCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Quantité en stock')),
-                const SizedBox(height: 8),
-                TextField(controller: descCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Description (optionnel)'), maxLines: 2),
-              ],
+        builder: (ctx, setS) {
+
+          // ── Sélectionner une image ──────────────────────────────────────
+          Future<void> pickImage() async {
+            try {
+              final picker = ImagePicker();
+              final picked = await picker.pickImage(
+                source: ImageSource.gallery,
+                maxWidth: 800,
+                maxHeight: 800,
+                imageQuality: 85,
+              );
+              if (picked == null) return;
+              final bytes = await picked.readAsBytes();
+              setS(() {
+                previewBytes  = bytes;
+                imageChanged  = true;
+                deleteImage   = false;
+              });
+            } catch (e) {
+              if (ctx.mounted) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  SnackBar(content: Text('Erreur sélection image : $e'), backgroundColor: AppTheme.error),
+                );
+              }
+            }
+          }
+
+          // ── Aperçu image dans le dialogue ──────────────────────────────
+          Widget imagePreview() {
+            if (previewBytes != null) {
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.memory(previewBytes!, height: 110, width: double.infinity, fit: BoxFit.cover),
+              );
+            }
+            if (currentImageUrl != null && currentImageUrl.isNotEmpty && deleteImage != true) {
+              return ProductImage(
+                imageUrl: currentImageUrl,
+                height: 110,
+                borderRadius: BorderRadius.circular(10),
+                iconSize: 36,
+              );
+            }
+            // Aucune image
+            return Container(
+              height: 110,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.25), style: BorderStyle.solid),
+              ),
+              child: const Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.restaurant, color: AppTheme.primary, size: 36),
+                  SizedBox(height: 6),
+                  Text('Aucune image', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                ],
+              ),
+            );
+          }
+
+          final hasImage = (previewBytes != null) ||
+              (currentImageUrl != null && currentImageUrl.isNotEmpty && deleteImage != true);
+
+          return AlertDialog(
+            title: Text(isEdit ? 'Modifier ${existing.name}' : 'Ajouter un produit'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ── Bloc image ──────────────────────────────────────────
+                  imagePreview(),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: pickImage,
+                          icon: Icon(hasImage ? Icons.edit : Icons.add_photo_alternate, size: 16),
+                          label: Text(hasImage ? 'Modifier image' : 'Ajouter image',
+                              style: const TextStyle(fontSize: 12)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppTheme.primary,
+                            side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.5)),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                          ),
+                        ),
+                      ),
+                      if (hasImage) ...[
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: () => setS(() {
+                            previewBytes = null;
+                            deleteImage  = true;
+                            imageChanged = true;
+                          }),
+                          icon: const Icon(Icons.delete_outline, size: 16),
+                          label: const Text('Supprimer', style: TextStyle(fontSize: 12)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppTheme.error,
+                            side: BorderSide(color: AppTheme.error.withValues(alpha: 0.5)),
+                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // ── Champs texte ────────────────────────────────────────
+                  TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Nom du produit *')),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: category,
+                    style: const TextStyle(color: Colors.white),
+                    dropdownColor: AppTheme.cardBg,
+                    decoration: const InputDecoration(labelText: 'Catégorie'),
+                    items: cats.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                    onChanged: (v) => setS(() => category = v!),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(controller: priceCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Prix (F CFA) *')),
+                  const SizedBox(height: 8),
+                  TextField(controller: prepTimeCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Temps de préparation (minutes)')),
+                  const SizedBox(height: 8),
+                  TextField(controller: stockCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Quantité en stock')),
+                  const SizedBox(height: 8),
+                  TextField(controller: descCtrl, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Description (optionnel)'), maxLines: 2),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
-            ElevatedButton(
-              onPressed: () async {
-                final name = nameCtrl.text.trim();
-                final price = double.tryParse(priceCtrl.text);
-                if (name.isNotEmpty && price != null) {
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+              ElevatedButton(
+                onPressed: () async {
+                  final name = nameCtrl.text.trim();
+                  final price = double.tryParse(priceCtrl.text);
+                  if (name.isEmpty || price == null) return;
+
+                  // ── Résoudre l'imageUrl finale ──────────────────────────
+                  String? finalImageUrl = currentImageUrl;
+
+                  if (imageChanged) {
+                    if (deleteImage == true || previewBytes == null) {
+                      // Supprimer l'image
+                      finalImageUrl = null;
+                    } else if (previewBytes != null) {
+                      // Convertir en data URI base64 (stocké dans Firestore)
+                      // Limité à ~750 KB après compression 85%
+                      try {
+                        final b64 = _bytesToDataUri(previewBytes!);
+                        finalImageUrl = b64;
+                      } catch (e) {
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(content: Text('Erreur traitement image : $e'), backgroundColor: AppTheme.error),
+                          );
+                        }
+                        return;
+                      }
+                    }
+                  }
+
+                  final productId = existing?.id ?? const Uuid().v4();
                   final product = Product(
-                    id: existing?.id ?? const Uuid().v4(),
+                    id: productId,
                     name: name,
                     category: category,
                     price: price,
@@ -207,21 +347,60 @@ class _ProductsAdminScreenState extends State<ProductsAdminScreen> with SingleTi
                     stockQuantity: int.tryParse(stockCtrl.text) ?? 0,
                     description: descCtrl.text.isEmpty ? null : descCtrl.text,
                     isAvailable: (int.tryParse(stockCtrl.text) ?? 0) > 0,
+                    imageUrl: finalImageUrl,
+                    // Conserver les champs existants
+                    ingredients: existing?.ingredients ?? {},
+                    stockLinks: existing?.stockLinks ?? [],
+                    minStockAlert: existing?.minStockAlert ?? 10,
                   );
+
                   if (isEdit) {
                     await provider.updateProduct(product);
                   } else {
                     await provider.addProduct(product);
                   }
                   if (ctx.mounted) Navigator.pop(ctx);
-                }
-              },
-              child: Text(isEdit ? 'Modifier' : 'Ajouter'),
-            ),
-          ],
-        ),
+                },
+                child: Text(isEdit ? 'Modifier' : 'Ajouter'),
+              ),
+            ],
+          );
+        },
       ),
     );
+  }
+
+  /// Convertit des bytes en data URI base64 (image/jpeg ou image/png détecté auto).
+  static String _bytesToDataUri(Uint8List bytes) {
+    // Détection format : PNG commence par 0x89 0x50, JPEG par 0xFF 0xD8
+    String mime = 'image/jpeg';
+    if (bytes.length >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50) {
+      mime = 'image/png';
+    } else if (bytes.length >= 4 && bytes[0] == 0x47 && bytes[1] == 0x49) {
+      mime = 'image/gif';
+    } else if (bytes.length >= 4 && bytes[0] == 0x52 && bytes[1] == 0x49) {
+      mime = 'image/webp';
+    }
+    // Encode en base64
+    final b64 = _encodeBase64(bytes);
+    return 'data:$mime;base64,$b64';
+  }
+
+  static String _encodeBase64(Uint8List bytes) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    final result = StringBuffer();
+    int i = 0;
+    while (i < bytes.length) {
+      final b0 = bytes[i];
+      final b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+      final b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+      result.write(chars[(b0 >> 2) & 0x3F]);
+      result.write(chars[((b0 << 4) | (b1 >> 4)) & 0x3F]);
+      result.write(i + 1 < bytes.length ? chars[((b1 << 2) | (b2 >> 6)) & 0x3F] : '=');
+      result.write(i + 2 < bytes.length ? chars[b2 & 0x3F] : '=');
+      i += 3;
+    }
+    return result.toString();
   }
 }
 
@@ -596,6 +775,13 @@ class _ProductAdminCardState extends State<_ProductAdminCard> {
                   color: isAvail ? AppTheme.success : AppTheme.error,
                   size: 22,
                 ),
+              ),
+              const SizedBox(width: 10),
+              // Miniature image du plat
+              ProductImageSmall(
+                imageUrl: product.imageUrl,
+                size: 48,
+                radius: 10,
               ),
               const SizedBox(width: 12),
               Expanded(
