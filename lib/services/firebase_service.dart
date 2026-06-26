@@ -485,24 +485,88 @@ class FirebaseService {
     await _db.collection('orders').doc(order.id).update(order.toMap());
   }
 
-  Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
+  Future<void> updateOrderStatus(
+    String orderId,
+    OrderStatus status, {
+    // Paramètres optionnels utilisés uniquement quand status == served
+    // pour générer automatiquement la facture provisoire.
+    String? cashoutInvoiceNumber,
+    String? cashierId,
+    String? cashierName,
+    double? amountDue,
+    double? discount,
+    List<Map<String, dynamic>>? items,
+    int? orderNumber,
+    String? tableNumber,
+    String? serverName,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     final data = <String, dynamic>{'status': status.index};
+
     if (status == OrderStatus.preparing) {
       data['startedAt']     = FieldValue.serverTimestamp();
       data['kitchenStatus'] = 'preparing';
     }
+
     if (status == OrderStatus.ready) {
-      data['readyAt']          = FieldValue.serverTimestamp();
-      data['kitchenStatus']    = 'ready';
-      data['readyForCashier']  = true;   // Signal caisse : commande prête à encaisser
+      data['readyAt']       = FieldValue.serverTimestamp();
+      data['kitchenStatus'] = 'ready';
+      // NE PAS mettre readyForCashier ici — la caisse n'est notifiée qu'à "served"
     }
+
     if (status == OrderStatus.served) {
-      data['servedAt']      = FieldValue.serverTimestamp();
+      data['servedAt']      = nowMs;
       data['kitchenStatus'] = 'served';
+
+      // ── Génération automatique de la facture provisoire ──────────────
+      // Dès qu'une commande est marquée "Servie", elle entre en caisse.
+      // cashStatus passe à awaiting_payment et une cashout_invoice est créée.
+      if (cashoutInvoiceNumber != null &&
+          cashierId != null &&
+          cashierName != null &&
+          amountDue != null &&
+          items != null &&
+          orderNumber != null &&
+          tableNumber != null) {
+        data['cashStatus']              = CashStatus.awaiting_payment.index;
+        data['cashoutInvoiceGenerated'] = true;
+        data['cashoutInvoiceNumber']    = cashoutInvoiceNumber;
+        data['cashoutAt']               = nowMs;
+        data['cashierId']               = cashierId;
+        data['cashierName']             = cashierName;
+        data['discount']                = discount ?? 0.0;
+
+        // Écriture atomique : orders + cashout_invoices
+        final batch = _db.batch();
+        batch.update(_db.collection('orders').doc(orderId), data);
+        batch.set(
+          _db.collection('cashout_invoices').doc(cashoutInvoiceNumber),
+          {
+            'id':            cashoutInvoiceNumber,
+            'orderId':       orderId,
+            'orderNumber':   orderNumber,
+            'tableNumber':   tableNumber,
+            'serverName':    serverName,
+            'cashierId':     cashierId,
+            'cashierName':   cashierName,
+            'amountDue':     amountDue,
+            'discount':      discount ?? 0.0,
+            'items':         items,
+            'status':        'provisoire',
+            'createdAt':     FieldValue.serverTimestamp(),
+            'cashoutAtMs':   nowMs,
+          },
+        );
+        await batch.commit();
+        debugPrint('[FirebaseService] updateOrderStatus(served) → cashout_invoice $cashoutInvoiceNumber créée');
+        return; // batch déjà commis, ne pas faire le update séparé
+      }
     }
+
     if (status == OrderStatus.cancelled) {
       data['kitchenStatus'] = 'cancelled';
     }
+
     await _db.collection('orders').doc(orderId).update(data);
   }
 

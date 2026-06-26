@@ -2093,36 +2093,42 @@ class _OrderListCard extends StatelessWidget {
   }
 
   List<Widget> _buildActions(BuildContext context, Order order, AppProvider provider) {
-    // Seuls cuisine / admin / manager voient les boutons de progression de statut
     final role = provider.currentUser?.role;
-    final canChangeStatus = role == UserRole.kitchen ||
-                            role == UserRole.admin   ||
-                            role == UserRole.manager;
+
+    // Cuisine / admin / manager : peuvent passer preparing → ready
+    final canChangeKitchenStatus = role == UserRole.kitchen ||
+                                   role == UserRole.admin   ||
+                                   role == UserRole.manager;
+
+    // Serveur / cuisine / admin / manager : peuvent passer ready → served
+    final canServeOrder = role == UserRole.server  ||
+                          role == UserRole.kitchen ||
+                          role == UserRole.admin   ||
+                          role == UserRole.manager;
 
     Widget? progressBtn;
-    if (canChangeStatus) {
-      if (order.status == OrderStatus.pending) {
-        progressBtn = ElevatedButton.icon(
-          onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.preparing),
-          icon: const Icon(Icons.restaurant, size: 14),
-          label: const Text('Commencer', style: TextStyle(fontSize: 12)),
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.preparing, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-        );
-      } else if (order.status == OrderStatus.preparing) {
-        progressBtn = ElevatedButton.icon(
-          onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.ready),
-          icon: const Icon(Icons.check_circle, size: 14),
-          label: const Text('Prêt', style: TextStyle(fontSize: 12)),
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.ready, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-        );
-      } else if (order.status == OrderStatus.ready) {
-        progressBtn = ElevatedButton.icon(
-          onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.served),
-          icon: const Icon(Icons.done_all, size: 14),
-          label: const Text('Servi', style: TextStyle(fontSize: 12)),
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-        );
-      }
+    if (order.status == OrderStatus.pending && canChangeKitchenStatus) {
+      progressBtn = ElevatedButton.icon(
+        onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.preparing),
+        icon: const Icon(Icons.restaurant, size: 14),
+        label: const Text('Commencer', style: TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.preparing, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+      );
+    } else if (order.status == OrderStatus.preparing && canChangeKitchenStatus) {
+      progressBtn = ElevatedButton.icon(
+        onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.ready),
+        icon: const Icon(Icons.check_circle, size: 14),
+        label: const Text('Prêt', style: TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.ready, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+      );
+    } else if (order.status == OrderStatus.ready && canServeOrder) {
+      // Bouton "Servir" : accessible serveur + cuisine + admin + manager
+      progressBtn = ElevatedButton.icon(
+        onPressed: () => provider.updateOrderStatus(order.id, OrderStatus.served),
+        icon: const Icon(Icons.done_all, size: 14),
+        label: const Text('Servir', style: TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+      );
     }
 
     // ── Verrouillage dès "En préparation" ─────────────────────────────

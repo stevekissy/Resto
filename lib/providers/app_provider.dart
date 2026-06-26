@@ -77,19 +77,20 @@ class AppProvider extends ChangeNotifier {
   List<Order> get servedOrders => _orders.where((o) => o.status == OrderStatus.served).toList();
 
   // ── Getters caisse 2 étapes ─────────────────────────────────────────
-  /// Commandes prêtes/servies non encore encaissées (Tab 1 — bouton Encaisser)
-  /// INCLUT les commandes online dont kitchenStatus=='ready' (flux source unique orders)
+  /// Tab 1 Caisse — commandes SERVIES avec facture provisoire, en attente de règlement.
+  /// RÈGLE MÉTIER : une commande n'entre en caisse QUE quand status == served.
+  /// "Prête" (ready) reste en Salle jusqu'à ce que le serveur clique "Servir".
+  /// La facture provisoire est créée automatiquement lors du passage à "served".
   List<Order> get pendingCashoutOrders => _orders.where((o) {
     if (o.isPaid) return false;
-    if (o.cashStatus != CashStatus.pending_cashout) return false;
-    // Commandes en ligne : prêtes si kitchenStatus==ready OU status==ready/served
+    // Uniquement les commandes en attente de règlement (facture provisoire déjà créée)
+    if (o.cashStatus != CashStatus.awaiting_payment) return false;
+    // Commandes en ligne : servies si kitchenStatus==served OU status==served
     if (o.isOnlineOrder) {
-      return o.kitchenStatus == 'ready' ||
-             o.status == OrderStatus.ready ||
-             o.status == OrderStatus.served;
+      return o.status == OrderStatus.served || o.kitchenStatus == 'served';
     }
-    // Commandes POS : basé sur status
-    return o.status == OrderStatus.ready || o.status == OrderStatus.served;
+    // Commandes POS : status doit être served
+    return o.status == OrderStatus.served;
   }).toList();
 
   /// Commandes avec facture d'encaissement provisoire, en attente de règlement (Tab 2 — bouton Régler)
@@ -1193,25 +1194,81 @@ class AppProvider extends ChangeNotifier {
     );
   }
 
-  /// Rôles autorisés à changer le statut de préparation d'une commande.
-  /// Seuls cuisine, admin et manager peuvent passer pending→preparing→ready→served.
-  static bool _canChangeOrderStatus(UserRole? role) {
+  /// Rôles autorisés à passer une commande en préparation ou prête (cuisine uniquement).
+  static bool _canChangeKitchenStatus(UserRole? role) {
     return role == UserRole.kitchen ||
            role == UserRole.admin   ||
            role == UserRole.manager;
   }
 
+  /// Rôles autorisés à marquer une commande comme "Servie" (serveurs + cuisine + admin).
+  /// C'est le serveur qui remet le plat — il doit donc pouvoir déclencher l'action.
+  static bool _canServeOrder(UserRole? role) {
+    return role == UserRole.server  ||
+           role == UserRole.kitchen ||
+           role == UserRole.admin   ||
+           role == UserRole.manager;
+  }
+
   Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
-    // Guard : seuls cuisine / admin / manager peuvent changer le statut de préparation
     final role = _currentUser?.role;
-    final isStatusChange = status == OrderStatus.preparing ||
-                           status == OrderStatus.ready     ||
-                           status == OrderStatus.served;
-    if (isStatusChange && !_canChangeOrderStatus(role)) {
+
+    // Guard statuts cuisine (preparing, ready) : réservés à cuisine/admin/manager
+    if ((status == OrderStatus.preparing || status == OrderStatus.ready) &&
+        !_canChangeKitchenStatus(role)) {
       debugPrint('[AppProvider] updateOrderStatus REFUSÉ — rôle $role non autorisé pour statut $status');
       throw Exception('Action réservée à la cuisine');
     }
-    // Mise à jour dans 'orders' (avec kitchenStatus maintenant)
+
+    // Guard statut "served" : autorisé aux serveurs + cuisine + admin/manager
+    if (status == OrderStatus.served && !_canServeOrder(role)) {
+      debugPrint('[AppProvider] updateOrderStatus REFUSÉ — rôle $role non autorisé pour "served"');
+      throw Exception('Action réservée au personnel de salle ou cuisine');
+    }
+
+    // ── Passage à "served" : génère automatiquement la facture provisoire ──
+    if (status == OrderStatus.served) {
+      final order = _orders.firstWhere(
+        (o) => o.id == orderId,
+        orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
+      );
+      if (order.id.isNotEmpty && order.cashStatus == CashStatus.pending_cashout) {
+        // Générer le numéro de facture provisoire
+        final invoiceNumber = PrintService.generateFacNumber(order.orderNumber);
+        final cashierId   = _currentUser?.id   ?? '';
+        final cashierName = _currentUser?.name ?? 'Serveur';
+
+        await _firebase.updateOrderStatus(
+          orderId,
+          status,
+          cashoutInvoiceNumber: invoiceNumber,
+          cashierId:            cashierId,
+          cashierName:          cashierName,
+          amountDue:            order.totalAmount,
+          discount:             order.discount,
+          items:                order.items.map((i) => i.toMap()).toList(),
+          orderNumber:          order.orderNumber,
+          tableNumber:          order.tableNumber,
+          serverName:           order.serverName,
+        );
+
+        // Synchronisation client_orders si commande en ligne
+        try {
+          if (order.isOnlineOrder) {
+            final clientSvc = ClientFirebaseService();
+            await clientSvc.syncKitchenStatusToClientOrder(
+              internalOrderId: orderId,
+              clientStatus: ClientOrderStatus.delivered,
+            );
+          }
+        } catch (e) {
+          debugPrint('[AppProvider] sync client_orders (served): $e');
+        }
+        return; // déjà géré dans firebase_service via batch
+      }
+    }
+
+    // Mise à jour standard (preparing, ready, cancelled, ou served sans cashout)
     await _firebase.updateOrderStatus(orderId, status);
 
     // ── Synchronisation commandes en ligne → client_orders ────────────

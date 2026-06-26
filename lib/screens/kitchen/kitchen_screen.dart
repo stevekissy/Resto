@@ -1720,7 +1720,9 @@ class _ReadyOrderCard extends StatelessWidget {
               const SizedBox(height: 4),
               Builder(builder: (ctx) {
                 final role = provider.currentUser?.role;
-                final canServe = role == UserRole.kitchen ||
+                // Servir = serveur + cuisine + admin + manager
+                final canServe = role == UserRole.server  ||
+                                 role == UserRole.kitchen ||
                                  role == UserRole.admin   ||
                                  role == UserRole.manager;
                 return ElevatedButton(
@@ -1729,7 +1731,7 @@ class _ReadyOrderCard extends StatelessWidget {
                       : () {
                           ScaffoldMessenger.of(ctx).showSnackBar(
                             const SnackBar(
-                              content: Text('Action réservée à la cuisine'),
+                              content: Text('Action réservée au personnel de salle ou cuisine'),
                               backgroundColor: Colors.orange,
                               duration: Duration(seconds: 2),
                             ),
