@@ -615,7 +615,6 @@ class _ApproTabState extends State<_ApproTab> {
   CambuseItem? _selectedItem;
   final _qtyCtrl = TextEditingController(text: '1');
   bool _saving = false;
-  final _fmt = NumberFormat('#,###', 'fr_FR');
 
   @override
   void dispose() {
@@ -853,116 +852,372 @@ class _QtyBtn extends StatelessWidget {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  TAB 3 — Historique des mouvements
+//  TAB 3 — Historique des mouvements (refonte complète)
 // ════════════════════════════════════════════════════════════════════════════
-class _HistoriqueTab extends StatelessWidget {
+class _HistoriqueTab extends StatefulWidget {
   final AppProvider provider;
   const _HistoriqueTab({required this.provider});
 
   @override
-  Widget build(BuildContext context) {
-    final movements = provider.cambuseMovements;
+  State<_HistoriqueTab> createState() => _HistoriqueTabState();
+}
 
-    if (movements.isEmpty) {
-      return const EmptyState(
-        icon: Icons.history,
-        title: 'Aucun mouvement',
-        subtitle: 'L\'historique apparaîtra ici',
-      );
+class _HistoriqueTabState extends State<_HistoriqueTab> {
+  String _filterType = 'tous';
+  String _searchQuery = '';
+
+  // ── Définitions filtres ──────────────────────────────────────────────────
+  static const Map<String, String> _filterLabels = {
+    'tous':           'Tous',
+    'vente':          'Ventes',
+    'appro':          'Appros',
+    'inventaire':     'Inventaires',
+    'creation':       'Créations',
+    'suppression':    'Suppressions',
+  };
+
+  static const Map<String, Color> _filterColors = {
+    'vente':          Color(0xFFF44336),
+    'appro':          Color(0xFF4CAF50),
+    'inventaire':     Color(0xFFFF9800),
+    'creation':       Color(0xFF2196F3),
+    'suppression':    Color(0xFF9C27B0),
+  };
+
+  static const Map<String, IconData> _filterIcons = {
+    'vente':          Icons.shopping_cart_outlined,
+    'appro':          Icons.add_shopping_cart,
+    'inventaire':     Icons.inventory_2_outlined,
+    'creation':       Icons.add_box_outlined,
+    'suppression':    Icons.delete_outline,
+  };
+
+  // Associer CambuseMovementType à une clé filtre
+  String _typeToFilterKey(CambuseMovementType t) {
+    switch (t) {
+      case CambuseMovementType.sortieCommande: return 'vente';
+      case CambuseMovementType.entree:         return 'appro';
+      case CambuseMovementType.sortieManuelle: return 'appro'; // restitution → appro (entrée)
+      case CambuseMovementType.inventaire:     return 'inventaire';
+      case CambuseMovementType.creation:       return 'creation';
+      case CambuseMovementType.suppression:    return 'suppression';
+    }
+  }
+
+  Color _colorForMvt(CambuseMovement m) {
+    final key = _typeToFilterKey(m.type);
+    return _filterColors[key] ?? AppTheme.textSecondary;
+  }
+
+  IconData _iconForMvt(CambuseMovement m) {
+    if (m.type == CambuseMovementType.sortieManuelle) return Icons.undo;
+    final key = _typeToFilterKey(m.type);
+    return _filterIcons[key] ?? Icons.info_outline;
+  }
+
+  String _formatDate(DateTime dt) {
+    return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} '
+           '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    var movements = widget.provider.cambuseMovements;
+
+    // Filtrer par type
+    if (_filterType != 'tous') {
+      movements = movements.where((m) => _typeToFilterKey(m.type) == _filterType).toList();
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: movements.length,
-      itemBuilder: (_, i) => _MovementCard(movement: movements[i]),
+    // Filtrer par recherche
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      movements = movements.where((m) =>
+        m.cambuseItemName.toLowerCase().contains(q) ||
+        m.category.toLowerCase().contains(q) ||
+        m.createdBy.toLowerCase().contains(q) ||
+        (m.orderNumber ?? '').toLowerCase().contains(q) ||
+        (m.note ?? '').toLowerCase().contains(q)
+      ).toList();
+    }
+
+    return Scaffold(
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: Column(
+              children: [
+                // ── Barre de recherche ──────────────────────────────────
+                TextField(
+                  onChanged: (v) => setState(() => _searchQuery = v),
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'Rechercher par produit, catégorie, commande…',
+                    prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary, size: 18),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, color: AppTheme.textSecondary, size: 16),
+                            onPressed: () => setState(() => _searchQuery = ''),
+                          )
+                        : null,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // ── Filtres ─────────────────────────────────────────────
+                SizedBox(
+                  height: 34,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _filterLabels.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 6),
+                    itemBuilder: (context, i) {
+                      final key   = _filterLabels.keys.elementAt(i);
+                      final label = _filterLabels[key]!;
+                      final selected = _filterType == key;
+                      final color = key == 'tous'
+                          ? AppTheme.primary
+                          : (_filterColors[key] ?? AppTheme.primary);
+                      return GestureDetector(
+                        onTap: () => setState(() => _filterType = key),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: selected ? color.withValues(alpha: 0.2) : AppTheme.surfaceLight,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: selected ? color : const Color(0xFF2A2A5A)),
+                          ),
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              color: selected ? color : AppTheme.textSecondary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+
+          // ── Liste mouvements ──────────────────────────────────────────
+          Expanded(
+            child: movements.isEmpty
+                ? EmptyState(
+                    icon: Icons.history,
+                    title: _searchQuery.isNotEmpty
+                        ? 'Aucun résultat pour "$_searchQuery"'
+                        : 'Aucun mouvement',
+                    subtitle: 'L\'historique Cambuse apparaîtra ici',
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                    itemCount: movements.length,
+                    itemBuilder: (_, i) => _CambuseMovementCard(
+                      movement: movements[i],
+                      color:    _colorForMvt(movements[i]),
+                      icon:     _iconForMvt(movements[i]),
+                      formatDate: _formatDate,
+                    ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _MovementCard extends StatelessWidget {
+// ── Card détaillée d'un mouvement Cambuse ───────────────────────────────────
+class _CambuseMovementCard extends StatelessWidget {
   final CambuseMovement movement;
-  const _MovementCard({required this.movement});
+  final Color           color;
+  final IconData        icon;
+  final String Function(DateTime) formatDate;
+
+  const _CambuseMovementCard({
+    required this.movement,
+    required this.color,
+    required this.icon,
+    required this.formatDate,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final isEntry  = movement.type == CambuseMovementType.entree ||
-                     movement.type == CambuseMovementType.inventaire;
-    final color    = isEntry ? AppTheme.success : AppTheme.error;
-    final sign     = isEntry ? '+' : '-';
-    final dateFmt  = DateFormat('dd/MM HH:mm', 'fr_FR');
+    final isEntry = movement.type.isEntry;
+    final sign    = isEntry ? '+' : '-';
+    final diff    = isEntry ? movement.quantity : -movement.quantity;
+    final diffColor = diff > 0 ? AppTheme.success : diff < 0 ? AppTheme.error : AppTheme.textSecondary;
+    final isSale  = movement.type == CambuseMovementType.sortieCommande;
 
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 8),
+      border: Border.all(color: color.withValues(alpha: 0.25)),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Icône type
+          // ── Icône ──────────────────────────────────────────────────
           Container(
-            width: 36, height: 36,
+            padding: const EdgeInsets.all(8),
+            margin: const EdgeInsets.only(right: 10),
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.15),
-              shape: BoxShape.circle,
+              borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(
-              isEntry ? Icons.arrow_downward : Icons.arrow_upward,
-              color: color,
-              size: 16,
-            ),
+            child: Icon(icon, color: color, size: 18),
           ),
-          const SizedBox(width: 10),
-          // Détails
+
+          // ── Infos ──────────────────────────────────────────────────
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Ligne 1 : nom produit + badge type
                 Row(
                   children: [
                     Expanded(
                       child: Text(
                         movement.cambuseItemName,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    Text(
-                      '$sign${movement.quantity}',
-                      style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        movement.type.label,
+                        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600),
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 2),
+
+                const SizedBox(height: 3),
+
+                // Ligne 2 : catégorie + différence quantité
                 Row(
                   children: [
+                    if (movement.category.isNotEmpty) ...[
+                      const Icon(Icons.label_outline, color: AppTheme.textSecondary, size: 11),
+                      const SizedBox(width: 3),
+                      Text(
+                        movement.category,
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                     Text(
-                      movement.type.label,
+                      '${movement.quantityBefore}',
                       style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
                     ),
-                    if (movement.orderNumber != null) ...[
-                      const Text(' · ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 4),
+                      child: Icon(Icons.arrow_forward, color: AppTheme.textSecondary, size: 11),
+                    ),
+                    Text(
+                      '${movement.quantityAfter}',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 11),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '($sign${movement.quantity})',
+                      style: TextStyle(color: diffColor, fontWeight: FontWeight.w700, fontSize: 11),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 3),
+
+                // Ligne 3 : commande liée + montant (si vente)
+                if (isSale && movement.orderNumber != null)
+                  Row(
+                    children: [
+                      const Icon(Icons.receipt_outlined, color: Color(0xFF42A5F5), size: 11),
+                      const SizedBox(width: 3),
                       Text(
                         movement.orderNumber!,
-                        style: const TextStyle(color: Color(0xFF42A5F5), fontSize: 11),
+                        style: const TextStyle(color: Color(0xFF42A5F5), fontSize: 11, fontWeight: FontWeight.w600),
                       ),
+                      if (movement.unitPrice > 0) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          '${movement.unitPrice.toInt()} FCFA × ${movement.quantity}',
+                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                        ),
+                      ],
+                      if (movement.totalAmount > 0) ...[
+                        const Spacer(),
+                        Text(
+                          '= ${movement.totalAmount.toInt()} FCFA',
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ],
-                    const Spacer(),
-                    Text(
-                      '${movement.quantityBefore} → ${movement.quantityAfter}',
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
-                    ),
-                  ],
-                ),
+                  ),
+
+                const SizedBox(height: 3),
+
+                // Ligne 4 : utilisateur + date
                 Row(
                   children: [
-                    Text(
-                      movement.createdBy,
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+                    const Icon(Icons.person_outline, color: AppTheme.textSecondary, size: 11),
+                    const SizedBox(width: 3),
+                    Expanded(
+                      child: Text(
+                        movement.createdBy,
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                    const Spacer(),
+                    const Icon(Icons.access_time, color: AppTheme.textSecondary, size: 11),
+                    const SizedBox(width: 3),
                     Text(
-                      dateFmt.format(movement.createdAt),
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+                      formatDate(movement.createdAt),
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
                     ),
                   ],
                 ),
+
+                // Ligne 5 : note/commentaire (si présent)
+                if (movement.note != null && movement.note!.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      const Icon(Icons.comment_outlined, color: AppTheme.textSecondary, size: 11),
+                      const SizedBox(width: 3),
+                      Expanded(
+                        child: Text(
+                          movement.note!,
+                          style: const TextStyle(
+                            color: AppTheme.textSecondary,
+                            fontSize: 10,
+                            fontStyle: FontStyle.italic,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),

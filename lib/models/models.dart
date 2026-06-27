@@ -2198,18 +2198,24 @@ enum CambuseMovementType {
   sortieCommande,         // vente via commande (automatique)
   sortieManuelle,         // ajustement manuel négatif
   inventaire,             // correction d'inventaire
+  creation,               // création d'un nouvel article
+  suppression,            // suppression (soft-delete) d'un article
 }
 
 extension CambuseMovementTypeLabel on CambuseMovementType {
   String get label {
     switch (this) {
-      case CambuseMovementType.entree:          return 'Entrée';
+      case CambuseMovementType.entree:          return 'Approvisionnement';
       case CambuseMovementType.sortieCommande:  return 'Vente';
       case CambuseMovementType.sortieManuelle:  return 'Sortie manuelle';
       case CambuseMovementType.inventaire:      return 'Inventaire';
+      case CambuseMovementType.creation:        return 'Création';
+      case CambuseMovementType.suppression:     return 'Suppression';
     }
   }
-  bool get isEntry => this == CambuseMovementType.entree || this == CambuseMovementType.inventaire;
+  bool get isEntry => this == CambuseMovementType.entree
+      || this == CambuseMovementType.inventaire
+      || this == CambuseMovementType.creation;
 }
 
 // ── CambuseItem : boisson en stock Cambuse ───────────────────────────────
@@ -2273,12 +2279,16 @@ class CambuseMovement {
   final String id;
   final String cambuseItemId;
   final String cambuseItemName;
+  final String category;       // catégorie de la boisson
   final CambuseMovementType type;
   final int quantity;          // quantité bougée (toujours positive)
   final int quantityBefore;    // stock avant le mouvement
   final int quantityAfter;     // stock après le mouvement
+  final double unitPrice;      // prix unitaire au moment du mouvement
+  final double totalAmount;    // montant total (unitPrice × quantity, si vente)
   final String? orderId;       // commande liée (si sortieCommande)
   final String? orderNumber;   // numéro lisible de la commande
+  final String? note;          // commentaire / note libre
   final String createdBy;      // nom utilisateur
   final DateTime createdAt;
 
@@ -2286,12 +2296,16 @@ class CambuseMovement {
     required this.id,
     required this.cambuseItemId,
     required this.cambuseItemName,
+    this.category = '',
     required this.type,
     required this.quantity,
     required this.quantityBefore,
     required this.quantityAfter,
+    this.unitPrice = 0.0,
+    this.totalAmount = 0.0,
     this.orderId,
     this.orderNumber,
+    this.note,
     required this.createdBy,
     required this.createdAt,
   });
@@ -2300,29 +2314,41 @@ class CambuseMovement {
     'id':               id,
     'cambuseItemId':    cambuseItemId,
     'cambuseItemName':  cambuseItemName,
+    'category':         category,
     'type':             type.index,
     'quantity':         quantity,
     'quantityBefore':   quantityBefore,
     'quantityAfter':    quantityAfter,
+    'unitPrice':        unitPrice,
+    'totalAmount':      totalAmount,
     'orderId':          orderId,
     'orderNumber':      orderNumber,
+    'note':             note,
     'createdBy':        createdBy,
     'createdAt':        createdAt.millisecondsSinceEpoch,
   };
 
-  factory CambuseMovement.fromMap(Map<String, dynamic> m, String docId) => CambuseMovement(
-    id:              docId,
-    cambuseItemId:   m['cambuseItemId']   as String? ?? '',
-    cambuseItemName: m['cambuseItemName'] as String? ?? '',
-    type:            CambuseMovementType.values[(m['type'] as num?)?.toInt() ?? 0],
-    quantity:        (m['quantity']       as num?)?.toInt() ?? 0,
-    quantityBefore:  (m['quantityBefore'] as num?)?.toInt() ?? 0,
-    quantityAfter:   (m['quantityAfter']  as num?)?.toInt() ?? 0,
-    orderId:         m['orderId']         as String?,
-    orderNumber:     m['orderNumber']     as String?,
-    createdBy:       m['createdBy']       as String? ?? '',
-    createdAt:       _parseDTNullable(m['createdAt']) ?? DateTime.now(),
-  );
+  factory CambuseMovement.fromMap(Map<String, dynamic> m, String docId) {
+    final typeIdx = (m['type'] as num?)?.toInt() ?? 0;
+    final safeIdx = typeIdx.clamp(0, CambuseMovementType.values.length - 1);
+    return CambuseMovement(
+      id:              docId,
+      cambuseItemId:   m['cambuseItemId']   as String? ?? '',
+      cambuseItemName: m['cambuseItemName'] as String? ?? '',
+      category:        m['category']        as String? ?? '',
+      type:            CambuseMovementType.values[safeIdx],
+      quantity:        (m['quantity']       as num?)?.toInt() ?? 0,
+      quantityBefore:  (m['quantityBefore'] as num?)?.toInt() ?? 0,
+      quantityAfter:   (m['quantityAfter']  as num?)?.toInt() ?? 0,
+      unitPrice:       (m['unitPrice']      as num?)?.toDouble() ?? 0.0,
+      totalAmount:     (m['totalAmount']    as num?)?.toDouble() ?? 0.0,
+      orderId:         m['orderId']         as String?,
+      orderNumber:     m['orderNumber']     as String?,
+      note:            m['note']            as String?,
+      createdBy:       m['createdBy']       as String? ?? '',
+      createdAt:       _parseDTNullable(m['createdAt']) ?? DateTime.now(),
+    );
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

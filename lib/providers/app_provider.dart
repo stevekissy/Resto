@@ -2416,8 +2416,9 @@ class AppProvider extends ChangeNotifier {
 
   /// Crée ou met à jour une boisson en cambuse.
   Future<void> saveCambuseItem(CambuseItem item, {required bool isNew}) async {
+    final createdBy = _currentUser?.name ?? 'Admin';
     if (isNew) {
-      await _firebase.addCambuseItem(item);
+      await _firebase.addCambuseItem(item, createdBy: createdBy);
     } else {
       await _firebase.updateCambuseItem(item);
     }
@@ -2428,20 +2429,36 @@ class AppProvider extends ChangeNotifier {
   Future<void> approCambuse({
     required CambuseItem item,
     required int quantite,
+    String? note,
   }) async {
     final createdBy = _currentUser?.name ?? 'Admin';
     await _firebase.approCambuse(
-      cambuseItemId: item.id,
+      cambuseItemId:   item.id,
       cambuseItemName: item.name,
+      category:        item.category,
       quantiteAjoutee: quantite,
-      createdBy: createdBy,
+      unitPrice:       item.sellingPrice,
+      createdBy:       createdBy,
+      note:            note,
     );
     // Le stream Firestore met _cambuseItems à jour automatiquement
   }
 
-  /// Supprime une boisson de la cambuse
+  /// Supprime une boisson de la cambuse + mouvement suppression
   Future<void> deleteCambuseItem(String id) async {
-    await _firebase.deleteCambuseItem(id);
+    final item = _cambuseItems.firstWhere((i) => i.id == id, orElse: () => CambuseItem(
+      id: id, name: '', category: '', quantity: 0, alertThreshold: 0, sellingPrice: 0,
+      createdAt: DateTime.now(),
+    ));
+    final createdBy = _currentUser?.name ?? 'Admin';
+    await _firebase.deleteCambuseItem(
+      id,
+      cambuseItemName: item.name,
+      category:        item.category,
+      currentQty:      item.quantity,
+      unitPrice:       item.sellingPrice,
+      createdBy:       createdBy,
+    );
   }
 
   /// Ajustement manuel de la quantité (ex : inventaire)
@@ -2449,14 +2466,23 @@ class AppProvider extends ChangeNotifier {
     required String cambuseItemId,
     required String cambuseItemName,
     required int newQuantity,
+    String? note,
   }) async {
+    final item = _cambuseItems.firstWhere((i) => i.id == cambuseItemId,
+        orElse: () => CambuseItem(
+          id: cambuseItemId, name: cambuseItemName, category: '', quantity: 0,
+          alertThreshold: 0, sellingPrice: 0, createdAt: DateTime.now(),
+        ));
     final createdBy = _currentUser?.name ?? 'Admin';
     await _firebase.adjustCambuseManual(
-      cambuseItemId: cambuseItemId,
+      cambuseItemId:   cambuseItemId,
       cambuseItemName: cambuseItemName,
-      newQuantity: newQuantity,
-      createdBy: createdBy,
-      type: CambuseMovementType.inventaire,
+      category:        item.category,
+      newQuantity:     newQuantity,
+      unitPrice:       item.sellingPrice,
+      createdBy:       createdBy,
+      type:            CambuseMovementType.inventaire,
+      note:            note,
     );
   }
 

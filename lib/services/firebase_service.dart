@@ -2352,12 +2352,16 @@ class FirebaseService {
         'id':              mvtId,
         'cambuseItemId':   item.cambuseItemId,
         'cambuseItemName': item.cambuseItemName,
+        'category':        item.category,
         'type':            CambuseMovementType.inventaire.index,
         'quantity':        gap.abs(),
         'quantityBefore':  item.theoreticalQty,
         'quantityAfter':   item.countedQty,
+        'unitPrice':       item.unitCost,
+        'totalAmount':     0.0,
         'orderId':         null,
         'orderNumber':     null,
+        'note':            'Correction inventaire (écart: ${gap > 0 ? "+$gap" : "$gap"})',
         'createdBy':       validatedByName,
         'createdAt':       DateTime.now().millisecondsSinceEpoch,
       });
@@ -2687,10 +2691,28 @@ class FirebaseService {
     });
   }
 
-  /// Ajouter une nouvelle boisson en cambuse
-  Future<String> addCambuseItem(CambuseItem item) async {
+  /// Ajouter une nouvelle boisson en cambuse + mouvement création
+  Future<String> addCambuseItem(CambuseItem item, {String createdBy = 'Admin'}) async {
     final ref = _db.collection('cambuse').doc(item.id.isEmpty ? null : item.id);
-    await ref.set({...item.toMap(), 'id': ref.id});
+    await _db.runTransaction((tx) async {
+      tx.set(ref, {...item.toMap(), 'id': ref.id});
+      final movRef = _db.collection('cambuse_movements').doc();
+      tx.set(movRef, CambuseMovement(
+        id:              movRef.id,
+        cambuseItemId:   ref.id,
+        cambuseItemName: item.name,
+        category:        item.category,
+        type:            CambuseMovementType.creation,
+        quantity:        item.quantity,
+        quantityBefore:  0,
+        quantityAfter:   item.quantity,
+        unitPrice:       item.sellingPrice,
+        totalAmount:     0.0,
+        note:            'Création de la boisson',
+        createdBy:       createdBy,
+        createdAt:       DateTime.now(),
+      ).toMap());
+    });
     return ref.id;
   }
 
@@ -2702,11 +2724,36 @@ class FirebaseService {
     });
   }
 
-  /// Supprimer (soft-delete) une boisson cambuse
-  Future<void> deleteCambuseItem(String id) async {
-    await _db.collection('cambuse').doc(id).update({
-      'isActive': false,
-      'updatedAt': FieldValue.serverTimestamp(),
+  /// Supprimer (soft-delete) une boisson cambuse + mouvement suppression
+  Future<void> deleteCambuseItem(String id, {
+    String cambuseItemName = '',
+    String category = '',
+    int currentQty = 0,
+    double unitPrice = 0.0,
+    String createdBy = 'Admin',
+  }) async {
+    await _db.runTransaction((tx) async {
+      final ref = _db.collection('cambuse').doc(id);
+      tx.update(ref, {
+        'isActive': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      final movRef = _db.collection('cambuse_movements').doc();
+      tx.set(movRef, CambuseMovement(
+        id:              movRef.id,
+        cambuseItemId:   id,
+        cambuseItemName: cambuseItemName,
+        category:        category,
+        type:            CambuseMovementType.suppression,
+        quantity:        currentQty,
+        quantityBefore:  currentQty,
+        quantityAfter:   0,
+        unitPrice:       unitPrice,
+        totalAmount:     0.0,
+        note:            'Suppression de la boisson',
+        createdBy:       createdBy,
+        createdAt:       DateTime.now(),
+      ).toMap());
     });
   }
 
@@ -2714,8 +2761,11 @@ class FirebaseService {
   Future<void> approCambuse({
     required String cambuseItemId,
     required String cambuseItemName,
+    required String category,
     required int quantiteAjoutee,
+    required double unitPrice,
     required String createdBy,
+    String? note,
   }) async {
     await _db.runTransaction((tx) async {
       final ref = _db.collection('cambuse').doc(cambuseItemId);
@@ -2733,10 +2783,14 @@ class FirebaseService {
         id:              movRef.id,
         cambuseItemId:   cambuseItemId,
         cambuseItemName: cambuseItemName,
+        category:        category,
         type:            CambuseMovementType.entree,
         quantity:        quantiteAjoutee,
         quantityBefore:  before,
         quantityAfter:   after,
+        unitPrice:       unitPrice,
+        totalAmount:     0.0,
+        note:            note,
         createdBy:       createdBy,
         createdAt:       DateTime.now(),
       ).toMap());
@@ -2747,9 +2801,12 @@ class FirebaseService {
   Future<void> adjustCambuseManual({
     required String cambuseItemId,
     required String cambuseItemName,
+    required String category,
     required int newQuantity,
+    required double unitPrice,
     required String createdBy,
     CambuseMovementType type = CambuseMovementType.inventaire,
+    String? note,
   }) async {
     await _db.runTransaction((tx) async {
       final ref  = _db.collection('cambuse').doc(cambuseItemId);
@@ -2766,10 +2823,14 @@ class FirebaseService {
         id:              movRef.id,
         cambuseItemId:   cambuseItemId,
         cambuseItemName: cambuseItemName,
+        category:        category,
         type:            type,
         quantity:        delta,
         quantityBefore:  before,
         quantityAfter:   newQuantity,
+        unitPrice:       unitPrice,
+        totalAmount:     0.0,
+        note:            note,
         createdBy:       createdBy,
         createdAt:       DateTime.now(),
       ).toMap());
@@ -2815,17 +2876,23 @@ class FirebaseService {
           'quantity':  after,
           'updatedAt': FieldValue.serverTimestamp(),
         });
+        final unitPrice   = cambuseItem.sellingPrice;
+        final totalAmount = unitPrice * deduct;
         final movRef = _db.collection('cambuse_movements').doc();
         tx.set(movRef, CambuseMovement(
           id:              movRef.id,
           cambuseItemId:   cambuseItem.id,
           cambuseItemName: cambuseItem.name,
+          category:        cambuseItem.category,
           type:            CambuseMovementType.sortieCommande,
           quantity:        deduct,
           quantityBefore:  before,
           quantityAfter:   after,
+          unitPrice:       unitPrice,
+          totalAmount:     totalAmount,
           orderId:         order.id,
           orderNumber:     '#${order.orderNumber}',
+          note:            'Vente automatique commande #${order.orderNumber}',
           createdBy:       createdBy,
           createdAt:       DateTime.now(),
         ).toMap());
@@ -2887,12 +2954,16 @@ class FirebaseService {
           id:              movRef.id,
           cambuseItemId:   cambuseItem.id,
           cambuseItemName: cambuseItem.name,
-          type:            CambuseMovementType.sortieManuelle,
+          category:        cambuseItem.category,
+          type:            CambuseMovementType.entree,
           quantity:        restore,
           quantityBefore:  before,
           quantityAfter:   after,
+          unitPrice:       cambuseItem.sellingPrice,
+          totalAmount:     0.0,
           orderId:         order.id,
           orderNumber:     '#${order.orderNumber}',
+          note:            'Restitution annulation commande #${order.orderNumber}',
           createdBy:       createdBy,
           createdAt:       DateTime.now(),
         ).toMap());
