@@ -131,11 +131,15 @@
       window.speechSynthesis.cancel();
       if (!text || text.trim() === '') return;
 
+      // Guard : volume explicitement à 0 = muet (ne pas tomber dans le || fallback)
+      var effVolume = (typeof volume === 'number') ? volume : window._ttsVolume;
+      if (effVolume <= 0) return;
+
       var utt = new SpeechSynthesisUtterance(text);
       utt.lang   = 'fr-FR';
-      utt.rate   = rate   || window._ttsRate   || 0.88;
-      utt.pitch  = pitch  || window._ttsPitch  || 1.22;
-      utt.volume = volume || window._ttsVolume || 1.0;
+      utt.rate   = (typeof rate  === 'number' && rate  > 0) ? rate  : (window._ttsRate  || 0.88);
+      utt.pitch  = (typeof pitch === 'number' && pitch > 0) ? pitch : (window._ttsPitch || 1.22);
+      utt.volume = effVolume;
 
       if (!window._ttsReady) initTTSVoice();
       if (window._ttsVoice) {
@@ -185,9 +189,10 @@
     // Applique les paramètres de voix depuis Flutter
     window.setTTSConfig = function(voiceName, rate, pitch, volume) {
       window._ttsVoiceName = voiceName || '';
-      window._ttsRate      = rate   || 0.88;
-      window._ttsPitch     = pitch  || 1.22;
-      window._ttsVolume    = volume || 1.0;
+      window._ttsRate      = (typeof rate   === 'number' && rate   > 0) ? rate   : 0.88;
+      window._ttsPitch     = (typeof pitch  === 'number' && pitch  > 0) ? pitch  : 1.22;
+      // Volume : accepte 0 (muet) explicitement
+      window._ttsVolume    = (typeof volume === 'number') ? volume : 1.0;
       // Réinitialiser la sélection de voix
       var voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
       if (voices.length > 0) {

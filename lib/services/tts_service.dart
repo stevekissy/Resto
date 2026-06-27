@@ -483,7 +483,7 @@ class TtsService {
     'Cuisine en action ! Chaque minute compte, on s\'organise bien.',
     'On reste sur les rails, chaque commande mérite le meilleur.',
     'L\'équipe cuisine, on maintient la cadence, c\'est du bon travail.',
-    'Bonne énergie cuisine, on continue sur cette lancée, c\'est ça le Sankadio !',
+    'Bonne énergie cuisine, on continue sur cette lancée, c\'est ça le RESTAURANT SANKADIOKRO !',
   ];
 
   static const _coachPression = [

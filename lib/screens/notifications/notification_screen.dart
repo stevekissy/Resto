@@ -523,8 +523,8 @@ class _SettingsTabState extends State<_SettingsTab> {
               iconColor: AppTheme.error,
               title: 'Rupture de stock',
               subtitle: 'Produits épuisés',
-              value: s.notifStock,
-              onChanged: (v) async { await s.setNotifStock(v); setState(() {}); },
+              value: s.notifRupture,
+              onChanged: (v) async { await s.setNotifRupture(v); setState(() {}); },
             ),
             const _Divider(),
             _SwitchRow(
@@ -541,8 +541,8 @@ class _SettingsTabState extends State<_SettingsTab> {
               iconColor: const Color(0xFF42A5F5),
               title: 'Contrats',
               subtitle: 'Contrats approchant l\'expiration',
-              value: s.notifPersonnel,
-              onChanged: (v) async { await s.setNotifPersonnel(v); setState(() {}); },
+              value: s.notifContrats,
+              onChanged: (v) async { await s.setNotifContrats(v); setState(() {}); },
             ),
             const _Divider(),
             _SwitchRow(

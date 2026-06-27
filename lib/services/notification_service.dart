@@ -195,13 +195,15 @@ class NotificationService extends ChangeNotifier {
   double _speechPitch         = 1.2;   // Ton / pitch
   String _voiceLang           = 'fr-FR';
 
-  // ── Catégories de notifications (11 toggles) ─────────────────────────
+  // ── Catégories de notifications (13 toggles) ─────────────────────────
   bool   _notifOnline         = true;
   bool   _notifUrgent         = true;
   bool   _notifCuisine        = true;
   bool   _notifCaisse         = true;
   bool   _notifStock          = true;
+  bool   _notifRupture        = true;   // Rupture stock (séparé de stock faible)
   bool   _notifPersonnel      = true;
+  bool   _notifContrats       = true;   // Contrats expiration (séparé des salaires)
   bool   _notifReservations   = true;
   bool   _notifFournisseurs   = true;
   bool   _notifSysteme        = true;
@@ -254,7 +256,9 @@ class NotificationService extends ChangeNotifier {
   bool get notifCuisine       => _notifCuisine;
   bool get notifCaisse        => _notifCaisse;
   bool get notifStock         => _notifStock;
+  bool get notifRupture       => _notifRupture;
   bool get notifPersonnel     => _notifPersonnel;
+  bool get notifContrats      => _notifContrats;
   bool get notifReservations  => _notifReservations;
   bool get notifFournisseurs  => _notifFournisseurs;
   bool get notifSysteme       => _notifSysteme;
@@ -482,7 +486,9 @@ class NotificationService extends ChangeNotifier {
     _notifCuisine         = d['notif_cuisine']       as bool?   ?? _notifCuisine;
     _notifCaisse          = d['notif_caisse']        as bool?   ?? _notifCaisse;
     _notifStock           = d['notif_stock']         as bool?   ?? _notifStock;
+    _notifRupture         = d['notif_rupture']       as bool?   ?? _notifRupture;
     _notifPersonnel       = d['notif_personnel']     as bool?   ?? _notifPersonnel;
+    _notifContrats        = d['notif_contrats']      as bool?   ?? _notifContrats;
     _notifReservations    = d['notif_reservations']  as bool?   ?? _notifReservations;
     _notifFournisseurs    = d['notif_fournisseurs']  as bool?   ?? _notifFournisseurs;
     _notifSysteme         = d['notif_systeme']       as bool?   ?? _notifSysteme;
@@ -530,7 +536,9 @@ class NotificationService extends ChangeNotifier {
       _notifCuisine        = prefs.getBool('notif_cuisine')         ?? true;
       _notifCaisse         = prefs.getBool('notif_caisse')          ?? true;
       _notifStock          = prefs.getBool('notif_stock')           ?? true;
+      _notifRupture        = prefs.getBool('notif_rupture')         ?? true;
       _notifPersonnel      = prefs.getBool('notif_personnel')       ?? true;
+      _notifContrats       = prefs.getBool('notif_contrats')        ?? true;
       _notifReservations   = prefs.getBool('notif_reservations')    ?? true;
       _notifFournisseurs   = prefs.getBool('notif_fournisseurs')    ?? true;
       _notifSysteme        = prefs.getBool('notif_systeme')         ?? true;
@@ -571,7 +579,9 @@ class NotificationService extends ChangeNotifier {
       await prefs.setBool('notif_cuisine',          _notifCuisine);
       await prefs.setBool('notif_caisse',           _notifCaisse);
       await prefs.setBool('notif_stock',            _notifStock);
+      await prefs.setBool('notif_rupture',          _notifRupture);
       await prefs.setBool('notif_personnel',        _notifPersonnel);
+      await prefs.setBool('notif_contrats',         _notifContrats);
       await prefs.setBool('notif_reservations',     _notifReservations);
       await prefs.setBool('notif_fournisseurs',     _notifFournisseurs);
       await prefs.setBool('notif_systeme',          _notifSysteme);
@@ -620,7 +630,9 @@ class NotificationService extends ChangeNotifier {
         'notif_cuisine':          _notifCuisine,
         'notif_caisse':           _notifCaisse,
         'notif_stock':            _notifStock,
+        'notif_rupture':          _notifRupture,
         'notif_personnel':        _notifPersonnel,
+        'notif_contrats':         _notifContrats,
         'notif_reservations':     _notifReservations,
         'notif_fournisseurs':     _notifFournisseurs,
         'notif_systeme':          _notifSysteme,
@@ -853,10 +865,22 @@ class NotificationService extends ChangeNotifier {
     unawaited(_saveSettingsHistory(field: 'notif_stock', oldValue: old, newValue: v));
     notifyListeners();
   }
+  Future<void> setNotifRupture(bool v) async {
+    final old = _notifRupture; _notifRupture = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_rupture', oldValue: old, newValue: v));
+    notifyListeners();
+  }
   Future<void> setNotifPersonnel(bool v) async {
     final old = _notifPersonnel; _notifPersonnel = v;
     await _savePrefs(); unawaited(saveToFirestore());
     unawaited(_saveSettingsHistory(field: 'notif_personnel', oldValue: old, newValue: v));
+    notifyListeners();
+  }
+  Future<void> setNotifContrats(bool v) async {
+    final old = _notifContrats; _notifContrats = v;
+    await _savePrefs(); unawaited(saveToFirestore());
+    unawaited(_saveSettingsHistory(field: 'notif_contrats', oldValue: old, newValue: v));
     notifyListeners();
   }
   Future<void> setNotifReservations(bool v) async {
@@ -907,7 +931,7 @@ class NotificationService extends ChangeNotifier {
     if (!kIsWeb) return;
     tts_web.setTTSConfig(_voiceName, _speechRate, _speechPitch, _volumeVoice);
     tts_web.africanSpeak(
-      'Bonjour ! L\'assistante vocale Sankadio est opérationnelle. '
+      'Bonjour ! L\'assistante vocale du RESTAURANT SANKADIOKRO est opérationnelle. '
       'Nouvelle commande en cuisine, table quatre. '
       'Allez l\'équipe, on garde le rythme !',
       _speechRate, _speechPitch, _volumeVoice,
@@ -944,7 +968,7 @@ class NotificationService extends ChangeNotifier {
 
   void _playForEvent(NotifEvent event) {
     if (!_soundEnabled) return;
-    if (!_isCategoryEnabled(event.category)) return;
+    if (!_isEventEnabled(event)) return;
 
     if (event.isUrgent && _repeatImportant) {
       _startUrgentLoop(event, event.name);
@@ -953,11 +977,11 @@ class NotificationService extends ChangeNotifier {
       _playRawSound(soundType, volume: _volumeRingtone);
     }
 
-    // TTS si activé
-    if (_voiceEnabled && kIsWeb) {
+    // TTS si activé (voiceEnabled + soundEnabled + volumeVoice > 0)
+    if (_voiceEnabled && _soundEnabled && _volumeVoice > 0 && kIsWeb) {
       tts_web.setTTSConfig(_voiceName, _speechRate, _speechPitch, _volumeVoice);
       tts_web.africanSpeak(
-        '${event.label}.',
+        'RESTAURANT SANKADIOKRO. ${event.label}.',
         _speechRate, _speechPitch, _volumeVoice,
       );
     }
@@ -997,10 +1021,13 @@ class NotificationService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Arrête tout : sons urgents + TTS + timers
+  /// Arrête tout : sons urgents + TTS + timers (toujours, quelle que soit la config)
   void stopAllAlerts() {
     stopUrgentLoop();
-    if (kIsWeb) tts_web.africanStop();
+    if (kIsWeb) {
+      tts_web.africanStop();
+      sound_web.webStopUrgentLoop();
+    }
     notifyListeners();
   }
 
@@ -1048,18 +1075,40 @@ class NotificationService extends ChangeNotifier {
   bool _isCategoryEnabled(String cat) {
     switch (cat) {
       case 'online':       return _notifOnline;
-      case 'cuisine':      return _notifCuisine && _notifUrgent;
-      case 'caisse':       return _notifCaisse;
-      case 'stock':        return _notifStock;
-      case 'personnel':    return _notifPersonnel;
+      case 'cuisine':      return _notifCuisine;
+      // Stock faible vs rupture : event-level check dans _playForEvent
+      case 'stock':        return _notifStock || _notifRupture;
+      case 'personnel':    return _notifPersonnel || _notifContrats;
       case 'reservations': return _notifReservations;
+      case 'caisse':       return _notifCaisse;
       case 'fournisseurs': return _notifFournisseurs;
       case 'systeme':      return _notifSysteme;
       default:             return true;
     }
   }
 
+  /// Vérifie si l'événement spécifique est activé (granularité fine)
+  bool _isEventEnabled(NotifEvent event) {
+    switch (event) {
+      case NotifEvent.commandeUrgente:
+        return _notifUrgent && _notifCuisine;
+      case NotifEvent.ruptureStock:
+        return _notifRupture;
+      case NotifEvent.stockFaible:
+        return _notifStock;
+      case NotifEvent.contratExpiration:
+        return _notifContrats;
+      case NotifEvent.salaireAPayer:
+        return _notifPersonnel;
+      default:
+        return _isCategoryEnabled(event.category);
+    }
+  }
+
   void _playRawSound(String soundType, {required double volume}) {
+    // Guard : sons désactivés ou volume nul = silence total
+    if (!_soundEnabled) return;
+    if (volume <= 0) return;
     if (kIsWeb) {
       sound_web.webPlaySound(soundType, volume: volume);
     }
