@@ -491,11 +491,15 @@ class ClientProvider extends ChangeNotifier {
   Future<void> updateOrderStatus(String orderId, ClientOrderStatus newStatus) async {
     await _svc.updateOrderStatus(orderId, newStatus);
 
-    // ── Attribution des points fidélité après livraison ─────────────────
-    // Les points sont crédités UNIQUEMENT quand la commande est marquée
-    // "livrée" (delivered). awardLoyaltyPoints() garantit l'idempotence
-    // via le champ loyaltyPointsAwarded.
-    if (newStatus == ClientOrderStatus.delivered) {
+    // ── Attribution des points fidélité après livraison OU service sur place ──
+    // Règle STRICTE : points crédités UNIQUEMENT quand :
+    //   1. paymentStatus == fullyPaid
+    //   2. orderStatus IN [delivered, served, paid]
+    // awardLoyaltyPoints() gère l'idempotence via loyaltyPointsAwarded
+    final shouldAward = newStatus == ClientOrderStatus.delivered ||
+                        newStatus == ClientOrderStatus.served ||
+                        newStatus == ClientOrderStatus.paid;
+    if (shouldAward) {
       try {
         // Récupérer la commande depuis le cache local (mis à jour par le stream)
         final order = _orders.firstWhere(
@@ -503,19 +507,30 @@ class ClientProvider extends ChangeNotifier {
           orElse: () => throw Exception('Commande $orderId non trouvée dans le cache'),
         );
         if (order.clientId.isNotEmpty) {
-          // Appel TOUJOURS après delivered (même si loyaltyPointsEarned == 0)
-          // → awardLoyaltyPoints() gère l'idempotence ET met à jour totalSpent
+          // 1. Points fidélité (idempotent via loyaltyPointsAwarded)
           await _svc.awardLoyaltyPoints(
             clientOrderId: orderId,
             clientId: order.clientId,
-            pointsToAward: order.loyaltyPointsEarned, // peut être 0
+            pointsToAward: order.loyaltyPointsEarned,
+          );
+          // 2. Bonus parrainage (idempotent via referralBonusAwarded)
+          await _svc.processReferralBonus(
+            clientId: order.clientId,
+            orderId: orderId,
           );
         }
       } catch (e) {
         // Non bloquant : statut déjà mis à jour — peut être rejoué
-        debugPrint('[ClientProvider] awardLoyaltyPoints erreur: $e');
+        debugPrint('[ClientProvider] post-delivery processing erreur: $e');
       }
     }
+  }
+
+  // ── Admin : accepter une commande (étape dédiée avant cuisine) ───────────
+
+  Future<void> acceptOrder(String orderId) async {
+    await _svc.acceptOrder(orderId);
+    // Pas d'attribution de points ici — seulement après paiement/livraison
   }
 
   // ── Admin : récupérer tous les clients ──────────────────────────────────
@@ -591,6 +606,43 @@ class ClientProvider extends ChangeNotifier {
     _selectedPromotion = null;
     await _svc.signOutAllDevices();
     notifyListeners();
+  }
+
+
+  // ── Parrainage ──────────────────────────────────────────────────────────
+
+  Future<String> initReferralCode() async {
+    if (_client == null) throw Exception('Non connecté');
+    return _svc.initReferralCode(_client!.id);
+  }
+
+  Future<String?> applyReferralCode(String code) async {
+    if (_client == null) return 'Non connecté';
+    return _svc.applyReferralCode(
+      newClientId: _client!.id,
+      referralCode: code,
+    );
+  }
+
+  Future<Map<String, dynamic>?> checkReferralCode(String code) async {
+    return _svc.checkReferralCode(code);
+  }
+
+  // ── Notifications client ─────────────────────────────────────────────────
+
+  Stream<List<Map<String, dynamic>>> streamMyNotifications() {
+    if (_client == null) return const Stream.empty();
+    return _svc.streamClientNotifications(_client!.id);
+  }
+
+  Future<void> markNotificationRead(String notifId) async {
+    if (_client == null) return;
+    await _svc.markClientNotificationRead(_client!.id, notifId);
+  }
+
+  Future<int> getUnreadNotificationsCount() async {
+    if (_client == null) return 0;
+    return _svc.getUnreadClientNotificationsCount(_client!.id);
   }
 
   Future<void> deleteAccount() async {

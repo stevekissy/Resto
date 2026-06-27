@@ -290,14 +290,21 @@ class ClientFirebaseService {
   /// Convertit le champ status string de la collection orders en index ClientOrderStatus
   int _clientStatusFromString(String s) {
     switch (s) {
-      case 'pending':    return 0; // ClientOrderStatus.pending
-      case 'confirmed':  return 1; // ClientOrderStatus.confirmed
-      case 'preparing':  return 2; // ClientOrderStatus.preparing
-      case 'ready':      return 3; // ClientOrderStatus.ready
-      case 'delivering': return 4; // ClientOrderStatus.delivering
-      case 'delivered':  return 5; // ClientOrderStatus.delivered
-      case 'cancelled':  return 6; // ClientOrderStatus.cancelled
-      default:           return 0;
+      // Statuts basiques
+      case 'pending':          return 0; // ClientOrderStatus.pending
+      case 'confirmed':        return 1; // ClientOrderStatus.confirmed
+      case 'preparing':        return 2; // ClientOrderStatus.preparing
+      case 'ready':            return 3; // ClientOrderStatus.ready
+      case 'delivering':       return 4; // ClientOrderStatus.delivering
+      case 'delivered':        return 5; // ClientOrderStatus.delivered
+      case 'cancelled':        return 6; // ClientOrderStatus.cancelled
+      case 'served':           return 7; // ClientOrderStatus.served
+      case 'paid':             return 8; // ClientOrderStatus.paid
+      // Alias orderStatus
+      case 'received':         return 0; // → pending
+      case 'accepted':         return 1; // → confirmed
+      case 'sent_to_kitchen':  return 2; // → preparing
+      default:                 return 0;
     }
   }
 
@@ -333,18 +340,22 @@ class ClientFirebaseService {
     final count = await _getNextOrderNumber();
     final orderNumber = '#${count.toString().padLeft(4, '0')}';
 
-    // Construire les items avec alias pour cuisine
+    // Construire les items avec alias pour cuisine + itemType OBLIGATOIRE
     final items = order.items.map((i) => {
-      'productId': i.productId,
+      'productId':   i.productId,
       'productName': i.productName,
-      'name': i.productName,         // alias cuisine
-      'unitPrice': i.unitPrice,
-      'price': i.unitPrice,          // alias cuisine
-      'quantity': i.quantity,
-      'comment': i.comment ?? '',
+      'name':        i.productName,  // alias cuisine
+      'unitPrice':   i.unitPrice,
+      'price':       i.unitPrice,    // alias cuisine
+      'quantity':    i.quantity,
+      'comment':     i.comment ?? '',
       'categoryName': i.categoryName ?? '',
-      'imageUrl': i.imageUrl,
+      'imageUrl':    i.imageUrl,
+      'itemType':    i.itemType,     // 'menu' | 'cambuse' — CRITIQUE pour cuisine/caisse
     }).toList();
+    
+    // Vérifier si la commande contient des items cuisine
+    final hasKitchenItems = order.items.any((i) => i.itemType == 'menu');
 
     final orderTypeInt = order.orderType.index; // 0=delivery, 1=takeaway
     final orderTypeStr = orderTypeInt == 1 ? 'takeaway'
@@ -370,13 +381,20 @@ class ClientFirebaseService {
       // ── Type & table ──────────────────────────────────────────────────
       'orderType':     orderTypeStr,
       'tableNumber':   tableNumberStr,
-      // ── Statuts ───────────────────────────────────────────────────────
-      'status':        'pending',
-      'orderStatus':   'received',
-      'adminStatus':   'received',
-      'kitchenStatus': 'not_sent',
-      'sentToKitchen': false,
-      // ── Cuisine workflow ──────────────────────────────────────────────
+      // ── Articles ─────────────────────────────────────────────────────
+      'hasKitchenItems': hasKitchenItems, // helper pour cuisine
+      // ── Statuts complets (source unique) ─────────────────────────────
+      'status':          'pending',
+      'orderStatus':     'received',
+      'adminStatus':     'received',
+      'kitchenStatus':   'not_sent',
+      'cashierStatus':   'not_ready',
+      'sentToKitchen':   false,
+      'readyForCashier': false,
+      // ── Fidélité workflow ─────────────────────────────────────────────
+      'loyaltyStatus':   'pending',  // pending | credited
+      // ── Timestamps workflow ───────────────────────────────────────────
+      'acceptedAt':      null,
       'sentToKitchenAt': null,
       // ── Montants ──────────────────────────────────────────────────────
       'totalAmount':          order.totalAmount,
@@ -483,15 +501,17 @@ class ClientFirebaseService {
     // Timestamps workflow
     switch (status) {
       case ClientOrderStatus.confirmed:
-        update['confirmedAt']  = FieldValue.serverTimestamp();
-        update['adminStatus']  = 'confirmed';
+        update['confirmedAt']   = FieldValue.serverTimestamp();
+        update['acceptedAt']    = FieldValue.serverTimestamp();
+        update['adminStatus']   = 'accepted';
+        update['orderStatus']   = 'accepted';
         update['kitchenStatus'] = 'not_sent';
         // sentToKitchen reste false — l'admin clique "Envoyer en cuisine" ensuite
         break;
       case ClientOrderStatus.preparing:
         // "Envoyer en cuisine" — sentToKitchen=true, cuisine voit la commande
         update['sentToKitchen']   = true;
-        update['kitchenStatus']   = 'pending';
+        update['kitchenStatus']   = 'pending';  // UNIFIÉ — jamais 'waiting'
         update['sentToKitchenAt'] = FieldValue.serverTimestamp();
         update['adminStatus']     = 'sent_to_kitchen';
         update['orderStatus']     = 'sent_to_kitchen';
@@ -500,64 +520,106 @@ class ClientFirebaseService {
         update['readyAt']          = FieldValue.serverTimestamp();
         update['kitchenStatus']    = 'ready';
         update['adminStatus']      = 'ready';
+        update['orderStatus']      = 'ready';
         update['readyForCashier']  = true;  // Signal caisse : commande prête à encaisser
+        update['cashierStatus']    = 'ready';
         break;
       case ClientOrderStatus.delivering:
-        update['adminStatus'] = 'delivering';
+        update['adminStatus']  = 'delivering';
+        update['orderStatus']  = 'delivering';
         break;
       case ClientOrderStatus.delivered:
-        update['deliveredAt']       = FieldValue.serverTimestamp();
-        update['settledAt']         = FieldValue.serverTimestamp();
-        update['paymentStatus']     = ClientPaymentStatus.fullyPaid.index;
-        update['kitchenStatus']     = 'served';
-        update['adminStatus']       = 'delivered';
-        update['settlementStatus']  = 'completed';
+        update['deliveredAt']      = FieldValue.serverTimestamp();
+        update['settledAt']        = FieldValue.serverTimestamp();
+        update['paymentStatus']    = ClientPaymentStatus.fullyPaid.index;
+        update['kitchenStatus']    = 'served';
+        update['adminStatus']      = 'delivered';
+        update['orderStatus']      = 'delivered';
+        update['cashierStatus']    = 'settled';
+        update['settlementStatus'] = 'completed';
+        update['loyaltyStatus']    = 'pending';  // sera mis à 'credited' par awardLoyaltyPoints
+        break;
+      case ClientOrderStatus.served:
+        // Servie sur place
+        update['paymentStatus']    = ClientPaymentStatus.fullyPaid.index;
+        update['kitchenStatus']    = 'served';
+        update['adminStatus']      = 'served';
+        update['orderStatus']      = 'served';
+        update['cashierStatus']    = 'settled';
+        update['settlementStatus'] = 'completed';
+        update['settledAt']        = FieldValue.serverTimestamp();
+        update['loyaltyStatus']    = 'pending';  // sera mis à 'credited' par awardLoyaltyPoints
+        break;
+      case ClientOrderStatus.paid:
+        // Payée / Clôturée
+        update['paymentStatus']    = ClientPaymentStatus.fullyPaid.index;
+        update['adminStatus']      = 'paid';
+        update['orderStatus']      = 'paid';
+        update['cashierStatus']    = 'settled';
+        update['settlementStatus'] = 'completed';
+        update['settledAt']        = FieldValue.serverTimestamp();
+        update['loyaltyStatus']    = 'pending';  // sera mis à 'credited' par awardLoyaltyPoints
         break;
       case ClientOrderStatus.cancelled:
-        update['kitchenStatus'] = 'cancelled';
-        update['adminStatus']   = 'cancelled';
-        update['sentToKitchen'] = false;
+        update['kitchenStatus']  = 'cancelled';
+        update['adminStatus']    = 'cancelled';
+        update['orderStatus']    = 'cancelled';
+        update['sentToKitchen']  = false;
+        update['cashierStatus']  = 'cancelled';
         break;
-      default:
+      case ClientOrderStatus.pending:
+        // Normalement pas appelé depuis updateOrderStatus — géré par createOrder
         break;
     }
 
     await _db.collection('orders').doc(orderId).update(update);
-    debugPrint('[updateOrderStatus] ✅ orders/$orderId → $status');
+    debugPrint('[updateOrderStatus] ✅ orders/$orderId → ${status.label}');
 
-    // ── Notifications ──────────────────────────────────────────────────
+    // ── Notifications staff + client ───────────────────────────────────
     try {
       final orderDoc = await _db.collection('orders').doc(orderId).get();
       if (orderDoc.exists) {
-        final data = orderDoc.data()!;
+        final data        = orderDoc.data()!;
+        final clientId    = data['clientId'] as String? ?? '';
         final clientName  = data['clientName'] as String? ?? 'Client';
         final orderNumber = data['orderNumber'] as String? ?? '';
         final remaining   = (data['remainingAmount'] as num?)?.toDouble() ?? 0;
 
         String? notifTitle;
         String? notifMessage;
-        String notifType = 'order_status';
+        String  notifType = 'order_status';
+        // Notifications client
+        String? clientNotifTitle;
+        String? clientNotifMessage;
 
         switch (status) {
           case ClientOrderStatus.confirmed:
-            notifTitle   = '🍳 Commande en ligne confirmée';
-            notifMessage = 'Commande $orderNumber de $clientName — confirmée';
-            notifType    = 'kitchen_online_order';
+            notifTitle   = '✅ Commande en ligne acceptée';
+            notifMessage = 'Commande $orderNumber de $clientName — acceptée';
+            notifType    = 'order_accepted';
+            clientNotifTitle   = '✅ Commande acceptée !';
+            clientNotifMessage = 'Votre commande $orderNumber a été acceptée. Elle va bientôt être préparée.';
             break;
           case ClientOrderStatus.preparing:
             notifTitle   = '🍳 Commande envoyée en cuisine';
             notifMessage = 'Commande $orderNumber de $clientName — en cuisine';
             notifType    = 'order_preparing';
+            clientNotifTitle   = '🍳 En préparation';
+            clientNotifMessage = 'Votre commande $orderNumber est en cours de préparation en cuisine.';
             break;
           case ClientOrderStatus.ready:
             notifTitle   = '✅ Commande prête';
             notifMessage = 'Commande $orderNumber de $clientName est PRÊTE';
             notifType    = 'order_ready';
+            clientNotifTitle   = '✅ Commande prête !';
+            clientNotifMessage = 'Votre commande $orderNumber est prête. Elle va être livrée sous peu.';
             break;
           case ClientOrderStatus.delivering:
             notifTitle   = '🚗 En livraison';
             notifMessage = 'Commande $orderNumber — Yango en route vers $clientName';
             notifType    = 'order_delivering';
+            clientNotifTitle   = '🚗 En route !';
+            clientNotifMessage = 'Votre commande $orderNumber est en chemin vers vous via Yango.';
             break;
           case ClientOrderStatus.delivered:
             notifTitle   = '💰 Solde à encaisser';
@@ -565,16 +627,35 @@ class ClientFirebaseService {
                 ? 'Commande $orderNumber livrée — solde à encaisser'
                 : 'Commande $orderNumber livrée et soldée ✓';
             notifType    = 'order_settled';
+            clientNotifTitle   = '📦 Commande livrée !';
+            clientNotifMessage = 'Votre commande $orderNumber a été livrée. Merci pour votre confiance ! Des points fidélité ont été crédités.';
+            break;
+          case ClientOrderStatus.served:
+            notifTitle   = '🍽️ Commande servie';
+            notifMessage = 'Commande $orderNumber de $clientName — servie sur place';
+            notifType    = 'order_served';
+            clientNotifTitle   = '🍽️ Bon appétit !';
+            clientNotifMessage = 'Votre commande $orderNumber a été servie. Merci pour votre visite ! Des points fidélité ont été crédités.';
+            break;
+          case ClientOrderStatus.paid:
+            notifTitle   = '💚 Commande payée';
+            notifMessage = 'Commande $orderNumber de $clientName — payée et clôturée';
+            notifType    = 'order_paid';
+            clientNotifTitle   = '💚 Commande payée !';
+            clientNotifMessage = 'Votre commande $orderNumber est soldée. Points fidélité crédités. À bientôt !';
             break;
           case ClientOrderStatus.cancelled:
             notifTitle   = '❌ Commande annulée';
             notifMessage = 'Commande $orderNumber de $clientName annulée';
             notifType    = 'order_cancelled';
+            clientNotifTitle   = '❌ Commande annulée';
+            clientNotifMessage = 'Votre commande $orderNumber a été annulée. Contactez-nous pour plus d\'informations.';
             break;
-          default:
+          case ClientOrderStatus.pending:
             break;
         }
 
+        // Notification staff (collection globale)
         if (notifTitle != null) {
           final notifId = _uuid.v4();
           await _db.collection('notifications').doc(notifId).set({
@@ -589,8 +670,20 @@ class ClientFirebaseService {
             'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
           });
         }
+
+        // Notification client (sous-collection dédiée)
+        if (clientNotifTitle != null && clientId.isNotEmpty) {
+          await _sendClientNotification(
+            clientId: clientId,
+            orderId:  orderId,
+            type:     notifType,
+            title:    clientNotifTitle,
+            message:  clientNotifMessage ?? '',
+          );
+        }
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[updateOrderStatus] Notif erreur: $e');
       // Notifications non bloquantes
     }
   }
@@ -615,11 +708,12 @@ class ClientFirebaseService {
 
     await _db.collection('orders').doc(orderId).update({
       'sentToKitchen':   true,
-      'kitchenStatus':   'pending',
+      'kitchenStatus':   'pending',  // UNIFORME : toujours 'pending' (jamais 'waiting')
       'sentToKitchenAt': FieldValue.serverTimestamp(),
-      'status':          'pending',
       'orderStatus':     'sent_to_kitchen',
       'adminStatus':     'sent_to_kitchen',
+      'readyForCashier': false,
+      'cashierStatus':   'not_ready',
       'updatedAt':       FieldValue.serverTimestamp(),
     });
     debugPrint('[sendToKitchen] ✅ orders/$orderId → sentToKitchen=true kitchenStatus=pending');
@@ -811,17 +905,25 @@ class ClientFirebaseService {
       return;
     }
 
-    // ── Vérification : payé + livré/servi ─────────────────────────────────
+    // ── Vérification : statut final (livré/servi/payé) + payé ─────────────
     final deliveryStatusIndex = (data['status'] as num?)?.toInt() ?? -1;
     final paymentStatusIndex  = (data['paymentStatus'] as num?)?.toInt() ?? -1;
-    final isDelivered  = deliveryStatusIndex == 5; // ClientOrderStatus.delivered
-    final isFullyPaid  = paymentStatusIndex  == 2; // ClientPaymentStatus.fullyPaid
+    final orderStatusStr      = data['orderStatus'] as String? ?? '';
+    
+    // Statuts finaux acceptés : delivered(5), served(7), paid(8) — ou via string
+    final isDelivered = deliveryStatusIndex == 5  // ClientOrderStatus.delivered
+                     || deliveryStatusIndex == 7  // ClientOrderStatus.served
+                     || deliveryStatusIndex == 8  // ClientOrderStatus.paid
+                     || orderStatusStr == 'delivered'
+                     || orderStatusStr == 'served'
+                     || orderStatusStr == 'paid';
+    final isFullyPaid      = paymentStatusIndex == 2; // ClientPaymentStatus.fullyPaid
     final paymentMethod    = (data['paymentMethod'] as num?)?.toInt() ?? -1;
     final isCashOnDelivery = paymentMethod == 0;
     final paymentOk = isFullyPaid || (isCashOnDelivery && isDelivered);
 
     if (!isDelivered || !paymentOk) {
-      debugPrintOrder('[loyalty] Conditions non remplies (delivered=$isDelivered, paymentOk=$paymentOk) — skip');
+      debugPrintOrder('[loyalty] Conditions non remplies (status=$deliveryStatusIndex/$orderStatusStr, paymentOk=$paymentOk) — skip');
       return;
     }
 
@@ -829,6 +931,7 @@ class ClientFirebaseService {
     await _db.collection('orders').doc(clientOrderId).update({
       'loyaltyPointsAwarded':   true,
       'loyaltyPointsAwardedAt': FieldValue.serverTimestamp(),
+      'loyaltyStatus':          'credited',  // double idempotence
     });
 
     // ── Incrémenter totalOrders et totalSpent ─────────────────────────────
@@ -990,6 +1093,299 @@ class ClientFirebaseService {
     }
     // Supprimer compte Auth
     await _auth.currentUser?.delete();
+  }
+
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SYSTÈME DE PARRAINAGE
+  // Collection : referralTransactions
+  // Règles :
+  //   1. Code parrainage unique par client (format: SKR-XXXXXX)
+  //   2. Un client ne peut utiliser qu'UN seul code (referredBy ne change pas)
+  //   3. Bonus attribué UNE SEULE FOIS après commande payée + livrée
+  //   4. Anti-abus : referralBonusAwarded = true après attribution
+  // ══════════════════════════════════════════════════════════════════════════
+
+  static const int _referrerBonus = 50;   // points bonus parrain
+  static const int _referreeBonus = 30;   // points bonus filleul
+
+  /// Génère un code de parrainage unique pour un client
+  String _generateReferralCode(String clientId) {
+    // Format: SKR-XXXXXX (6 chars alphanumériques en maj)
+    final chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final seed = clientId.hashCode.abs();
+    String code = 'SKR-';
+    for (int i = 0; i < 6; i++) {
+      code += chars[(seed >> (i * 5)) % chars.length];
+    }
+    return code;
+  }
+
+  /// Initialise le code parrainage d'un client (si pas encore fait)
+  Future<String> initReferralCode(String clientId) async {
+    final doc = await _db.collection('clients').doc(clientId).get();
+    if (!doc.exists) throw Exception('Client introuvable');
+    
+    final existing = doc.data()?['referralCode'] as String?;
+    if (existing != null && existing.isNotEmpty) return existing;
+    
+    // Générer code unique
+    String code = _generateReferralCode(clientId);
+    // Vérifier unicité (très peu probable de collision mais on vérifie)
+    final check = await _db.collection('clients')
+        .where('referralCode', isEqualTo: code)
+        .limit(1).get();
+    if (check.docs.isNotEmpty) {
+      // Fallback : utiliser une partie de l'UUID
+      code = 'SKR-${clientId.substring(0, 6).toUpperCase()}';
+    }
+    
+    await _db.collection('clients').doc(clientId).update({
+      'referralCode': code,
+    });
+    debugPrint('[referral] Code parrainage créé: $code pour $clientId');
+    return code;
+  }
+
+  /// Applique un code de parrainage à un nouveau client (filleul)
+  /// Retourne null si OK, ou un message d'erreur si problème
+  Future<String?> applyReferralCode({
+    required String newClientId,
+    required String referralCode,
+  }) async {
+    // Vérifier que le client n'a pas déjà un parrain
+    final clientDoc = await _db.collection('clients').doc(newClientId).get();
+    if (!clientDoc.exists) return 'Client introuvable';
+    
+    final alreadyReferred = clientDoc.data()?['referredBy'] as String?;
+    if (alreadyReferred != null && alreadyReferred.isNotEmpty) {
+      return 'Vous avez déjà utilisé un code de parrainage';
+    }
+    
+    // Vérifier que le code existe et appartient à un autre client
+    final referrerSnap = await _db.collection('clients')
+        .where('referralCode', isEqualTo: referralCode.toUpperCase())
+        .limit(1).get();
+    
+    if (referrerSnap.docs.isEmpty) return 'Code de parrainage invalide';
+    
+    final referrerId = referrerSnap.docs.first.id;
+    if (referrerId == newClientId) return 'Vous ne pouvez pas utiliser votre propre code';
+    
+    // Enregistrer le lien parrain/filleul
+    await _db.collection('clients').doc(newClientId).update({
+      'referredBy': referrerId,
+      'referralBonusAwarded': false,
+    });
+    
+    debugPrint('[referral] ✅ $newClientId parrainé par $referrerId (code: $referralCode)');
+    return null; // null = succès
+  }
+
+  /// Attribue les bonus de parrainage après la première commande payée/livrée du filleul
+  /// Anti-abus : referralBonusAwarded garantit l'idempotence
+  Future<void> processReferralBonus({
+    required String clientId,  // filleul
+    required String orderId,
+  }) async {
+    // Lire le profil filleul
+    final clientDoc = await _db.collection('clients').doc(clientId).get();
+    if (!clientDoc.exists) return;
+    final data = clientDoc.data()!;
+    
+    final referrerId = data['referredBy'] as String?;
+    if (referrerId == null || referrerId.isEmpty) return; // pas de parrain
+    
+    final alreadyBonused = data['referralBonusAwarded'] as bool? ?? false;
+    if (alreadyBonused) {
+      debugPrint('[referral] Bonus déjà attribué pour $clientId — skip');
+      return;
+    }
+    
+    // Marquer AVANT d'attribuer (protection crash)
+    await _db.collection('clients').doc(clientId).update({
+      'referralBonusAwarded': true,
+    });
+    
+    // Créer l'enregistrement referralTransaction
+    final txId = _uuid.v4();
+    await _db.collection('referralTransactions').doc(txId).set({
+      'id':             txId,
+      'referrerId':     referrerId,
+      'referreeId':     clientId,
+      'referrerPoints': _referrerBonus,
+      'referreePoints': _referreeBonus,
+      'orderId':        orderId,
+      'createdAt':      FieldValue.serverTimestamp(),
+    });
+    
+    // Créditer le parrain
+    await _db.collection('clients').doc(referrerId).update({
+      'loyaltyPoints': FieldValue.increment(_referrerBonus),
+    });
+    final refTxId = _uuid.v4();
+    await _db.collection('loyalty_transactions').doc(refTxId).set({
+      'id':          refTxId,
+      'clientId':    referrerId,
+      'type':        1, // LoyaltyType.bonus.index
+      'points':      _referrerBonus,
+      'description': 'Bonus parrainage — filleul a passé sa première commande',
+      'orderId':     orderId,
+      'createdAt':   DateTime.now().millisecondsSinceEpoch,
+    });
+    
+    // Créditer le filleul
+    await _db.collection('clients').doc(clientId).update({
+      'loyaltyPoints': FieldValue.increment(_referreeBonus),
+    });
+    final fTxId = _uuid.v4();
+    await _db.collection('loyalty_transactions').doc(fTxId).set({
+      'id':          fTxId,
+      'clientId':    clientId,
+      'type':        1, // LoyaltyType.bonus.index
+      'points':      _referreeBonus,
+      'description': 'Bonus filleul — parrainage validé après votre commande',
+      'orderId':     orderId,
+      'createdAt':   DateTime.now().millisecondsSinceEpoch,
+    });
+    
+    debugPrint('[referral] ✅ Bonus parrain=$_referrerBonus pts → $referrerId | filleul=$_referreeBonus pts → $clientId');
+    
+    // Notification parrain
+    await _sendClientNotification(
+      clientId: referrerId,
+      orderId: orderId,
+      type: 'referral_bonus',
+      title: '🎉 Bonus parrainage !',
+      message: 'Votre filleul a passé sa première commande. +$_referrerBonus points crédités !',
+    );
+  }
+
+  /// Vérifie si un code parrainage existe et retourne le nom du parrain
+  Future<Map<String, dynamic>?> checkReferralCode(String code) async {
+    try {
+      final snap = await _db.collection('clients')
+          .where('referralCode', isEqualTo: code.toUpperCase())
+          .limit(1).get();
+      if (snap.docs.isEmpty) return null;
+      final data = snap.docs.first.data();
+      return {'id': snap.docs.first.id, 'name': data['name'] ?? 'Client'};
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Accepter une commande (admin) ─────────────────────────────────────────
+  /// Marque la commande comme acceptée par l'admin.
+  /// Étape intermédiaire entre 'received' et 'sent_to_kitchen'.
+  Future<void> acceptOrder(String orderId) async {
+    await _db.collection('orders').doc(orderId).update({
+      'adminStatus':   'accepted',
+      'orderStatus':   'accepted',
+      'status':        ClientOrderStatus.confirmed.index,
+      'acceptedAt':    FieldValue.serverTimestamp(),
+      'kitchenStatus': 'not_sent',   // pas encore envoyée en cuisine
+      'sentToKitchen': false,
+      'updatedAt':     FieldValue.serverTimestamp(),
+    });
+    debugPrint('[acceptOrder] ✅ orders/$orderId → accepted');
+
+    // Notification client
+    try {
+      final orderDoc = await _db.collection('orders').doc(orderId).get();
+      if (orderDoc.exists) {
+        final data       = orderDoc.data()!;
+        final clientId   = data['clientId'] as String? ?? '';
+        final orderNumber = data['orderNumber'] as String? ?? '';
+        if (clientId.isNotEmpty) {
+          await _sendClientNotification(
+            clientId:  clientId,
+            orderId:   orderId,
+            type:      'order_accepted',
+            title:     '✅ Commande acceptée !',
+            message:   'Votre commande $orderNumber a été acceptée. Nous préparons votre repas.',
+          );
+        }
+        // Notification staff
+        final notifId = _uuid.v4();
+        await _db.collection('notifications').doc(notifId).set({
+          'id':          notifId,
+          'type':        'order_accepted',
+          'title':       '✅ Commande acceptée',
+          'message':     'Commande $orderNumber acceptée par l\'admin',
+          'orderId':     orderId,
+          'createdAt':   FieldValue.serverTimestamp(),
+          'read':        false,
+          'targetRoles': ['admin', 'manager', 'kitchen'],
+        });
+      }
+    } catch (e) {
+      debugPrint('[acceptOrder] Notif erreur: $e');
+    }
+  }
+
+  // ── Notifications client (sous-collection) ─────────────────────────────────
+  /// Envoie une notification directement dans la sous-collection client
+  /// client_notifications/{clientId}/messages
+  Future<void> _sendClientNotification({
+    required String clientId,
+    required String orderId,
+    required String type,
+    required String title,
+    required String message,
+  }) async {
+    final notifId = _uuid.v4();
+    await _db
+        .collection('client_notifications')
+        .doc(clientId)
+        .collection('messages')
+        .doc(notifId)
+        .set({
+      'id':        notifId,
+      'type':      type,
+      'title':     title,
+      'message':   message,
+      'orderId':   orderId,
+      'clientId':  clientId,
+      'createdAt': FieldValue.serverTimestamp(),
+      'isRead':    false,
+    });
+  }
+
+  /// Stream des notifications d'un client (sous-collection messages)
+  Stream<List<Map<String, dynamic>>> streamClientNotifications(String clientId) {
+    return _db
+        .collection('client_notifications')
+        .doc(clientId)
+        .collection('messages')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map((d) => d.data()).toList());
+  }
+
+  /// Marque une notification client comme lue
+  Future<void> markClientNotificationRead(String clientId, String notifId) async {
+    await _db
+        .collection('client_notifications')
+        .doc(clientId)
+        .collection('messages')
+        .doc(notifId)
+        .update({'isRead': true});
+  }
+
+  /// Retourne le nombre de notifications non lues d'un client
+  Future<int> getUnreadClientNotificationsCount(String clientId) async {
+    try {
+      final snap = await _db
+          .collection('client_notifications')
+          .doc(clientId)
+          .collection('messages')
+          .where('isRead', isEqualTo: false)
+          .get();
+      return snap.docs.length;
+    } catch (_) {
+      return 0;
+    }
   }
 
   Future<void> signOutAllDevices() async {

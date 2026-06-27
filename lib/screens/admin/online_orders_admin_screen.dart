@@ -502,17 +502,20 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
   List<ClientOrderStatus> _nextStatuses(ClientOrderStatus current) {
     switch (current) {
       case ClientOrderStatus.pending:
-        return [ClientOrderStatus.confirmed, ClientOrderStatus.cancelled];
+        // Commande reçue : seuls Annuler et Accepter (via bouton dédié _acceptOrder)
+        return [ClientOrderStatus.cancelled];
       case ClientOrderStatus.confirmed:
+        // Commande acceptée : peut envoyer en cuisine ou annuler
         return [ClientOrderStatus.preparing, ClientOrderStatus.cancelled];
       case ClientOrderStatus.preparing:
-        // ⛔ Commande en préparation : seule la cuisine peut la gérer.
-        // Aucun statut de transition disponible depuis ce module (admin/en ligne).
+        // ⛔ En préparation : gérée par cuisine uniquement.
         return [];
       case ClientOrderStatus.ready:
         return [ClientOrderStatus.delivering, ClientOrderStatus.delivered];
       case ClientOrderStatus.delivering:
         return [ClientOrderStatus.delivered];
+      case ClientOrderStatus.served:
+        return [ClientOrderStatus.paid];
       default:
         return [];
     }
@@ -520,11 +523,13 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
 
   String _statusActionLabel(ClientOrderStatus s) {
     switch (s) {
-      case ClientOrderStatus.confirmed:   return 'Confirmer';
+      case ClientOrderStatus.confirmed:   return 'Accepter';
       case ClientOrderStatus.preparing:   return 'Envoyer en cuisine';
       case ClientOrderStatus.ready:       return 'Marquer Prête';
       case ClientOrderStatus.delivering:  return 'En livraison';
       case ClientOrderStatus.delivered:   return 'Marquer Livrée';
+      case ClientOrderStatus.served:      return 'Marquer Servie';
+      case ClientOrderStatus.paid:        return 'Marquer Payée';
       case ClientOrderStatus.cancelled:   return 'Annuler';
       default:                            return s.label;
     }
@@ -555,6 +560,35 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
   }
 
   // ── Actions ──────────────────────────────────────────────────────────
+
+  /// Accepter la commande (étape dédiée avant envoi cuisine)
+  Future<void> _acceptOrder() async {
+    if (_processing) return;
+    setState(() => _processing = true);
+    try {
+      await context.read<ClientProvider>().acceptOrder(widget.order.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Row(children: [
+            Icon(Icons.check_circle, color: Colors.white, size: 18),
+            SizedBox(width: 8),
+            Text('Commande acceptée !'),
+          ]),
+          backgroundColor: AppTheme.success,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Erreur acceptation : $e'), backgroundColor: AppTheme.error));
+      }
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
 
   /// SOURCE UNIQUE : envoie la commande en cuisine via update direct du doc 'orders'.
   /// widget.order.id = id du doc orders (depuis streamAdminOnlineOrders, data['id'] = d.id)
@@ -1283,6 +1317,35 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
           ],
 
           // ── Boutons workflow de statut ────────────────────────────────
+          // Bouton Accepter dédié (commande reçue uniquement)
+          if (!isClosed && status == ClientOrderStatus.pending)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+              child: _processing
+                  ? const Center(child: SizedBox(width: 24, height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2)))
+                  : GestureDetector(
+                      onTap: _acceptOrder,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.success.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppTheme.success.withValues(alpha: 0.6)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            Icon(Icons.check_circle_outline, color: AppTheme.success, size: 16),
+                            SizedBox(width: 6),
+                            Text('Accepter la commande',
+                                style: TextStyle(color: AppTheme.success, fontSize: 13, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                    ),
+            ),
           if (!isClosed && nextStatuses.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),

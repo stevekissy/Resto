@@ -270,14 +270,16 @@ class SandboxService {
       case ClientOrderStatus.confirmed:  next = ClientOrderStatus.preparing;  break;
       case ClientOrderStatus.preparing:  next = ClientOrderStatus.ready;      break;
       case ClientOrderStatus.ready:
-        // Si livraison → delivering, sinon → delivered (à emporter)
+        // Si livraison → delivering, sinon → served (sur place) ou delivered (à emporter)
         next = _orders[idx].orderType == OrderType.delivery
             ? ClientOrderStatus.delivering
-            : ClientOrderStatus.delivered;
+            : ClientOrderStatus.served;
         break;
       case ClientOrderStatus.delivering: next = ClientOrderStatus.delivered;  break;
       case ClientOrderStatus.delivered:  return null;  // Terminé
       case ClientOrderStatus.cancelled:  return null;  // Terminé
+      case ClientOrderStatus.served:     return null;  // Terminé (servi sur place)
+      case ClientOrderStatus.paid:       return null;  // Terminé (payé/clôturé)
     }
 
     if (next != null) {

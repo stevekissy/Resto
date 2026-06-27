@@ -9,6 +9,7 @@ import '../../../models/client_models.dart';
 import '../../../utils/app_theme.dart';
 import '../auth/client_auth_screen.dart';
 import 'client_notifications_screen.dart';
+import 'client_referral_screen.dart';
 import 'client_security_screen.dart';
 import 'client_support_screen.dart';
 import 'client_about_screen.dart';
@@ -1943,6 +1944,23 @@ class _ProfileMenu extends StatelessWidget {
             context,
             MaterialPageRoute(
                 builder: (_) => const ClientNotificationsScreen()),
+          ),
+        ),
+        _MenuItem(
+          icon: Icons.card_giftcard_outlined,
+          label: 'Parrainage & Bonus',
+          trailing: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.amber.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.amber.withValues(alpha: 0.5)),
+            ),
+            child: const Text('+50 pts', style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.w700)),
+          ),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ClientReferralScreen()),
           ),
         ),
         _MenuItem(

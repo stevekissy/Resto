@@ -10,25 +10,29 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 // ── Enums ──────────────────────────────────────────────────────────────────
 
 enum ClientOrderStatus {
-  pending,      // Commande reçue, en attente de validation
-  confirmed,    // Validée par le restaurant
-  preparing,    // En préparation en cuisine
-  ready,        // Prête
-  delivering,   // En livraison
-  delivered,    // Livrée
-  cancelled,    // Annulée
+  pending,      // 0 — Commande reçue, en attente de validation
+  confirmed,    // 1 — Acceptée par l'admin
+  preparing,    // 2 — Envoyée en cuisine / En préparation
+  ready,        // 3 — Prête
+  delivering,   // 4 — En livraison
+  delivered,    // 5 — Livrée
+  cancelled,    // 6 — Annulée
+  served,       // 7 — Servie sur place
+  paid,         // 8 — Payée / Clôturée
 }
 
 extension ClientOrderStatusExt on ClientOrderStatus {
   String get label {
     switch (this) {
       case ClientOrderStatus.pending:    return 'Reçue';
-      case ClientOrderStatus.confirmed:  return 'Validée';
-      case ClientOrderStatus.preparing:  return 'En préparation';
+      case ClientOrderStatus.confirmed:  return 'Acceptée';
+      case ClientOrderStatus.preparing:  return 'En cuisine';
       case ClientOrderStatus.ready:      return 'Prête';
       case ClientOrderStatus.delivering: return 'En livraison';
       case ClientOrderStatus.delivered:  return 'Livrée';
       case ClientOrderStatus.cancelled:  return 'Annulée';
+      case ClientOrderStatus.served:     return 'Servie';
+      case ClientOrderStatus.paid:       return 'Payée';
     }
   }
 
@@ -41,6 +45,8 @@ extension ClientOrderStatusExt on ClientOrderStatus {
       case ClientOrderStatus.delivering: return const Color(0xFF9C27B0);
       case ClientOrderStatus.delivered:  return const Color(0xFF4CAF50);
       case ClientOrderStatus.cancelled:  return const Color(0xFFF44336);
+      case ClientOrderStatus.served:     return const Color(0xFF00BCD4);
+      case ClientOrderStatus.paid:       return const Color(0xFF4CAF50);
     }
   }
 
@@ -53,6 +59,8 @@ extension ClientOrderStatusExt on ClientOrderStatus {
       case ClientOrderStatus.delivering: return Icons.delivery_dining;
       case ClientOrderStatus.delivered:  return Icons.home;
       case ClientOrderStatus.cancelled:  return Icons.cancel;
+      case ClientOrderStatus.served:     return Icons.room_service;
+      case ClientOrderStatus.paid:       return Icons.paid;
     }
   }
 
@@ -65,8 +73,16 @@ extension ClientOrderStatusExt on ClientOrderStatus {
       case ClientOrderStatus.delivering: return 4;
       case ClientOrderStatus.delivered:  return 5;
       case ClientOrderStatus.cancelled:  return -1;
+      case ClientOrderStatus.served:     return 5; // même niveau que delivered
+      case ClientOrderStatus.paid:       return 6;
     }
   }
+
+  bool get isFinal =>
+    this == ClientOrderStatus.delivered ||
+    this == ClientOrderStatus.cancelled ||
+    this == ClientOrderStatus.served ||
+    this == ClientOrderStatus.paid;
 }
 
 enum OrderType { delivery, takeaway }
@@ -185,6 +201,10 @@ class ClientUser {
   double totalSpent;
   List<String> favoriteProductIds;
   String? fcmToken;        // pour notifications push
+  // ── Parrainage ──────────────────────────────────────────────────────────
+  String? referralCode;          // code unique parrainage (ex: SKR-A1B2C3)
+  String? referredBy;            // clientId du parrain (si filleul)
+  bool referralBonusAwarded;     // true = bonus filleul déjà attribué
 
   ClientUser({
     required this.id,
@@ -200,6 +220,9 @@ class ClientUser {
     this.totalSpent = 0,
     this.favoriteProductIds = const [],
     this.fcmToken,
+    this.referralCode,
+    this.referredBy,
+    this.referralBonusAwarded = false,
   }) : createdAt = createdAt ?? DateTime.now();
 
   String get initials {
@@ -226,6 +249,9 @@ class ClientUser {
     'role': 'client',
     'accountType': 'customer',
     'canLogin': true,
+    'referralCode': referralCode,
+    'referredBy': referredBy,
+    'referralBonusAwarded': referralBonusAwarded,
   };
 
   factory ClientUser.fromMap(Map<String, dynamic> m) => ClientUser(
@@ -246,6 +272,9 @@ class ClientUser {
     totalSpent: (m['totalSpent'] as num?)?.toDouble() ?? 0,
     favoriteProductIds: (m['favoriteProductIds'] as List?)?.cast<String>() ?? [],
     fcmToken: m['fcmToken'] as String?,
+    referralCode: m['referralCode'] as String?,
+    referredBy: m['referredBy'] as String?,
+    referralBonusAwarded: m['referralBonusAwarded'] as bool? ?? false,
   );
 }
 
@@ -315,6 +344,9 @@ class CartItem {
   int quantity;
   String? comment;
   String? imageUrl;
+  // itemType : 'menu' (plat cuisine) | 'cambuse' (boisson stock)
+  // Par défaut 'menu' pour toutes les commandes client en ligne
+  final String itemType;
 
   CartItem({
     required this.productId,
@@ -324,6 +356,7 @@ class CartItem {
     this.quantity = 1,
     this.comment,
     this.imageUrl,
+    this.itemType = 'menu', // défaut : plat de cuisine
   });
 
   double get totalPrice => unitPrice * quantity;
@@ -331,27 +364,31 @@ class CartItem {
   Map<String, dynamic> toMap() => {
     'productId': productId,
     'productName': productName,
+    'name': productName,          // alias cuisine
     'categoryName': categoryName,
     'unitPrice': unitPrice,
+    'price': unitPrice,           // alias cuisine
     'quantity': quantity,
-    'comment': comment,
+    'comment': comment ?? '',
     'imageUrl': imageUrl,
+    'itemType': itemType,         // 'menu' | 'cambuse' — OBLIGATOIRE
   };
 
   factory CartItem.fromMap(Map<String, dynamic> m) => CartItem(
     productId: m['productId'] as String? ?? '',
-    // Lire 'productName' en priorité, fallback sur alias 'name' (anciens docs orders)
+    // Lire 'productName' en priorité, fallback sur alias 'name'
     productName: (m['productName'] as String?)?.isNotEmpty == true
         ? m['productName'] as String
         : (m['name'] as String? ?? ''),
     categoryName: m['categoryName'] as String?,
-    // Lire 'unitPrice' en priorité, fallback sur alias 'price' (anciens docs orders)
+    // Lire 'unitPrice' en priorité, fallback sur alias 'price'
     unitPrice: (m['unitPrice'] as num?)?.toDouble()
         ?? (m['price'] as num?)?.toDouble()
         ?? 0,
     quantity: (m['quantity'] as num?)?.toInt() ?? 1,
     comment: m['comment'] as String?,
     imageUrl: m['imageUrl'] as String?,
+    itemType: m['itemType'] as String? ?? 'menu', // défaut rétrocompat
   );
 
   CartItem copyWith({int? quantity, String? comment}) => CartItem(
@@ -362,6 +399,7 @@ class CartItem {
     quantity: quantity ?? this.quantity,
     comment: comment ?? this.comment,
     imageUrl: imageUrl,
+    itemType: itemType,
   );
 }
 
@@ -578,7 +616,8 @@ class ClientOrder {
     items: (m['items'] as List?)
         ?.map((i) => CartItem.fromMap(i as Map<String, dynamic>))
         .toList() ?? [],
-    status: ClientOrderStatus.values[(m['status'] as num?)?.toInt() ?? 0],
+    status: ClientOrderStatus.values[((m['status'] as num?)?.toInt() ?? 0)
+        .clamp(0, ClientOrderStatus.values.length - 1)],
     orderType: OrderType.values[(m['orderType'] as num?)?.toInt() ?? 0],
     deliveryAddress: m['deliveryAddress'] != null
         ? DeliveryAddress.fromMap(m['deliveryAddress'] as Map<String, dynamic>)
@@ -999,4 +1038,49 @@ class ClientSupportTicket {
             : null,
         adminResponse: m['adminResponse'] as String?,
       );
+}
+
+// ── ReferralTransaction ────────────────────────────────────────────────────
+// Enregistre les bonus de parrainage (parrain + filleul)
+
+class ReferralTransaction {
+  final String id;
+  final String referrerId;    // clientId du parrain
+  final String referreeId;    // clientId du filleul
+  final int referrerPoints;   // points crédités au parrain
+  final int referreePoints;   // points crédités au filleul
+  final String orderId;       // commande déclenchante
+  final DateTime createdAt;
+
+  ReferralTransaction({
+    required this.id,
+    required this.referrerId,
+    required this.referreeId,
+    required this.referrerPoints,
+    required this.referreePoints,
+    required this.orderId,
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  Map<String, dynamic> toMap() => {
+    'id':             id,
+    'referrerId':     referrerId,
+    'referreeId':     referreeId,
+    'referrerPoints': referrerPoints,
+    'referreePoints': referreePoints,
+    'orderId':        orderId,
+    'createdAt':      createdAt.millisecondsSinceEpoch,
+  };
+
+  factory ReferralTransaction.fromMap(Map<String, dynamic> m) => ReferralTransaction(
+    id:             m['id'] as String? ?? '',
+    referrerId:     m['referrerId'] as String? ?? '',
+    referreeId:     m['referreeId'] as String? ?? '',
+    referrerPoints: (m['referrerPoints'] as num?)?.toInt() ?? 0,
+    referreePoints: (m['referreePoints'] as num?)?.toInt() ?? 0,
+    orderId:        m['orderId'] as String? ?? '',
+    createdAt: m['createdAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['createdAt'] as int)
+        : DateTime.now(),
+  );
 }
