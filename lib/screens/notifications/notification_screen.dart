@@ -152,10 +152,6 @@ class _SettingsTabState extends State<_SettingsTab> {
           const SizedBox(height: 12),
         ],
 
-        // ── Indicateur sync Firestore ─────────────────────────────────
-        _SyncStatusBanner(svc: s),
-        const SizedBox(height: 12),
-
         // ════════════════════════════════════
         // 1. PARAMÈTRES SONS
         // ════════════════════════════════════

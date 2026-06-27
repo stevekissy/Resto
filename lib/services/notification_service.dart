@@ -347,31 +347,38 @@ class NotificationService extends ChangeNotifier {
         final message   = data['message'] as String? ?? '';
         final event     = _firestoreTypeToEvent(eventType);
 
+        // ── Lire l'état lu/non lu depuis Firestore ────────────────────
+        // 'read' peut valoir true (déjà lu avant ce login) ou false/absent
+        final alreadyRead = data['read'] as bool? ?? false;
+
         // ── Créer la notification locale (toujours, pour l'historique) ─
         final notif = AppNotification(
           id:       docId,
           event:    event,
           message:  message,
           dateTime: notifCreatedAt,
-          isRead:   false,
+          isRead:   alreadyRead,   // ← état persisté depuis Firestore
         );
         _history.insert(0, notif);
         if (_history.length > 200) _history.removeRange(200, _history.length);
 
-        // ── Son : uniquement pour les notifications APRÈS le login ─────
-        // Règle : notification.createdAt > adminLoginAt  → son joué
-        //         notification.createdAt ≤ adminLoginAt  → silencieux
-        //         (notification existait avant la connexion)
+        // ── Son : uniquement si non lu ET après le login ──────────────
+        // Règle combinée :
+        //   1. notification.createdAt > adminLoginAt  (nouvelle depuis ce login)
+        //   2. read == false dans Firestore           (pas encore lue)
+        // Si l'une des deux conditions échoue → silencieux
         final loginAt = _adminLoginAt;
         final isNewSinceLogin = loginAt != null &&
             notifCreatedAt.isAfter(loginAt);
 
-        if (isNewSinceLogin) {
+        if (isNewSinceLogin && !alreadyRead) {
           _playForEvent(event);
         } else {
           if (kDebugMode) {
             debugPrint(
-              '[NotifSvc] 🔕 Silencieux (avant login) : $docId'
+              '[NotifSvc] 🔕 Silencieux : $docId'
+              ' | alreadyRead=$alreadyRead'
+              ' | newSinceLogin=$isNewSinceLogin'
               ' | notif=${notifCreatedAt.toIso8601String()}'
               ' | login=${loginAt?.toIso8601String()}',
             );
@@ -1046,13 +1053,52 @@ class NotificationService extends ChangeNotifier {
       // Si c'était l'alerte urgente, stopper la boucle
       if (id == _urgentEventId) stopUrgentLoop();
       notifyListeners();
+      // Persister dans Firestore (non-bloquant)
+      unawaited(_markReadInFirestore(id));
     }
   }
 
   void markAllRead() {
-    for (final n in _history) n.isRead = true;
+    for (final n in _history) {
+      n.isRead = true;
+    }
     stopUrgentLoop();
     notifyListeners();
+    // Persister TOUS dans Firestore (non-bloquant)
+    unawaited(_markAllReadInFirestore());
+  }
+
+  /// Marque un document Firestore comme lu (read: true)
+  Future<void> _markReadInFirestore(String docId) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('notifications')
+          .doc(docId)
+          .update({'read': true});
+      if (kDebugMode) debugPrint('[NotifSvc] ✅ Marqué lu Firestore: $docId');
+    } catch (e) {
+      if (kDebugMode) debugPrint('[NotifSvc] _markReadInFirestore erreur: $e');
+    }
+  }
+
+  /// Marque tous les documents non lus comme lus dans Firestore
+  Future<void> _markAllReadInFirestore() async {
+    try {
+      final unreadIds = _history.where((n) => n.isRead).map((n) => n.id).toList();
+      if (unreadIds.isEmpty) return;
+      // WriteBatch pour écriture atomique
+      final batch = FirebaseFirestore.instance.batch();
+      for (final id in unreadIds) {
+        // Ne tenter de mettre à jour que les vrais IDs Firestore (pas les IDs locaux synthétiques)
+        if (id.contains('_') && id.length < 20) continue; // IDs locaux: "commandeUrgente_1234567"
+        final ref = FirebaseFirestore.instance.collection('notifications').doc(id);
+        batch.update(ref, {'read': true});
+      }
+      await batch.commit();
+      if (kDebugMode) debugPrint('[NotifSvc] ✅ Tout marqué lu Firestore (${unreadIds.length} docs)');
+    } catch (e) {
+      if (kDebugMode) debugPrint('[NotifSvc] _markAllReadInFirestore erreur: $e');
+    }
   }
 
   void clearHistory() {
