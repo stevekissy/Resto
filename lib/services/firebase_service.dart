@@ -419,8 +419,15 @@ class FirebaseService {
             settlementStatus: data['settlementStatus'] as String?,
             // ── Commandes en ligne ────────────────────────────────────
             orderType: _parseOrderType(data['orderType'], data['tableNumber'] as String?),
-            source: data['source'] as String?
-                ?? data['orderSource'] as String? ?? 'pos',
+            // CRITIQUE : lire orderSource ET source pour couvrir les deux formats
+            // ClientFirebaseService écrit orderSource='online', firebase_service écrit source='online'
+            source: (() {
+              final s = data['source'] as String?;
+              final os = data['orderSource'] as String?;
+              // Si l'un des deux vaut 'online', la commande est en ligne
+              if (s == 'online' || os == 'online') return 'online';
+              return s ?? os ?? 'pos';
+            })(),
             clientId: data['clientId'] as String?,
             clientPhone: data['clientPhone'] as String?,
             // ── Workflow cuisine commandes en ligne ───────────────────
@@ -460,12 +467,28 @@ class FirebaseService {
         final rawComment = m['comment'] as String? ?? '';
         final specialComment = (m['specialComment'] as String?)
             ?? (rawComment.isNotEmpty ? rawComment : null);
+        // ── itemType + isCambuse ──────────────────────────────────────────
+        // Les commandes en ligne stockent itemType='menu'/'cambuse'.
+        // Les commandes POS peuvent stocker isCambuse=true.
+        // On lit les DEUX et on les combine pour éviter les faux-négatifs.
+        final isCamb = m['isCambuse'] as bool? ?? false;
+        final rawItemType = m['itemType'] as String?;
+        // Priorité : itemType explicite > isCambuse > défaut 'menu'
+        final resolvedItemType = rawItemType?.isNotEmpty == true
+            ? rawItemType!
+            : (isCamb ? 'cambuse' : 'menu');
+        final resolvedIsCambuse = isCamb || resolvedItemType == 'cambuse';
+
         return OrderItem(
           productId: m['productId'] as String? ?? '',
           productName: productName,
           quantity: (m['quantity'] as num?)?.toInt() ?? 1,
           unitPrice: unitPrice,
           specialComment: specialComment,
+          isCambuse: resolvedIsCambuse,
+          cambuseItemId: m['cambuseItemId'] as String?,
+          category: m['category'] as String?,
+          itemType: resolvedItemType,
         );
       }).toList();
     } catch (e) {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
@@ -65,26 +66,39 @@ class _KitchenScreenState extends State<KitchenScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    // Filtre cuisine :
-    // - Commandes POS normales : status pending ou preparing
-    // - Commandes en ligne : sentToKitchen==true ET kitchenStatus actif (waiting/preparing)
-    final activeOrders = provider.orders.where((o) {
-      // Ignorer les commandes annulées
-      if (o.status == OrderStatus.cancelled) return false;
-      // ── RÈGLE MÉTIER : exclure les commandes sans plats cuisine ──────────
-      // Les commandes 100% Cambuse (boissons seules) ne passent JAMAIS en cuisine
-      if (!o.hasKitchenItems) return false;
-      // Commandes en ligne : exiger sentToKitchen == true
-      if (o.isOnlineOrder) {
-        if (!o.sentToKitchen) return false;
-        final ks = o.kitchenStatus ?? '';
-        // 'waiting' = envoyée par admin, pas encore prise en cuisine
-        // 'preparing' = cuisine a commencé
-        return ks == 'waiting' || ks == 'preparing' || ks == 'pending';
+
+    // ── LOG DEBUG : afficher toutes les commandes reçues dans le stream ──
+    final allOrders = provider.orders;
+    if (kDebugMode) {
+      debugPrint('[CUISINE] Stream reçu : ${allOrders.length} commandes total');
+      for (final o in allOrders) {
+        debugPrint(
+          '[CUISINE] id=${o.id.substring(0, 12)}… '
+          'source=${o.source} isOnline=${o.isOnlineOrder} '
+          'sentToKitchen=${o.sentToKitchen} kitchenStatus=${o.kitchenStatus} '
+          'hasKitchenItems=${o.hasKitchenItems} status=${o.status.name}',
+        );
       }
-      // Commandes POS : filtre habituel
+    }
+
+    // ── Commandes online envoyées en cuisine (filtre principal) ──────────
+    final onlineInKitchen = allOrders.where((o) {
+      if (!o.isOnlineOrder) return false;
+      if (!o.sentToKitchen) return false;
+      if (!o.hasKitchenItems) return false;
+      final ks = o.kitchenStatus ?? '';
+      return ks == 'pending' || ks == 'waiting' || ks == 'preparing';
+    }).toList();
+
+    // ── Commandes POS actives (filtre habituel) ───────────────────────────
+    final posActive = allOrders.where((o) {
+      if (o.isOnlineOrder) return false;
+      if (o.status == OrderStatus.cancelled) return false;
+      if (!o.hasKitchenItems) return false;
       return o.status == OrderStatus.pending || o.status == OrderStatus.preparing;
-    }).toList()
+    }).toList();
+
+    final activeOrders = [...onlineInKitchen, ...posActive]
       ..sort((a, b) {
         if (a.isUrgent && !b.isUrgent) return -1;
         if (!a.isUrgent && b.isUrgent) return 1;
@@ -93,6 +107,11 @@ class _KitchenScreenState extends State<KitchenScreen> {
 
     final readyOrders = provider.readyOrders;
 
+    // ── Bandeau debug visible en cuisine ──────────────────────────────────
+    final onlineTotal = allOrders.where((o) => o.isOnlineOrder).length;
+    final onlineSent  = allOrders.where((o) => o.isOnlineOrder && o.sentToKitchen).length;
+    final onlineKitchenIds = onlineInKitchen.map((o) => o.id.substring(0, 10)).join(', ');
+
     return Scaffold(
       body: Column(
         children: [
@@ -100,6 +119,32 @@ class _KitchenScreenState extends State<KitchenScreen> {
             provider: provider,
             tts: _tts,
             onSettingsChanged: () => setState(() {}),
+          ),
+          // ── Bandeau debug stream (visible pour diagnostic) ────────────
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            color: const Color(0xFF0D1B2A),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '🔎 Stream cuisine : ${allOrders.length} total · $onlineTotal online · $onlineSent envoyées en cuisine · ${onlineInKitchen.length} actives',
+                  style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 10, fontFamily: 'monospace'),
+                ),
+                if (onlineInKitchen.isNotEmpty)
+                  Text(
+                    '📋 orderId cuisine : $onlineKitchenIds…',
+                    style: const TextStyle(color: Color(0xFF81C784), fontSize: 10, fontFamily: 'monospace'),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                if (onlineInKitchen.isEmpty && onlineSent > 0)
+                  Text(
+                    '⚠ ${onlineSent} commande(s) online envoyées mais filtrées — vérifier kitchenStatus',
+                    style: const TextStyle(color: Color(0xFFFFB74D), fontSize: 10, fontFamily: 'monospace'),
+                  ),
+              ],
+            ),
           ),
           Expanded(
             child: activeOrders.isEmpty && readyOrders.isEmpty

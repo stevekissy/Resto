@@ -67,9 +67,12 @@ class AppProvider extends ChangeNotifier {
   List<Order> get orders => _orders;
   /// Commandes POS en attente — exclure les commandes 100% Cambuse
   /// (les boissons seules vont directement en caisse, pas en cuisine)
-  List<Order> get pendingOrders => _orders.where((o) =>
-    o.status == OrderStatus.pending && o.hasKitchenItems
-  ).toList();
+  /// IMPORTANT : exclure aussi les commandes online déjà envoyées en cuisine
+  /// (elles passent par le filtre isOnlineOrder dans kitchen_screen)
+  List<Order> get pendingOrders => _orders.where((o) {
+    if (o.isOnlineOrder) return false; // géré séparément par le filtre online
+    return o.status == OrderStatus.pending && o.hasKitchenItems;
+  }).toList();
 
   List<Order> get preparingOrders => _orders.where((o) => o.status == OrderStatus.preparing).toList();
 
