@@ -156,7 +156,8 @@ void main() async {
 // ══════════════════════════════════════════════════════════════════════
 //  APPLICATION PRINCIPALE
 //  hasSession = true  → affiche directement MainScreen (pas de flash login)
-//  hasSession = false → affiche LoginScreen
+//  hasSession = false → affiche ClientMainScreen (espace client = accueil)
+//                       Le bouton "Accès gestion" ouvre LoginScreen.
 // ══════════════════════════════════════════════════════════════════════
 class SankadiokroApp extends StatelessWidget {
   final AppProvider provider;
@@ -203,7 +204,10 @@ class SankadiokroApp extends StatelessWidget {
 //
 //  Logique :
 //  • hasSession = true  → MainScreen directement (session restaurée)
-//  • hasSession = false → LoginScreen
+//  • hasSession = false → ClientMainScreen(showManagementButton: true)
+//                         ← Espace Client = accueil principal
+//                         Le bouton "Accès gestion" (discret, en bas)
+//                         ouvre LoginScreen pour le staff.
 //
 //  De plus, écoute FirebaseAuth.authStateChanges() pour réagir aux
 //  connexions/déconnexions PENDANT la session (ex: expiration token).
@@ -293,12 +297,12 @@ class _AuthGateState extends State<_AuthGate> {
   @override
   Widget build(BuildContext context) {
     // _authenticated peut être null uniquement si Firebase n'a pas encore
-    // émis d'événement authStateChanges — afficher LoginScreen immédiatement
-    // plutôt qu'un spinner bloquant.
+    // émis d'événement authStateChanges.
     if (_authenticated == null || _authenticated == false) {
-      // Aucune session → écran de connexion Gestion par défaut.
-      // Le bouton "Vous êtes client ? Commander en ligne" navigue vers ClientAuthScreen.
-      return LoginScreen(firebaseInitError: widget.firebaseError);
+      // ── Aucune session → Espace Client en accueil principal ──────────
+      // Le bouton discret "Accès gestion" (showManagementButton: true) permet
+      // à l'équipe de naviguer vers LoginScreen sans changer le design.
+      return const ClientMainScreen(showManagementButton: true);
     }
 
     // Session active confirmée → détecter le rôle (client vs staff)
@@ -436,13 +440,13 @@ class _SplashScreenState extends State<_SplashScreen>
     _controller.forward();
 
     // Sécurité anti-blocage : si le splash reste affiché plus de 6s,
-    // basculer vers LoginScreen pour ne jamais bloquer l'utilisateur.
+    // basculer vers l'espace client (accueil principal) pour ne jamais bloquer.
     _safetyTimer = Timer(const Duration(seconds: 6), () {
       if (mounted) {
-        debugPrint('[SplashScreen] ⚠ Timeout 6s — basculement forcé vers LoginScreen');
+        debugPrint('[SplashScreen] ⚠ Timeout 6s — basculement forcé vers ClientMainScreen');
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => const LoginScreen(),
+            builder: (_) => const ClientMainScreen(showManagementButton: true),
           ),
           (route) => false,
         );

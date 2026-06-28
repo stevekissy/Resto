@@ -169,13 +169,13 @@ class _ManagementModeButton extends StatelessWidget {
               Icon(
                 Icons.admin_panel_settings_outlined,
                 size: 13,
-                color: AppTheme.textSecondary.withValues(alpha: 0.6),
+                color: AppTheme.textSecondary.withValues(alpha: 0.5),
               ),
               const SizedBox(width: 6),
               Text(
-                'Passer en mode gestion',
+                'Accès gestion',
                 style: TextStyle(
-                  color: AppTheme.textSecondary.withValues(alpha: 0.6),
+                  color: AppTheme.textSecondary.withValues(alpha: 0.5),
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0.2,
