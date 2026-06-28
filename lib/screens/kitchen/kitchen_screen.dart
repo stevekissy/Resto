@@ -186,24 +186,25 @@ class _KitchenScreenState extends State<KitchenScreen> {
                           ],
                         ),
                         const SizedBox(height: 12),
-                        GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            // ✅ FIX: ratio abaissé de 0.7 → 0.62 pour éviter le clipping
-                            // des boutons Action en bas de la carte (Commencer / Prêt)
-                            childAspectRatio: 0.62,
-                          ),
-                          itemCount: activeOrders.length,
-                          itemBuilder: (context, i) => _KitchenOrderCard(
-                            order: activeOrders[i],
-                            provider: provider,
-                            tts: _tts,
-                          ),
-                        ),
+                        // Remplacement GridView → LayoutBuilder + Wrap
+                        // Raison : GridView impose childAspectRatio qui clippe les boutons
+                        // quand la carte dépasse la hauteur prévue.
+                        // Wrap + largeur fixe = cartes à hauteur naturelle, boutons toujours visibles.
+                        LayoutBuilder(builder: (ctx, constraints) {
+                          final cardW = (constraints.maxWidth - 12) / 2;
+                          return Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: activeOrders.map((o) => SizedBox(
+                              width: cardW,
+                              child: _KitchenOrderCard(
+                                order: o,
+                                provider: provider,
+                                tts: _tts,
+                              ),
+                            )).toList(),
+                          );
+                        }),
                       ],
                       if (readyOrders.isNotEmpty) ...[
                         const SizedBox(height: 20),
@@ -1182,7 +1183,9 @@ class _StatBubble extends StatelessWidget {
 }
 
 // ======================================================================
-// KITCHEN ORDER CARD
+// KITCHEN ORDER CARD  — v3 reconstruction complète
+// Architecture sans Expanded+ListView imbriqués pour éviter tout
+// problème de hit-testing. Boutons : ElevatedButton natifs Flutter.
 // ======================================================================
 
 class _KitchenOrderCard extends StatefulWidget {
@@ -1203,17 +1206,14 @@ class _KitchenOrderCard extends StatefulWidget {
 class _KitchenOrderCardState extends State<_KitchenOrderCard> {
   late Timer _timer;
   int _elapsed = 0;
+  bool _isUpdating = false; // verrou pour éviter double-clic
 
   @override
   void initState() {
     super.initState();
     _elapsed = widget.order.elapsedMinutes;
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() {
-          _elapsed = widget.order.elapsedMinutes;
-        });
-      }
+      if (mounted) setState(() { _elapsed = widget.order.elapsedMinutes; });
     });
   }
 
@@ -1234,25 +1234,112 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
     return '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
   }
 
+  // ── Action principale : met à jour Firestore + log visible ─────────────
+  Future<void> _doAction(BuildContext ctx, OrderStatus nextStatus) async {
+    if (_isUpdating) return;
+    final orderId = widget.order.id;
+    final ks      = widget.order.kitchenStatus ?? '';
+
+    debugPrint('');
+    debugPrint('╔══════════════════════════════════════════════════════╗');
+    debugPrint('║  CLIC CUISINE orderId=${orderId.substring(0,12)}…');
+    debugPrint('║  kitchenStatus=$ks  nextStatus=${nextStatus.name}');
+    debugPrint('║  user=${widget.provider.currentUser?.email ?? "NULL"}');
+    debugPrint('╚══════════════════════════════════════════════════════╝');
+
+    setState(() => _isUpdating = true);
+    try {
+      await widget.provider.updateOrderStatus(orderId, nextStatus);
+
+      debugPrint('✅ CLIC COMMENCER OK orderId=$orderId → ${nextStatus.name}');
+
+      if (nextStatus == OrderStatus.ready) {
+        widget.tts.announceOrderReady(widget.order);
+      }
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+          content: Text('✅ ${_labelForStatus(nextStatus)} — #${widget.order.orderNumber}'),
+          backgroundColor: _colorForStatus(nextStatus),
+          duration: const Duration(seconds: 2),
+        ));
+      }
+    } catch (e) {
+      debugPrint('❌ ERREUR CLIC CUISINE: $e');
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+          content: Text('Erreur: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
+  String _labelForStatus(OrderStatus s) {
+    switch (s) {
+      case OrderStatus.preparing: return 'En préparation';
+      case OrderStatus.ready:     return 'Prête !';
+      case OrderStatus.served:    return 'Servie';
+      case OrderStatus.cancelled: return 'Annulée';
+      default:                    return s.name;
+    }
+  }
+
+  Color _colorForStatus(OrderStatus s) {
+    switch (s) {
+      case OrderStatus.preparing: return AppTheme.preparing;
+      case OrderStatus.ready:     return AppTheme.ready;
+      case OrderStatus.served:    return AppTheme.success;
+      case OrderStatus.cancelled: return AppTheme.error;
+      default:                    return AppTheme.primary;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final order = widget.order;
-    final isLate = _elapsed >= 20;
-    final elapsedSecs = DateTime.now().difference(order.createdAt).inSeconds;
-    final mins = elapsedSecs ~/ 60;
-    final secs = elapsedSecs % 60;
+    final order   = widget.order;
+    final isLate  = _elapsed >= 20;
+    final elapsed = DateTime.now().difference(order.createdAt);
+    final mins    = elapsed.inMinutes;
+    final secs    = elapsed.inSeconds % 60;
 
-    // Ne calculer le temps de préparation que sur les articles cuisine (pas les boissons)
-    final kitchenOnlyItems = order.items.where((i) => !i.isCambuse).toList();
-    final maxCookTime = kitchenOnlyItems.isEmpty
-        ? 20
-        : kitchenOnlyItems.fold<double>(0, (m, i) {
-            final product = widget.provider.products.firstWhere(
+    // ── Statut courant ───────────────────────────────────────────────────
+    // Pour les commandes online on utilise kitchenStatus (source de vérité).
+    // Pour les commandes POS on utilise status.
+    final String ks       = order.kitchenStatus ?? '';
+    final bool   isOnline = order.isOnlineOrder;
+
+    // Normalisation : toutes les valeurs qui signifient "pas encore commencée"
+    final bool isPending = isOnline
+        ? (ks == 'pending' || ks == 'waiting' || ks == 'sent_to_kitchen' || ks.isEmpty)
+        : (order.status == OrderStatus.pending);
+
+    final bool isPreparing = isOnline
+        ? (ks == 'preparing')
+        : (order.status == OrderStatus.preparing);
+
+    final bool isReady = isOnline
+        ? (ks == 'ready')
+        : (order.status == OrderStatus.ready);
+
+    // ── Autorisation ────────────────────────────────────────────────────
+    final role           = widget.provider.currentUser?.role;
+    final canKitchen     = role == UserRole.kitchen ||
+                           role == UserRole.admin   ||
+                           role == UserRole.manager;
+    final canServe       = canKitchen || role == UserRole.server;
+
+    // Temps de cuisson
+    final kitchenItems  = order.items.where((i) => i.isKitchenItem).toList();
+    final maxCookTime   = kitchenItems.isEmpty ? 20.0
+        : kitchenItems.fold<double>(0, (m, i) {
+            final p = widget.provider.products.firstWhere(
               (p) => p.id == i.productId,
-              orElse: () => Product(
-                id: '', name: '', category: '', price: 0, prepTime: 20),
+              orElse: () => Product(id:'',name:'',category:'',price:0,prepTime:20),
             );
-            return product.prepTime > m ? product.prepTime : m;
+            return p.prepTime > m ? p.prepTime.toDouble() : m;
           });
     final remainingMins = (maxCookTime - mins).clamp(0, maxCookTime.toInt());
     final progressValue = (mins / maxCookTime).clamp(0.0, 1.0);
@@ -1262,444 +1349,403 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
         color: AppTheme.cardBg,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isLate
-              ? AppTheme.error
-              : (order.isUrgent
-                  ? AppTheme.warning
-                  : order.statusColor.withValues(alpha: 0.5)),
+          color: isLate ? AppTheme.error
+              : order.isUrgent ? AppTheme.warning
+              : order.statusColor.withValues(alpha: 0.5),
           width: isLate || order.isUrgent ? 2 : 1,
         ),
         boxShadow: isLate
             ? [BoxShadow(color: AppTheme.error.withValues(alpha: 0.3), blurRadius: 15)]
             : null,
       ),
+      // ── PAS de Expanded ni de ListView ici — Column à hauteur naturelle ──
       child: Column(
+        mainAxisSize: MainAxisSize.min,  // ← clé : la carte prend sa taille naturelle
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header
+
+          // ── HEADER ──────────────────────────────────────────────────────
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
               color: order.statusColor.withValues(alpha: 0.1),
               borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
             ),
-            child: Column(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              '#${order.orderNumber}',
-                              style: TextStyle(
-                                color: order.statusColor,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 18,
+                // Gauche : numéro + nom + téléphone
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text('#${order.orderNumber}',
+                            style: TextStyle(color: order.statusColor,
+                                fontWeight: FontWeight.w900, fontSize: 17)),
+                          if (order.isOnlineOrder) ...[
+                            const SizedBox(width: 5),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF3F51B5).withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: const Color(0xFF3F51B5).withValues(alpha: 0.6)),
                               ),
+                              child: const Text('📱 EN LIGNE',
+                                  style: TextStyle(color: Color(0xFF7986CB),
+                                      fontSize: 8, fontWeight: FontWeight.w900)),
                             ),
-                            // Badge EN LIGNE
-                            if (order.isOnlineOrder) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF3F51B5).withValues(alpha: 0.2),
-                                  borderRadius: BorderRadius.circular(5),
-                                  border: Border.all(color: const Color(0xFF3F51B5).withValues(alpha: 0.6)),
-                                ),
-                                child: const Text('📱 EN LIGNE',
-                                    style: TextStyle(color: Color(0xFF7986CB), fontSize: 9, fontWeight: FontWeight.w900)),
-                              ),
-                            ],
                           ],
+                        ],
+                      ),
+                      Text(
+                        (order.isOnlineOrder && (order.clientName?.isNotEmpty ?? false))
+                            ? order.clientName!
+                            : order.tableLabel,
+                        style: const TextStyle(color: Colors.white,
+                            fontWeight: FontWeight.w700, fontSize: 13),
+                      ),
+                      if (order.isOnlineOrder && (order.clientPhone?.isNotEmpty ?? false))
+                        Row(children: [
+                          const Icon(Icons.phone_outlined, size: 9, color: Color(0xFF7986CB)),
+                          const SizedBox(width: 2),
+                          Text(order.clientPhone!,
+                              style: const TextStyle(color: Color(0xFF7986CB),
+                                  fontSize: 9, fontWeight: FontWeight.w600)),
+                        ]),
+                    ],
+                  ),
+                ),
+                // Droite : URGENT + heure + badge statut + type livraison
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (order.isUrgent)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                            color: AppTheme.error, borderRadius: BorderRadius.circular(6)),
+                        child: const Text('🚨 URGENT',
+                            style: TextStyle(color: Colors.white,
+                                fontSize: 9, fontWeight: FontWeight.w900)),
+                      ),
+                    const SizedBox(height: 2),
+                    Text('à $_exactTime',
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9)),
+                    const SizedBox(height: 2),
+                    StatusBadge(label: order.statusLabel, color: order.statusColor, fontSize: 9),
+                    if (order.isOnlineOrder) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        order.isTakeaway ? '🏃 Emporter'
+                            : order.isDelivery ? '🚗 Livraison' : '🍽️ Sur place',
+                        style: TextStyle(
+                          color: order.isTakeaway ? AppTheme.success
+                              : order.isDelivery ? const Color(0xFFF57C00)
+                              : const Color(0xFF42A5F5),
+                          fontSize: 8, fontWeight: FontWeight.w700,
                         ),
-                        // Nom client (commandes en ligne) ou label table (POS)
-                        if (order.isOnlineOrder && (order.clientName?.isNotEmpty ?? false)) ...[
-                          Text(
-                            order.clientName!,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ] else ...[
-                          Text(
-                            order.tableLabel,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                        // Infos client (commande en ligne)
-                        if (order.isOnlineOrder && (order.clientPhone?.isNotEmpty ?? false)) ...[
-                          const SizedBox(height: 2),
-                          Row(
-                            children: [
-                              const Icon(Icons.phone_outlined, size: 10, color: Color(0xFF7986CB)),
-                              const SizedBox(width: 3),
-                              Text(
-                                order.clientPhone!,
-                                style: const TextStyle(color: Color(0xFF7986CB), fontSize: 10, fontWeight: FontWeight.w600),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ],
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        if (order.isUrgent)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: AppTheme.error,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              '🚨 URGENT',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Passé à $_exactTime',
-                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
-                        ),
-                        // Badge "En attente" si kitchenStatus='waiting', sinon badge statut normal
-                        if (order.isOnlineOrder && order.kitchenStatus == 'waiting') ...[
-                          const SizedBox(height: 3),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFF9800).withValues(alpha: 0.18),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: const Color(0xFFFF9800).withValues(alpha: 0.7)),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.hourglass_empty, size: 9, color: Color(0xFFFF9800)),
-                                SizedBox(width: 3),
-                                Text('En attente',
-                                    style: TextStyle(color: Color(0xFFFF9800), fontSize: 9, fontWeight: FontWeight.w800)),
-                              ],
-                            ),
-                          ),
-                        ] else ...[
-                          StatusBadge(
-                            label: order.statusLabel,
-                            color: order.statusColor,
-                            fontSize: 10,
-                          ),
-                        ],
-                        // Type : livraison / emporter / sur place
-                        if (order.isOnlineOrder) ...[
-                          const SizedBox(height: 2),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: order.isTakeaway
-                                  ? AppTheme.success.withValues(alpha: 0.15)
-                                  : order.isDelivery
-                                      ? const Color(0xFFF57C00).withValues(alpha: 0.15)
-                                      : const Color(0xFF42A5F5).withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(5),
-                            ),
-                            child: Text(
-                              order.isTakeaway
-                                  ? '🏃 Emporter'
-                                  : order.isDelivery
-                                      ? '🚗 Livraison'
-                                      : '🍽️ Sur place',
-                              style: TextStyle(
-                                color: order.isTakeaway
-                                    ? AppTheme.success
-                                    : order.isDelivery
-                                        ? const Color(0xFFF57C00)
-                                        : const Color(0xFF42A5F5),
-                                fontSize: 9, fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+                      ),
+                    ],
                   ],
                 ),
               ],
             ),
           ),
 
-          // Timer
+          // ── TIMER ───────────────────────────────────────────────────────
           Container(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             color: _timerColor.withValues(alpha: 0.08),
             child: Column(
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Icon(Icons.timer, color: _timerColor, size: 14),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}',
-                          style: TextStyle(
-                            color: _timerColor,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 18,
-                            fontFamily: 'monospace',
-                          ),
-                        ),
-                        if (isLate)
-                          Text(
-                            '  ⚠ RETARD',
-                            style: TextStyle(
-                              color: _timerColor,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                      ],
-                    ),
-                    Text(
-                      'Reste: ~${remainingMins}min',
-                      style: TextStyle(
-                        color: _timerColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
+                    Row(children: [
+                      Icon(Icons.timer, color: _timerColor, size: 13),
+                      const SizedBox(width: 3),
+                      Text(
+                        '${mins.toString().padLeft(2,'0')}:${secs.toString().padLeft(2,'0')}',
+                        style: TextStyle(color: _timerColor,
+                            fontWeight: FontWeight.w900, fontSize: 16,
+                            fontFamily: 'monospace'),
                       ),
-                    ),
+                      if (isLate)
+                        Text('  ⚠ RETARD',
+                            style: TextStyle(color: _timerColor,
+                                fontSize: 9, fontWeight: FontWeight.w700)),
+                    ]),
+                    Text('~${remainingMins}min',
+                        style: TextStyle(color: _timerColor,
+                            fontSize: 10, fontWeight: FontWeight.w600)),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
+                  borderRadius: BorderRadius.circular(3),
                   child: LinearProgressIndicator(
                     value: progressValue,
                     backgroundColor: AppTheme.surfaceLight,
                     valueColor: AlwaysStoppedAnimation<Color>(_timerColor),
-                    minHeight: 5,
+                    minHeight: 4,
                   ),
                 ),
               ],
             ),
           ),
 
-          // Items — les boissons Cambuse (isCambuse==true) ne passent PAS en cuisine
-          // ⚠️ BUG FIX: physics: NeverScrollableScrollPhysics() OBLIGATOIRE
-          // Sans ça, le ListView intercepte TOUS les événements tactiles et
-          // les GestureDetector des boutons Action (Commencer, Prêt) ne reçoivent
-          // jamais les onTap → boutons visibles mais non cliquables.
-          Builder(builder: (ctx) {
-            final kitchenItems = order.items.where((i) => !i.isCambuse).toList();
-            return Expanded(
-              child: ListView.builder(
-                physics: const NeverScrollableScrollPhysics(), // ✅ FIX CRITIQUE
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                itemCount: kitchenItems.length,
-                itemBuilder: (context, i) {
-                  final item = kitchenItems[i];
-                  return _KitchenItemRow(
-                    item: item,
-                    onChangeQty: (newQty) {
-                      widget.provider.updateOrderItemQuantity(
-                          order.id, item.productId, newQty);
-                    },
-                  );
-                },
-              ),
-            );
-          }),
+          // ── ARTICLES ─────────────────────────────────────────────────────
+          // Pas de ListView ni d'Expanded : on itère directement.
+          // Limité aux 4 premiers articles pour ne pas déborder.
+          ...() {
+            final items = kitchenItems.take(4).toList();
+            return items.map((item) => _KitchenItemRow(
+              item: item,
+              onChangeQty: (newQty) => widget.provider
+                  .updateOrderItemQuantity(order.id, item.productId, newQty),
+            )).toList();
+          }(),
 
-          if (order.specialInstructions != null) ...[
+          // Indicateur si plus de 4 articles
+          if (kitchenItems.length > 4)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+              child: Text('+${kitchenItems.length - 4} article(s) supplémentaire(s)',
+                  style: const TextStyle(color: AppTheme.textSecondary,
+                      fontSize: 10, fontStyle: FontStyle.italic)),
+            ),
+
+          // Note spéciale
+          if (order.specialInstructions != null)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               color: AppTheme.warning.withValues(alpha: 0.08),
-              child: Text(
-                '📝 ${order.specialInstructions}',
-                style: const TextStyle(
-                  color: AppTheme.warning,
-                  fontSize: 11,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
+              child: Text('📝 ${order.specialInstructions}',
+                  style: const TextStyle(color: AppTheme.warning,
+                      fontSize: 10, fontStyle: FontStyle.italic)),
             ),
-          ],
 
-          // Actions
-          Container(
-            padding: const EdgeInsets.all(10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => widget.tts.announceOrder(order),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primary.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
+          const SizedBox(height: 6),
+
+          // ── BOUTONS ACTION ───────────────────────────────────────────────
+          // ElevatedButton natifs — aucun GestureDetector, aucun Container
+          // transparent au-dessus. Chaque bouton a un onPressed NON NULL.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+            child: Builder(builder: (ctx) {
+              // ── Bouton principal : Commencer / Prêt / Servir ─────────────
+              Widget mainBtn;
+
+              if (isPending) {
+                // État : En attente → bouton "Commencer"
+                mainBtn = SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: _isUpdating
+                        ? const SizedBox(width: 14, height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.play_arrow, size: 16),
+                    label: Text(_isUpdating ? '...' : 'Commencer',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: canKitchen ? const Color(0xFF2196F3) : Colors.grey.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      elevation: 0,
+                    ),
+                    onPressed: _isUpdating ? null : () {
+                      if (!canKitchen) {
+                        _showRoleError(ctx, role);
+                        return;
+                      }
+                      _doAction(ctx, OrderStatus.preparing);
+                    },
+                  ),
+                );
+              } else if (isPreparing) {
+                // État : En préparation → bouton "Prêt"
+                mainBtn = SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: _isUpdating
+                        ? const SizedBox(width: 14, height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.check_circle, size: 16),
+                    label: Text(_isUpdating ? '...' : '✓ Prêt !',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: canKitchen ? const Color(0xFF4CAF50) : Colors.grey.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      elevation: 0,
+                    ),
+                    onPressed: _isUpdating ? null : () {
+                      if (!canKitchen) {
+                        _showRoleError(ctx, role);
+                        return;
+                      }
+                      _doAction(ctx, OrderStatus.ready);
+                    },
+                  ),
+                );
+              } else if (isReady) {
+                // État : Prête → bouton "Servie"
+                mainBtn = SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: _isUpdating
+                        ? const SizedBox(width: 14, height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.restaurant_menu, size: 16),
+                    label: Text(_isUpdating ? '...' : '✓ Servie',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: canServe ? const Color(0xFF00BCD4) : Colors.grey.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      elevation: 0,
+                    ),
+                    onPressed: _isUpdating ? null : () {
+                      if (!canServe) {
+                        _showRoleError(ctx, role);
+                        return;
+                      }
+                      _doAction(ctx, OrderStatus.served);
+                    },
+                  ),
+                );
+              } else {
+                // État inconnu → bouton désactivé avec diagnostic
+                mainBtn = SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey.shade800,
+                      foregroundColor: Colors.white54,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      elevation: 0,
+                    ),
+                    onPressed: () {
+                      debugPrint('[CUISINE] État inconnu: ks=$ks status=${order.status.name}');
+                      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                        content: Text('État: ks=$ks | status=${order.status.name}'),
+                        backgroundColor: Colors.grey.shade700,
+                      ));
+                    },
+                    child: Text('? ${ks.isEmpty ? order.status.name : ks}',
+                        style: const TextStyle(fontSize: 11)),
+                  ),
+                );
+              }
+
+              // ── Ligne secondaire : Écouter + Annuler ───────────────────
+              final secondRow = Row(
+                children: [
+                  // Bouton Écouter
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.record_voice_over, size: 13),
+                      label: const Text('Écouter',
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.primary,
+                        side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.5)),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.record_voice_over, color: AppTheme.primary, size: 16),
-                          SizedBox(width: 6),
-                          Text(
-                            'Écouter',
-                            style: TextStyle(
-                              color: AppTheme.primary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
+                      onPressed: () => widget.tts.announceOrder(order),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Builder(builder: (context) {
-                    final role = widget.provider.currentUser?.role;
-                    final canChangeStatus = role == UserRole.kitchen ||
-                                           role == UserRole.admin   ||
-                                           role == UserRole.manager;
-
-                    // ── Détermination de l'état actuel ────────────────────
-                    // Online  : kitchenStatus 'pending'|'preparing' → needsStart
-                    //           kitchenStatus 'preparing' → needsReady
-                    // POS     : status pending|preparing → needsStart
-                    //           status preparing → needsReady
-                    final String ks = order.kitchenStatus ?? '';
-                    final bool isOnline = order.isOnlineOrder;
-
-                    // Commande déjà « Commencée » (en préparation)
-                    final bool isInPreparation = isOnline
-                        ? (ks == 'preparing')
-                        : (order.status == OrderStatus.preparing);
-
-                    // Commande déjà « Prête » (kitchenStatus=ready ou status=ready)
-                    final bool isAlreadyReady = isOnline
-                        ? (ks == 'ready')
-                        : (order.status == OrderStatus.ready);
-
-                    // needsStart : pas encore commencée (pending / autre)
-                    final bool needsStart = !isInPreparation && !isAlreadyReady;
-
-                    // Label et couleur selon l'état
-                    final String btnLabel = needsStart
-                        ? 'Commencer'
-                        : (isInPreparation ? '✓ Prêt!' : '✓ Servir');
-                    final Color btnColor = canChangeStatus
-                        ? (needsStart
-                            ? AppTheme.preparing
-                            : (isInPreparation ? AppTheme.ready : AppTheme.success))
-                        : Colors.grey.shade700;
-
-                    return GestureDetector(
-                      behavior: HitTestBehavior.opaque, // ✅ FIX: capture TOUS les clics sur la surface
-                      onTap: canChangeStatus
-                          ? () async {
-                              // ── LOGS DEBUG ────────────────────────────────
-                              final statusBefore = isOnline ? ks : order.status.toString();
-                              debugPrint('[CUISINE][onTap] ▶ orderId=${order.id}');
-                              debugPrint('[CUISINE][onTap]   role=$role | canChange=$canChangeStatus');
-                              debugPrint('[CUISINE][onTap]   statusAvant=$statusBefore | needsStart=$needsStart | isInPrep=$isInPreparation');
-                              // ─────────────────────────────────────────────
-                              try {
-                                if (needsStart) {
-                                  debugPrint('[CUISINE][onTap]   → updateOrderStatus(preparing)');
-                                  await widget.provider.updateOrderStatus(
-                                      order.id, OrderStatus.preparing);
-                                  debugPrint('[CUISINE][onTap]   ✅ Firestore mis à jour → preparing');
-                                } else if (isInPreparation) {
-                                  debugPrint('[CUISINE][onTap]   → updateOrderStatus(ready)');
-                                  await widget.provider.updateOrderStatus(
-                                      order.id, OrderStatus.ready);
-                                  widget.tts.announceOrderReady(order);
-                                  debugPrint('[CUISINE][onTap]   ✅ Firestore mis à jour → ready');
-                                } else {
-                                  // Déjà ready → passer à served
-                                  debugPrint('[CUISINE][onTap]   → updateOrderStatus(served)');
-                                  await widget.provider.updateOrderStatus(
-                                      order.id, OrderStatus.served);
-                                  debugPrint('[CUISINE][onTap]   ✅ Firestore mis à jour → served');
-                                }
-                              } catch (e, st) {
-                                debugPrint('[CUISINE][onTap]   ❌ ERREUR Firestore: $e');
-                                debugPrint('[CUISINE][onTap]   STACKTRACE: $st');
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Erreur mise à jour: $e'),
-                                      backgroundColor: Colors.red,
-                                      duration: const Duration(seconds: 4),
-                                    ),
-                                  );
-                                }
-                              }
-                            }
-                          : () {
-                              debugPrint('[CUISINE][onTap]   ⛔ REFUSÉ — role=$role (currentUser=${widget.provider.currentUser?.email})');
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    role == null
-                                        ? 'Session expirée — reconnectez-vous'
-                                        : 'Action réservée à la cuisine (rôle actuel: ${role.name})',
-                                  ),
-                                  backgroundColor: Colors.orange,
-                                  duration: const Duration(seconds: 3),
-                                ),
-                              );
-                            },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        decoration: BoxDecoration(
-                          color: btnColor,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Center(
-                          child: Text(
-                            btnLabel,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
+                  const SizedBox(width: 6),
+                  // Bouton Annuler
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.cancel_outlined, size: 13),
+                      label: const Text('Annuler',
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.error,
+                        side: BorderSide(color: AppTheme.error.withValues(alpha: 0.5)),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
-                    );
-                  }),
-                ),
-              ],
-            ),
+                      onPressed: () => _confirmCancel(ctx),
+                    ),
+                  ),
+                ],
+              );
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  mainBtn,
+                  const SizedBox(height: 5),
+                  secondRow,
+                ],
+              );
+            }),
           ),
         ],
       ),
     );
   }
+
+  // ── Dialogue de confirmation annulation ─────────────────────────────────
+  void _confirmCancel(BuildContext ctx) {
+    final role = widget.provider.currentUser?.role;
+    final canCancel = role == UserRole.kitchen || role == UserRole.admin ||
+                      role == UserRole.manager;
+    if (!canCancel) { _showRoleError(ctx, role); return; }
+
+    showDialog(
+      context: ctx,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: AppTheme.cardBg,
+        title: const Text('Annuler la commande ?',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text('Commande #${widget.order.orderNumber} sera annulée.',
+            style: const TextStyle(color: AppTheme.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: const Text('Non', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            onPressed: () {
+              Navigator.pop(dCtx);
+              _doAction(ctx, OrderStatus.cancelled);
+            },
+            child: const Text('Oui, annuler', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Message d'erreur si rôle insuffisant ────────────────────────────────
+  void _showRoleError(BuildContext ctx, UserRole? role) {
+    debugPrint('[CUISINE] ⛔ REFUSÉ — role=$role email=${widget.provider.currentUser?.email}');
+    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+      content: Text(role == null
+          ? 'Session expirée — reconnectez-vous'
+          : 'Action réservée à la cuisine (rôle: ${role.name})'),
+      backgroundColor: Colors.orange,
+      duration: const Duration(seconds: 3),
+    ));
+  }
 }
 
 // ======================================================================
-// KITCHEN ITEM ROW
+// KITCHEN ITEM ROW  — liste compacte sans GestureDetector pour quantité
 // ======================================================================
 
 class _KitchenItemRow extends StatelessWidget {
@@ -1711,81 +1757,63 @@ class _KitchenItemRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      margin: const EdgeInsets.fromLTRB(8, 2, 8, 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
         color: AppTheme.surfaceLight,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
         border: Border.all(color: const Color(0xFF2A2A5A)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  item.productName,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => onChangeQty(item.quantity - 1),
-                    child: Container(
-                      width: 22,
-                      height: 22,
-                      decoration: BoxDecoration(
-                        color: AppTheme.error.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Icon(Icons.remove, size: 12, color: AppTheme.error),
-                    ),
-                  ),
-                  Container(
-                    width: 30,
-                    alignment: Alignment.center,
-                    child: Text(
-                      '${item.quantity}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () => onChangeQty(item.quantity + 1),
-                    child: Container(
-                      width: 22,
-                      height: 22,
-                      decoration: BoxDecoration(
-                        color: AppTheme.success.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Icon(Icons.add, size: 12, color: AppTheme.success),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          if (item.specialComment != null) ...[
-            const SizedBox(height: 2),
-            Text(
-              '💬 ${item.specialComment}',
-              style: const TextStyle(
-                color: AppTheme.warning,
-                fontSize: 10,
-                fontStyle: FontStyle.italic,
-              ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.productName,
+                    style: const TextStyle(color: Colors.white,
+                        fontSize: 11, fontWeight: FontWeight.w600)),
+                if (item.specialComment != null)
+                  Text('💬 ${item.specialComment}',
+                      style: const TextStyle(color: AppTheme.warning,
+                          fontSize: 9, fontStyle: FontStyle.italic)),
+              ],
             ),
-          ],
+          ),
+          // Contrôles quantité — InkWell pour meilleure réponse tactile
+          InkWell(
+            borderRadius: BorderRadius.circular(5),
+            onTap: () => onChangeQty(item.quantity - 1),
+            child: Container(
+              width: 22, height: 22,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppTheme.error.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: const Icon(Icons.remove, size: 12, color: AppTheme.error),
+            ),
+          ),
+          SizedBox(
+            width: 28,
+            child: Text('${item.quantity}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white,
+                    fontWeight: FontWeight.w900, fontSize: 13)),
+          ),
+          InkWell(
+            borderRadius: BorderRadius.circular(5),
+            onTap: () => onChangeQty(item.quantity + 1),
+            child: Container(
+              width: 22, height: 22,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppTheme.success.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: const Icon(Icons.add, size: 12, color: AppTheme.success),
+            ),
+          ),
         ],
       ),
     );
