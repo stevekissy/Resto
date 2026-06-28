@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' show min;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
@@ -155,6 +156,18 @@ class _NewOrderTabState extends State<NewOrderTab> {
       final item = _cartItems.firstWhere((i) => i.productId == productId);
       item.quantity += delta;
       if (item.quantity <= 0) _cartItems.removeWhere((i) => i.productId == productId);
+    });
+  }
+
+  void _setQtyDirect(String productId, int newQty) {
+    setState(() {
+      final idx = _cartItems.indexWhere((i) => i.productId == productId);
+      if (idx == -1) return;
+      if (newQty <= 0) {
+        _cartItems.removeAt(idx);
+      } else {
+        _cartItems[idx].quantity = newQty;
+      }
     });
   }
 
@@ -390,6 +403,11 @@ class _NewOrderTabState extends State<NewOrderTab> {
           onIncrease: (id) {
             _updateQty(id, 1);
             setSheetState(() {});
+          },
+          onSetQty: (id, v) {
+            _setQtyDirect(id, v);
+            setSheetState(() {});
+            if (_cartItems.isEmpty) Navigator.pop(ctx);
           },
           onSubmit: () { Navigator.pop(ctx); _submitOrder(); },
         ),
@@ -1005,18 +1023,17 @@ class _ProductCardState extends State<_ProductCard>
                     enabled: _qty > 1,
                     color: const Color(0xFF8888AA),
                   ),
-                  // Quantité
-                  Container(
+                  // Quantité éditable
+                  _EditableQty(
+                    quantity: _qty,
+                    maxStock: effectiveStock > 0 ? effectiveStock : null,
                     width: 38,
-                    alignment: Alignment.center,
-                    child: Text(
-                      '$_qty',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
+                    textStyle: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
                     ),
+                    onChanged: (v) => setState(() => _qty = v),
                   ),
                   // Bouton +
                   _QtyButton(
@@ -1238,10 +1255,11 @@ class _CambuseCardState extends State<_CambuseCard>
               Row(
                 children: [
                   _QtyButton(icon: Icons.remove, onTap: () { if (_qty > 1) setState(() => _qty--); }, enabled: _qty > 1, color: const Color(0xFF8888AA)),
-                  Container(
+                  _EditableQty(
+                    quantity: _qty,
                     width: 44,
-                    alignment: Alignment.center,
-                    child: Text('$_qty', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                    textStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                    onChanged: (v) => setState(() => _qty = v),
                   ),
                   _QtyButton(icon: Icons.add, onTap: () => setState(() => _qty++), enabled: true, color: AppTheme.success),
                   const Spacer(),
@@ -1309,6 +1327,146 @@ class _QtyButton extends StatelessWidget {
   }
 }
 
+// ── Widget quantité éditable ──────────────────────────────────────────────
+// Affiche la quantité en Text. Au tap → bascule sur un TextField numérique.
+// Valide sur Entrée ou perte de focus. Gère le stock max et la valeur min (1).
+class _EditableQty extends StatefulWidget {
+  final int quantity;
+  final int? maxStock;      // null = pas de limite
+  final TextStyle textStyle;
+  final double width;
+  final void Function(int newQty) onChanged;
+
+  const _EditableQty({
+    required this.quantity,
+    required this.onChanged,
+    required this.textStyle,
+    this.maxStock,
+    this.width = 38,
+  });
+
+  @override
+  State<_EditableQty> createState() => _EditableQtyState();
+}
+
+class _EditableQtyState extends State<_EditableQty> {
+  bool _editing = false;
+  late TextEditingController _ctrl;
+  late FocusNode _focus;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: '${widget.quantity}');
+    _focus = FocusNode();
+    _focus.addListener(() {
+      if (!_focus.hasFocus && _editing) _commit();
+    });
+  }
+
+  @override
+  void didUpdateWidget(_EditableQty old) {
+    super.didUpdateWidget(old);
+    // Sync si la quantité change depuis l'extérieur (ex: bouton +/-)
+    if (!_editing && old.quantity != widget.quantity) {
+      _ctrl.text = '${widget.quantity}';
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _startEdit() {
+    setState(() {
+      _editing = true;
+      _ctrl.text = '${widget.quantity}';
+    });
+    // Sélectionner tout le texte pour faciliter la saisie
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focus.requestFocus();
+      _ctrl.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _ctrl.text.length,
+      );
+    });
+  }
+
+  void _commit() {
+    final raw = int.tryParse(_ctrl.text.trim());
+    int newVal;
+    if (raw == null || raw <= 0) {
+      newVal = 1; // vide ou 0 → 1 par défaut
+    } else if (widget.maxStock != null && raw > widget.maxStock!) {
+      // Stock dépassé → snackbar + garder l'ancienne valeur
+      newVal = widget.quantity;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Quantité supérieure au stock disponible'),
+              backgroundColor: AppTheme.error,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      });
+    } else {
+      newVal = raw;
+    }
+    setState(() {
+      _editing = false;
+      _ctrl.text = '$newVal';
+    });
+    if (newVal != widget.quantity) widget.onChanged(newVal);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_editing) {
+      return SizedBox(
+        width: widget.width,
+        height: 28,
+        child: TextField(
+          controller: _ctrl,
+          focusNode: _focus,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          textAlign: TextAlign.center,
+          style: widget.textStyle,
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(5),
+              borderSide: const BorderSide(color: AppTheme.primary, width: 1),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(5),
+              borderSide: const BorderSide(color: AppTheme.primary, width: 1.5),
+            ),
+            filled: true,
+            fillColor: const Color(0xFF1E2640),
+          ),
+          onSubmitted: (_) => _commit(),
+        ),
+      );
+    }
+    // Mode affichage — tap pour éditer
+    return GestureDetector(
+      onTap: _startEdit,
+      child: Container(
+        width: widget.width,
+        alignment: Alignment.center,
+        child: Text('${widget.quantity}', style: widget.textStyle),
+      ),
+    );
+  }
+}
+
 // =================== PANIER BOTTOM SHEET PLEIN ÉCRAN ===================
 class _CartBottomSheet extends StatefulWidget {
   final List<OrderItem> cartItems;
@@ -1325,6 +1483,7 @@ class _CartBottomSheet extends StatefulWidget {
   final void Function(String id) onRemove;
   final void Function(String id) onDecrease;
   final void Function(String id) onIncrease;
+  final void Function(String id, int newQty) onSetQty;
   final VoidCallback onSubmit;
 
   const _CartBottomSheet({
@@ -1342,6 +1501,7 @@ class _CartBottomSheet extends StatefulWidget {
     required this.onRemove,
     required this.onDecrease,
     required this.onIncrease,
+    required this.onSetQty,
     required this.onSubmit,
   });
 
@@ -1484,6 +1644,7 @@ class _CartBottomSheetState extends State<_CartBottomSheet> {
                               onRemove: () => widget.onRemove(item.productId),
                               onDecrease: () => widget.onDecrease(item.productId),
                               onIncrease: () => widget.onIncrease(item.productId),
+                              onDirectQty: (v) => widget.onSetQty(item.productId, v),
                             );
                           },
                         ),
@@ -1710,12 +1871,14 @@ class _CartSheetItem extends StatelessWidget {
   final VoidCallback onRemove;
   final VoidCallback onDecrease;
   final VoidCallback onIncrease;
+  final void Function(int newQty)? onDirectQty;
 
   const _CartSheetItem({
     required this.item,
     required this.onRemove,
     required this.onDecrease,
     required this.onIncrease,
+    this.onDirectQty,
   });
 
   @override
@@ -1753,13 +1916,11 @@ class _CartSheetItem extends StatelessWidget {
           Row(
             children: [
               _QtyButton(icon: Icons.remove, onTap: onDecrease, enabled: item.quantity > 1, color: AppTheme.error),
-              SizedBox(
+              _EditableQty(
+                quantity: item.quantity,
                 width: 34,
-                child: Text(
-                  '${item.quantity}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
-                ),
+                textStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
+                onChanged: onDirectQty ?? (_) {},
               ),
               _QtyButton(icon: Icons.add, onTap: onIncrease, enabled: true, color: AppTheme.primary),
             ],
@@ -2666,8 +2827,13 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                       padding: EdgeInsets.zero, constraints: const BoxConstraints(),
                     ),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text('${item.quantity}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: _EditableQty(
+                        quantity: item.quantity,
+                        width: 32,
+                        textStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                        onChanged: (v) => setState(() { item.quantity = v; }),
+                      ),
                     ),
                     IconButton(
                       onPressed: () => setState(() { item.quantity++; }),
@@ -2930,6 +3096,7 @@ class _AddArticleSheetState extends State<_AddArticleSheet>
                                 ? () => setState(() => _productQty[p.id] = qty - 1)
                                 : null,
                             onIncrement: () => setState(() => _productQty[p.id] = qty + 1),
+                            onDirectQty: (v) => setState(() => _productQty[p.id] = v),
                           );
                         },
                       ),
@@ -2953,6 +3120,7 @@ class _AddArticleSheetState extends State<_AddArticleSheet>
                                 ? () => setState(() => _cambuseQty[c.id] = qty - 1)
                                 : null,
                             onIncrement: () => setState(() => _cambuseQty[c.id] = qty + 1),
+                            onDirectQty: (v) => setState(() => _cambuseQty[c.id] = v),
                           );
                         },
                       ),
@@ -3000,6 +3168,7 @@ class _ArticleRow extends StatelessWidget {
   final Color accentColor;
   final VoidCallback? onDecrement;
   final VoidCallback onIncrement;
+  final void Function(int newQty)? onDirectQty;
 
   const _ArticleRow({
     required this.name,
@@ -3009,6 +3178,7 @@ class _ArticleRow extends StatelessWidget {
     required this.accentColor,
     required this.onDecrement,
     required this.onIncrement,
+    this.onDirectQty,
   });
 
   @override
@@ -3048,18 +3218,16 @@ class _ArticleRow extends StatelessWidget {
             constraints: const BoxConstraints(),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: SizedBox(
-              width: 22,
-              child: Text(
-                '$quantity',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: isSelected ? Colors.white : AppTheme.textSecondary,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal,
-                  fontSize: 13,
-                ),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: _EditableQty(
+              quantity: quantity,
+              width: 28,
+              textStyle: TextStyle(
+                color: isSelected ? Colors.white : AppTheme.textSecondary,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal,
+                fontSize: 13,
               ),
+              onChanged: onDirectQty ?? (_) {},
             ),
           ),
           IconButton(

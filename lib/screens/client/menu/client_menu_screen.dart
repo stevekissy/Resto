@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../providers/client_provider.dart';
@@ -376,8 +377,12 @@ class _ProductCard extends StatelessWidget {
                             ),
                             Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 6),
-                              child: Text('$qty',
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13)),
+                              child: _ClientEditableQty(
+                                quantity: qty,
+                                textStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13),
+                                width: 26,
+                                onChanged: (v) => provider.updateCartQuantity(product.id, v),
+                              ),
                             ),
                             _QtyBtn(
                               icon: Icons.add,
@@ -404,6 +409,118 @@ class _ProductCard extends StatelessWidget {
         duration: const Duration(seconds: 1),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+}
+
+// ── Quantité éditable client menu ────────────────────────────────────────
+class _ClientEditableQty extends StatefulWidget {
+  final int quantity;
+  final TextStyle textStyle;
+  final double width;
+  final void Function(int newQty) onChanged;
+
+  const _ClientEditableQty({
+    required this.quantity,
+    required this.textStyle,
+    required this.width,
+    required this.onChanged,
+  });
+
+  @override
+  State<_ClientEditableQty> createState() => _ClientEditableQtyState();
+}
+
+class _ClientEditableQtyState extends State<_ClientEditableQty> {
+  bool _editing = false;
+  late TextEditingController _ctrl;
+  late FocusNode _focus;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: '${widget.quantity}');
+    _focus = FocusNode();
+    _focus.addListener(() {
+      if (!_focus.hasFocus && _editing) _commit();
+    });
+  }
+
+  @override
+  void didUpdateWidget(_ClientEditableQty old) {
+    super.didUpdateWidget(old);
+    if (!_editing && old.quantity != widget.quantity) {
+      _ctrl.text = '${widget.quantity}';
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _startEdit() {
+    setState(() {
+      _editing = true;
+      _ctrl.text = '${widget.quantity}';
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focus.requestFocus();
+      _ctrl.selection = TextSelection(
+        baseOffset: 0, extentOffset: _ctrl.text.length,
+      );
+    });
+  }
+
+  void _commit() {
+    final raw = int.tryParse(_ctrl.text.trim());
+    final newVal = (raw == null || raw <= 0) ? 1 : raw;
+    setState(() {
+      _editing = false;
+      _ctrl.text = '$newVal';
+    });
+    if (newVal != widget.quantity) widget.onChanged(newVal);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_editing) {
+      return SizedBox(
+        width: widget.width + 10,
+        height: 26,
+        child: TextField(
+          controller: _ctrl,
+          focusNode: _focus,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          textAlign: TextAlign.center,
+          style: widget.textStyle,
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(5),
+              borderSide: const BorderSide(color: AppTheme.primary, width: 1),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(5),
+              borderSide: const BorderSide(color: AppTheme.primary, width: 1.5),
+            ),
+            filled: true,
+            fillColor: const Color(0xFF1E2640),
+          ),
+          onSubmitted: (_) => _commit(),
+        ),
+      );
+    }
+    return GestureDetector(
+      onTap: _startEdit,
+      child: SizedBox(
+        width: widget.width,
+        child: Text('${widget.quantity}', textAlign: TextAlign.center, style: widget.textStyle),
       ),
     );
   }
