@@ -93,13 +93,17 @@ class AppProvider extends ChangeNotifier {
   ///  - Commandes avec plats : status doit être served
   ///  - Commandes Cambuse-only (boissons seules) : visibles dès création (served immédiat)
   ///  - Commandes en ligne : servies si kitchenStatus==served OU status==served
+  ///  - FIX : kitchenStatus=='served' utilisé en fallback car status int peut être mal parsé
   List<Order> get pendingCashoutOrders => _orders.where((o) {
     if (o.isPaid) return false;
     if (o.cashStatus == CashStatus.awaiting_payment) return false; // déjà en Tab 2
     if (o.cashStatus != CashStatus.pending_cashout) return false;
+    // Source de vérité fiable : kitchenStatus string 'served'
+    final ks = o.kitchenStatus ?? '';
+    if (ks == 'served') return true; // FIX : cuisine a marqué served → toujours visible en caisse
     // Commandes en ligne : servies si kitchenStatus==served OU status==served
     if (o.isOnlineOrder) {
-      return o.status == OrderStatus.served || o.kitchenStatus == 'served';
+      return o.status == OrderStatus.served || ks == 'served';
     }
     // Commandes POS Cambuse-only : visibles dès la création (status=served immédiat)
     if (o.isCambuseOnly) return o.status == OrderStatus.served;
@@ -1386,11 +1390,53 @@ class AppProvider extends ChangeNotifier {
   }
 
   /// Mise à jour statut cuisine — appelée EXCLUSIVEMENT depuis l'écran cuisine.
-  /// Pas de guard de rôle ici : l'utilisateur est déjà authentifié et autorisé
-  /// par la vérification dans _KitchenOrderCardState._doAction.
-  /// Écrit directement dans Firestore sans passer par le guard admin/manager.
+  /// Pas de guard de rôle ici : l'utilisateur est déjà authentifié et autorisé.
+  /// Pour "served" : génère aussi la facture provisoire si cashStatus==pending_cashout.
   Future<void> updateKitchenStatus(String orderId, OrderStatus status) async {
     debugPrint('[AppProvider] updateKitchenStatus: orderId=$orderId status=${status.name}');
+
+    // FIX : Pour "served", utiliser la même logique que updateOrderStatus
+    // pour que la commande apparaisse en caisse avec cashStatus=pending_cashout
+    if (status == OrderStatus.served) {
+      final order = _orders.firstWhere(
+        (o) => o.id == orderId,
+        orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
+      );
+      if (order.id.isNotEmpty && order.cashStatus == CashStatus.pending_cashout) {
+        final invoiceNumber = PrintService.generateFacNumber(order.orderNumber);
+        final cashierId   = _currentUser?.id   ?? '';
+        final cashierName = _currentUser?.name ?? 'Serveur';
+        await _firebase.updateOrderStatus(
+          orderId,
+          status,
+          cashoutInvoiceNumber: invoiceNumber,
+          cashierId:            cashierId,
+          cashierName:          cashierName,
+          amountDue:            order.totalAmount,
+          discount:             order.discount,
+          items:                order.items.map((i) => i.toMap()).toList(),
+          orderNumber:          order.orderNumber,
+          tableNumber:          order.tableNumber,
+          serverName:           order.serverName,
+        );
+        debugPrint('[AppProvider] updateKitchenStatus(served) → facture provisoire générée');
+
+        // Sync commandes en ligne
+        try {
+          if (order.isOnlineOrder) {
+            final clientSvc = ClientFirebaseService();
+            await clientSvc.syncKitchenStatusToClientOrder(
+              internalOrderId: orderId,
+              clientStatus: ClientOrderStatus.delivered,
+            );
+          }
+        } catch (e) {
+          debugPrint('[AppProvider] sync client_orders (served): $e');
+        }
+        return;
+      }
+    }
+
     await _firebase.updateOrderStatus(orderId, status);
     debugPrint('[AppProvider] updateKitchenStatus OK: $orderId → ${status.name}');
   }

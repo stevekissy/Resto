@@ -395,7 +395,9 @@ class FirebaseService {
             tableNumber: data['tableNumber'] as String? ?? '',
             serverName: data['serverName'] as String?,
             items: _parseOrderItems(data['items']),
-            status: _parseOrderStatus(data['status']),
+            // FIX CRITIQUE : lire orderStatus (string) en priorité sur status (int)
+            // orderStatus string contourne le problème du mapping ClientOrderStatus vs OrderStatus
+            status: _parseOrderStatus(data['orderStatus'] ?? data['status']),
             specialInstructions: data['specialInstructions'] as String?,
             isUrgent: data['isUrgent'] as bool? ?? false,
             createdAt: _toDateTime(data['createdAt']),
@@ -559,9 +561,10 @@ class FirebaseService {
     if (status == OrderStatus.served) {
       data['servedAt']      = nowMs;
       data['kitchenStatus'] = 'served';
+      data['orderStatus']   = 'served'; // FIX : string pour contourner le mapping int ambigu
 
       // ── Génération automatique de la facture provisoire ──────────────
-      // Dès qu'une commande est marquée "Servie", elle entre en caisse.
+      // Dès qu'une commande est marquée "Servie" avec paramètres caisse,
       // cashStatus passe à awaiting_payment et une cashout_invoice est créée.
       if (cashoutInvoiceNumber != null &&
           cashierId != null &&
@@ -603,6 +606,12 @@ class FirebaseService {
         debugPrint('[FirebaseService] updateOrderStatus(served) → cashout_invoice $cashoutInvoiceNumber créée');
         return; // batch déjà commis, ne pas faire le update séparé
       }
+
+      // ── Cuisine marque "Servie" sans paramètres de facturation ───────
+      // Garantir que cashStatus = pending_cashout pour que la caisse la voie
+      // (la caisse génèrera sa facture provisoire dans cashoutOrder())
+      data['cashStatus'] = CashStatus.pending_cashout.index;
+      debugPrint('[FirebaseService] updateOrderStatus(served/cuisine) → cashStatus=pending_cashout');
     }
 
     if (status == OrderStatus.cancelled) {

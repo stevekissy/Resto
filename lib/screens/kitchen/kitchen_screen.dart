@@ -1195,12 +1195,148 @@ class _StatBubble extends StatelessWidget {
 }
 
 // ======================================================================
-// KITCHEN ORDER CARD  — v3 reconstruction complète
-// Architecture sans Expanded+ListView imbriqués pour éviter tout
-// problème de hit-testing. Boutons : ElevatedButton natifs Flutter.
+// KITCHEN ORDER CARD  — v4 : timer isolé dans _KitchenTimerWidget
+// La carte est StatelessWidget → ZÉRO rebuild toutes les secondes.
+// Seul _KitchenTimerWidget se rebuilde (timer 1s isolé).
+// Boutons : ElevatedButton natifs Flutter, context direct, pas de Builder.
 // ======================================================================
 
-class _KitchenOrderCard extends StatefulWidget {
+// ── Fonction libre (pas de this) : action Firestore ───────────────────
+Future<void> _kitchenDoAction(
+  BuildContext ctx,
+  AppProvider provider,
+  TtsService tts,
+  Order order,
+  OrderStatus nextStatus,
+) async {
+  final orderId = order.id;
+  final ks = order.kitchenStatus ?? '';
+
+  debugPrint('');
+  debugPrint('╔══════════════════════════════════════════════════════╗');
+  debugPrint('║  CLIC CUISINE orderId=${orderId.substring(0, 12)}…');
+  debugPrint('║  kitchenStatus=$ks  nextStatus=${nextStatus.name}');
+  debugPrint('║  user=${provider.currentUser?.email ?? "NULL"}');
+  debugPrint('╚══════════════════════════════════════════════════════╝');
+
+  try {
+    await provider.updateKitchenStatus(orderId, nextStatus);
+    debugPrint('✅ ACTION OK orderId=$orderId → ${nextStatus.name}');
+    if (nextStatus == OrderStatus.ready) {
+      tts.announceOrderReady(order);
+    }
+  } catch (e) {
+    debugPrint('❌ ERREUR CUISINE: $e');
+    if (ctx.mounted) {
+      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+        content: Text('Erreur: $e'),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 4),
+      ));
+    }
+  }
+}
+
+// ── Widget chronomètre isolé ─────────────────────────────────────────
+// Seul ce widget se rebuilde chaque seconde — la carte reste stable.
+class _KitchenTimerWidget extends StatefulWidget {
+  final Order order;
+  final List<OrderItem> kitchenItems;
+  final List<Product> products;
+
+  const _KitchenTimerWidget({
+    required this.order,
+    required this.kitchenItems,
+    required this.products,
+  });
+
+  @override
+  State<_KitchenTimerWidget> createState() => _KitchenTimerWidgetState();
+}
+
+class _KitchenTimerWidgetState extends State<_KitchenTimerWidget> {
+  late Timer _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final elapsed = DateTime.now().difference(widget.order.createdAt);
+    final mins    = elapsed.inMinutes;
+    final secs    = elapsed.inSeconds % 60;
+    final isLate  = mins >= 20;
+
+    final maxCookTime = widget.kitchenItems.isEmpty ? 20.0
+        : widget.kitchenItems.fold<double>(0, (m, i) {
+            final p = widget.products.firstWhere(
+              (p) => p.id == i.productId,
+              orElse: () => Product(id:'',name:'',category:'',price:0,prepTime:20),
+            );
+            return p.prepTime > m ? p.prepTime.toDouble() : m;
+          });
+    final remainingMins = (maxCookTime - mins).clamp(0, maxCookTime.toInt());
+    final progressValue = (mins / maxCookTime).clamp(0.0, 1.0);
+
+    final Color timerColor = isLate ? AppTheme.error
+        : mins >= 15 ? AppTheme.warning : AppTheme.success;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      color: timerColor.withValues(alpha: 0.08),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(children: [
+                Icon(Icons.timer, color: timerColor, size: 13),
+                const SizedBox(width: 3),
+                Text(
+                  '${mins.toString().padLeft(2,'0')}:${secs.toString().padLeft(2,'0')}',
+                  style: TextStyle(color: timerColor,
+                      fontWeight: FontWeight.w900, fontSize: 16,
+                      fontFamily: 'monospace'),
+                ),
+                if (isLate)
+                  Text('  ⚠ RETARD',
+                      style: TextStyle(color: timerColor,
+                          fontSize: 9, fontWeight: FontWeight.w700)),
+              ]),
+              Text('~${remainingMins}min',
+                  style: TextStyle(color: timerColor,
+                      fontSize: 10, fontWeight: FontWeight.w600)),
+            ],
+          ),
+          const SizedBox(height: 3),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: progressValue,
+              backgroundColor: AppTheme.surfaceLight,
+              valueColor: AlwaysStoppedAnimation<Color>(timerColor),
+              minHeight: 4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Carte cuisine — StatelessWidget (pas de timer ici) ────────────────
+class _KitchenOrderCard extends StatelessWidget {
   final Order order;
   final AppProvider provider;
   final TtsService tts;
@@ -1212,93 +1348,59 @@ class _KitchenOrderCard extends StatefulWidget {
     required this.tts,
   });
 
-  @override
-  State<_KitchenOrderCard> createState() => _KitchenOrderCardState();
-}
-
-class _KitchenOrderCardState extends State<_KitchenOrderCard> {
-  late Timer _timer;
-  int _elapsed = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _elapsed = widget.order.elapsedMinutes;
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() { _elapsed = widget.order.elapsedMinutes; });
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer.cancel();
-    super.dispose();
-  }
-
-  Color get _timerColor {
-    if (_elapsed >= 20) return AppTheme.error;
-    if (_elapsed >= 15) return AppTheme.warning;
-    return AppTheme.success;
-  }
-
   String get _exactTime {
-    final t = widget.order.createdAt;
+    final t = order.createdAt;
     return '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
   }
 
-  // ── Action principale : met à jour Firestore + log visible ─────────────
-  // Utilise updateKitchenStatus (pas updateOrderStatus) pour éviter le guard
-  // de rôle qui bloque si currentUser est null ou rôle non reconnu.
-  Future<void> _doAction(BuildContext ctx, OrderStatus nextStatus) async {
-    final orderId = widget.order.id;
-    final ks      = widget.order.kitchenStatus ?? '';
-
-    debugPrint('');
-    debugPrint('╔══════════════════════════════════════════════════════╗');
-    debugPrint('║  CLIC CUISINE orderId=${orderId.substring(0,12)}…');
-    debugPrint('║  kitchenStatus=$ks  nextStatus=${nextStatus.name}');
-    debugPrint('║  user=${widget.provider.currentUser?.email ?? "NULL"}');
-    debugPrint('╚══════════════════════════════════════════════════════╝');
-
-    // Pas de setState/_isUpdating pour ne jamais bloquer le bouton
-    try {
-      // updateKitchenStatus : pas de guard de rôle, écrit directement Firestore
-      await widget.provider.updateKitchenStatus(orderId, nextStatus);
-
-      debugPrint('✅ CLIC COMMENCER OK orderId=$orderId → ${nextStatus.name}');
-
-      if (nextStatus == OrderStatus.ready) {
-        widget.tts.announceOrderReady(widget.order);
-      }
-    } catch (e) {
-      debugPrint('❌ ERREUR CLIC CUISINE: $e');
-      if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-          content: Text('Erreur Firestore: $e'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-        ));
-      }
+  void _confirmCancel(BuildContext ctx) {
+    final role = provider.currentUser?.role;
+    final canCancel = role == UserRole.kitchen || role == UserRole.admin ||
+                      role == UserRole.manager;
+    if (!canCancel) {
+      debugPrint('[CUISINE] ⛔ REFUSÉ — role=$role');
+      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+        content: Text(role == null
+            ? 'Session expirée — reconnectez-vous'
+            : 'Action réservée à la cuisine (rôle: ${role.name})'),
+        backgroundColor: Colors.orange,
+        duration: const Duration(seconds: 3),
+      ));
+      return;
     }
+    showDialog(
+      context: ctx,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: AppTheme.cardBg,
+        title: const Text('Annuler la commande ?',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text('Commande #${order.orderNumber} sera annulée.',
+            style: const TextStyle(color: AppTheme.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: const Text('Non', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            onPressed: () {
+              Navigator.pop(dCtx);
+              debugPrint('👉 CLIC ANNULER CONFIRMÉ #${order.orderNumber}');
+              _kitchenDoAction(ctx, provider, tts, order, OrderStatus.cancelled);
+            },
+            child: const Text('Oui, annuler', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
-
-  // _labelForStatus / _colorForStatus — conservées pour usage futur
 
   @override
   Widget build(BuildContext context) {
-    final order   = widget.order;
-    final isLate  = _elapsed >= 20;
-    final elapsed = DateTime.now().difference(order.createdAt);
-    final mins    = elapsed.inMinutes;
-    final secs    = elapsed.inSeconds % 60;
-
-    // ── Statut courant ───────────────────────────────────────────────────
-    // Pour les commandes online on utilise kitchenStatus (source de vérité).
-    // Pour les commandes POS on utilise status.
+    // ── Statut courant ──────────────────────────────────────────────────
     final String ks       = order.kitchenStatus ?? '';
     final bool   isOnline = order.isOnlineOrder;
 
-    // Normalisation : toutes les valeurs qui signifient "pas encore commencée"
     final bool isPending = isOnline
         ? (ks == 'pending' || ks == 'waiting' || ks == 'sent_to_kitchen' || ks.isEmpty)
         : (order.status == OrderStatus.pending);
@@ -1311,40 +1413,25 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
         ? (ks == 'ready')
         : (order.status == OrderStatus.ready);
 
-    // Temps de cuisson
-    final kitchenItems  = order.items.where((i) => i.isKitchenItem).toList();
-    final maxCookTime   = kitchenItems.isEmpty ? 20.0
-        : kitchenItems.fold<double>(0, (m, i) {
-            final p = widget.provider.products.firstWhere(
-              (p) => p.id == i.productId,
-              orElse: () => Product(id:'',name:'',category:'',price:0,prepTime:20),
-            );
-            return p.prepTime > m ? p.prepTime.toDouble() : m;
-          });
-    final remainingMins = (maxCookTime - mins).clamp(0, maxCookTime.toInt());
-    final progressValue = (mins / maxCookTime).clamp(0.0, 1.0);
+    final kitchenItems = order.items.where((i) => i.isKitchenItem).toList();
+
+    // Couleur de bordure statique (pas de timer)
+    final bool isUrgent = order.isUrgent;
+    final borderColor = isUrgent ? AppTheme.warning
+        : order.statusColor.withValues(alpha: 0.5);
 
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.cardBg,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isLate ? AppTheme.error
-              : order.isUrgent ? AppTheme.warning
-              : order.statusColor.withValues(alpha: 0.5),
-          width: isLate || order.isUrgent ? 2 : 1,
-        ),
-        boxShadow: isLate
-            ? [BoxShadow(color: AppTheme.error.withValues(alpha: 0.3), blurRadius: 15)]
-            : null,
+        border: Border.all(color: borderColor, width: isUrgent ? 2 : 1),
       ),
-      // ── PAS de Expanded ni de ListView ici — Column à hauteur naturelle ──
       child: Column(
-        mainAxisSize: MainAxisSize.min,  // ← clé : la carte prend sa taille naturelle
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
 
-          // ── HEADER ──────────────────────────────────────────────────────
+          // ── HEADER ────────────────────────────────────────────────────
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
@@ -1354,7 +1441,6 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Gauche : numéro + nom + téléphone
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1398,7 +1484,6 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                     ],
                   ),
                 ),
-                // Droite : URGENT + heure + badge statut + type livraison
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -1435,61 +1520,20 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
             ),
           ),
 
-          // ── TIMER ───────────────────────────────────────────────────────
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            color: _timerColor.withValues(alpha: 0.08),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(children: [
-                      Icon(Icons.timer, color: _timerColor, size: 13),
-                      const SizedBox(width: 3),
-                      Text(
-                        '${mins.toString().padLeft(2,'0')}:${secs.toString().padLeft(2,'0')}',
-                        style: TextStyle(color: _timerColor,
-                            fontWeight: FontWeight.w900, fontSize: 16,
-                            fontFamily: 'monospace'),
-                      ),
-                      if (isLate)
-                        Text('  ⚠ RETARD',
-                            style: TextStyle(color: _timerColor,
-                                fontSize: 9, fontWeight: FontWeight.w700)),
-                    ]),
-                    Text('~${remainingMins}min',
-                        style: TextStyle(color: _timerColor,
-                            fontSize: 10, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-                const SizedBox(height: 3),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: LinearProgressIndicator(
-                    value: progressValue,
-                    backgroundColor: AppTheme.surfaceLight,
-                    valueColor: AlwaysStoppedAnimation<Color>(_timerColor),
-                    minHeight: 4,
-                  ),
-                ),
-              ],
-            ),
+          // ── TIMER — widget isolé, seul lui se rebuilde chaque seconde ──
+          _KitchenTimerWidget(
+            order: order,
+            kitchenItems: kitchenItems,
+            products: provider.products,
           ),
 
-          // ── ARTICLES ─────────────────────────────────────────────────────
-          // Pas de ListView ni d'Expanded : on itère directement.
-          // Limité aux 4 premiers articles pour ne pas déborder.
-          ...() {
-            final items = kitchenItems.take(4).toList();
-            return items.map((item) => _KitchenItemRow(
-              item: item,
-              onChangeQty: (newQty) => widget.provider
-                  .updateOrderItemQuantity(order.id, item.productId, newQty),
-            )).toList();
-          }(),
+          // ── ARTICLES ─────────────────────────────────────────────────
+          ...kitchenItems.take(4).map((item) => _KitchenItemRow(
+            item: item,
+            onChangeQty: (newQty) => provider
+                .updateOrderItemQuantity(order.id, item.productId, newQty),
+          )),
 
-          // Indicateur si plus de 4 articles
           if (kitchenItems.length > 4)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
@@ -1498,7 +1542,6 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                       fontSize: 10, fontStyle: FontStyle.italic)),
             ),
 
-          // Note spéciale
           if (order.specialInstructions != null)
             Container(
               width: double.infinity,
@@ -1511,17 +1554,14 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
 
           const SizedBox(height: 6),
 
-          // ── BOUTONS ACTION ───────────────────────────────────────────────
-          // Pas de Builder — context est celui de build() directement.
-          // Raison : Builder crée un sous-contexte qui peut être invalidé
-          // lors d'un rebuild pendant un tap → blocage silencieux des clics.
-          // Chaque onPressed log le clic pour confirmer la réception.
+          // ── BOUTONS ACTION ─────────────────────────────────────────────
+          // StatelessWidget → build() n'est appelé QUE sur changement Firestore,
+          // jamais par le timer 1s → les taps ne sont JAMAIS interrompus.
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ── Bouton principal selon le statut ────────────────────────
                 if (isPending)
                   SizedBox(
                     width: double.infinity,
@@ -1538,7 +1578,7 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                       ),
                       onPressed: () {
                         debugPrint('👉 CLIC COMMENCER #${order.orderNumber}');
-                        _doAction(context, OrderStatus.preparing);
+                        _kitchenDoAction(context, provider, tts, order, OrderStatus.preparing);
                       },
                     ),
                   )
@@ -1558,7 +1598,7 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                       ),
                       onPressed: () {
                         debugPrint('👉 CLIC PRET #${order.orderNumber}');
-                        _doAction(context, OrderStatus.ready);
+                        _kitchenDoAction(context, provider, tts, order, OrderStatus.ready);
                       },
                     ),
                   )
@@ -1578,7 +1618,7 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                       ),
                       onPressed: () {
                         debugPrint('👉 CLIC SERVIE #${order.orderNumber}');
-                        _doAction(context, OrderStatus.served);
+                        _kitchenDoAction(context, provider, tts, order, OrderStatus.served);
                       },
                     ),
                   )
@@ -1605,7 +1645,6 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                     ),
                   ),
                 const SizedBox(height: 5),
-                // ── Ligne secondaire : Écouter + Annuler ───────────────────
                 Row(
                   children: [
                     Expanded(
@@ -1621,7 +1660,7 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                         ),
                         onPressed: () {
                           debugPrint('👉 CLIC ECOUTER #${order.orderNumber}');
-                          widget.tts.announceOrder(order);
+                          tts.announceOrder(order);
                         },
                       ),
                     ),
@@ -1651,51 +1690,6 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
         ],
       ),
     );
-  }
-
-  // ── Dialogue de confirmation annulation ─────────────────────────────────
-  void _confirmCancel(BuildContext ctx) {
-    final role = widget.provider.currentUser?.role;
-    final canCancel = role == UserRole.kitchen || role == UserRole.admin ||
-                      role == UserRole.manager;
-    if (!canCancel) { _showRoleError(ctx, role); return; }
-
-    showDialog(
-      context: ctx,
-      builder: (dCtx) => AlertDialog(
-        backgroundColor: AppTheme.cardBg,
-        title: const Text('Annuler la commande ?',
-            style: TextStyle(color: Colors.white, fontSize: 16)),
-        content: Text('Commande #${widget.order.orderNumber} sera annulée.',
-            style: const TextStyle(color: AppTheme.textSecondary)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dCtx),
-            child: const Text('Non', style: TextStyle(color: AppTheme.textSecondary)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
-            onPressed: () {
-              Navigator.pop(dCtx);
-              _doAction(ctx, OrderStatus.cancelled);
-            },
-            child: const Text('Oui, annuler', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Message d'erreur si rôle insuffisant ────────────────────────────────
-  void _showRoleError(BuildContext ctx, UserRole? role) {
-    debugPrint('[CUISINE] ⛔ REFUSÉ — role=$role email=${widget.provider.currentUser?.email}');
-    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-      content: Text(role == null
-          ? 'Session expirée — reconnectez-vous'
-          : 'Action réservée à la cuisine (rôle: ${role.name})'),
-      backgroundColor: Colors.orange,
-      duration: const Duration(seconds: 3),
-    ));
   }
 }
 
@@ -1953,32 +1947,17 @@ class _ReadyOrderCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
-              Builder(builder: (ctx) {
-                final role = provider.currentUser?.role;
-                // Servir = serveur + cuisine + admin + manager
-                final canServe = role == UserRole.server  ||
-                                 role == UserRole.kitchen ||
-                                 role == UserRole.admin   ||
-                                 role == UserRole.manager;
-                return ElevatedButton(
-                  onPressed: canServe
-                      ? () => provider.updateOrderStatus(order.id, OrderStatus.served)
-                      : () {
-                          ScaffoldMessenger.of(ctx).showSnackBar(
-                            const SnackBar(
-                              content: Text('Action réservée au personnel de salle ou cuisine'),
-                              backgroundColor: Colors.orange,
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: canServe ? AppTheme.ready : Colors.grey.shade700,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                  child: const Text('Servie', style: TextStyle(fontSize: 12)),
-                );
-              }),
+              ElevatedButton(
+                onPressed: () {
+                  debugPrint('👉 CLIC SERVIE (prête) #${order.orderNumber}');
+                  provider.updateKitchenStatus(order.id, OrderStatus.served);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.ready,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                child: const Text('Servie', style: TextStyle(fontSize: 12)),
+              ),
             ],
           ),
         ],
