@@ -28,8 +28,13 @@ class _KitchenScreenState extends State<KitchenScreen> {
   void initState() {
     super.initState();
     _tts.init();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+    // NOTE : le Timer parent est supprimé — chaque _KitchenOrderCard
+    // a son propre Timer.periodic pour son chronomètre.
+    // Un Timer ici forçait setState() chaque seconde sur le parent,
+    // ce qui reconstruisait toutes les cartes et pouvait interrompre les taps.
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) {
+      // Tick lent (30s) uniquement pour forcer la vérification TTS
+      if (mounted && _tts.isRemindersActive) setState(() {});
     });
 
     // Charger l'état persisté PUIS configurer les callbacks
@@ -195,9 +200,15 @@ class _KitchenScreenState extends State<KitchenScreen> {
                           return Wrap(
                             spacing: 12,
                             runSpacing: 12,
+                            // ValueKey(order.id) garantit que Flutter conserve
+                            // le State de chaque carte même si la liste change.
+                            // Sans Key, Flutter peut recréer les cartes au rebuild
+                            // parent et interrompre un tap en cours.
                             children: activeOrders.map((o) => SizedBox(
+                              key: ValueKey('card-${o.id}'),
                               width: cardW,
                               child: _KitchenOrderCard(
+                                key: ValueKey('kitchen-card-${o.id}'),
                                 order: o,
                                 provider: provider,
                                 tts: _tts,
@@ -1194,6 +1205,7 @@ class _KitchenOrderCard extends StatefulWidget {
   final TtsService tts;
 
   const _KitchenOrderCard({
+    super.key,
     required this.order,
     required this.provider,
     required this.tts,
@@ -1499,140 +1511,141 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
           const SizedBox(height: 6),
 
           // ── BOUTONS ACTION ───────────────────────────────────────────────
-          // ElevatedButton natifs — aucun GestureDetector, aucun Container
-          // transparent au-dessus. Chaque bouton a un onPressed NON NULL.
+          // Pas de Builder — context est celui de build() directement.
+          // Raison : Builder crée un sous-contexte qui peut être invalidé
+          // lors d'un rebuild pendant un tap → blocage silencieux des clics.
+          // Chaque onPressed log le clic pour confirmer la réception.
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-            child: Builder(builder: (ctx) {
-              // ── Bouton principal : Commencer / Prêt / Servir ─────────────
-              Widget mainBtn;
-
-              if (isPending) {
-                // État : En attente → bouton "Commencer"
-                mainBtn = SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.play_arrow, size: 16),
-                    label: const Text('Commencer',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2196F3),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      elevation: 0,
-                    ),
-                    // onPressed toujours non-null — jamais désactivé
-                    onPressed: () => _doAction(ctx, OrderStatus.preparing),
-                  ),
-                );
-              } else if (isPreparing) {
-                // État : En préparation → bouton "Prêt"
-                mainBtn = SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.check_circle, size: 16),
-                    label: const Text('✓ Prêt !',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4CAF50),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      elevation: 0,
-                    ),
-                    onPressed: () => _doAction(ctx, OrderStatus.ready),
-                  ),
-                );
-              } else if (isReady) {
-                // État : Prête → bouton "Servie"
-                mainBtn = SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.restaurant_menu, size: 16),
-                    label: const Text('✓ Servie',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00BCD4),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      elevation: 0,
-                    ),
-                    onPressed: () => _doAction(ctx, OrderStatus.served),
-                  ),
-                );
-              } else {
-                // État inconnu → bouton désactivé avec diagnostic
-                mainBtn = SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey.shade800,
-                      foregroundColor: Colors.white54,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      elevation: 0,
-                    ),
-                    onPressed: () {
-                      debugPrint('[CUISINE] État inconnu: ks=$ks status=${order.status.name}');
-                      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                        content: Text('État: ks=$ks | status=${order.status.name}'),
-                        backgroundColor: Colors.grey.shade700,
-                      ));
-                    },
-                    child: Text('? ${ks.isEmpty ? order.status.name : ks}',
-                        style: const TextStyle(fontSize: 11)),
-                  ),
-                );
-              }
-
-              // ── Ligne secondaire : Écouter + Annuler ───────────────────
-              final secondRow = Row(
-                children: [
-                  // Bouton Écouter
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.record_voice_over, size: 13),
-                      label: const Text('Écouter',
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.primary,
-                        side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.5)),
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── Bouton principal selon le statut ────────────────────────
+                if (isPending)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.play_arrow, size: 16),
+                      label: const Text('Commencer',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2196F3),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        elevation: 0,
                       ),
-                      onPressed: () => widget.tts.announceOrder(order),
+                      onPressed: () {
+                        debugPrint('👉 CLIC COMMENCER #${order.orderNumber}');
+                        _doAction(context, OrderStatus.preparing);
+                      },
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  // Bouton Annuler
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.cancel_outlined, size: 13),
-                      label: const Text('Annuler',
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.error,
-                        side: BorderSide(color: AppTheme.error.withValues(alpha: 0.5)),
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  )
+                else if (isPreparing)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.check_circle, size: 16),
+                      label: const Text('✓ Prêt !',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4CAF50),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        elevation: 0,
                       ),
-                      onPressed: () => _confirmCancel(ctx),
+                      onPressed: () {
+                        debugPrint('👉 CLIC PRET #${order.orderNumber}');
+                        _doAction(context, OrderStatus.ready);
+                      },
+                    ),
+                  )
+                else if (isReady)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.restaurant_menu, size: 16),
+                      label: const Text('✓ Servie',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00BCD4),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        elevation: 0,
+                      ),
+                      onPressed: () {
+                        debugPrint('👉 CLIC SERVIE #${order.orderNumber}');
+                        _doAction(context, OrderStatus.served);
+                      },
+                    ),
+                  )
+                else
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey.shade800,
+                        foregroundColor: Colors.white54,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        elevation: 0,
+                      ),
+                      onPressed: () {
+                        debugPrint('[CUISINE] État inconnu: ks=$ks status=${order.status.name}');
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text('État: ks=$ks | status=${order.status.name}'),
+                          backgroundColor: Colors.grey.shade700,
+                        ));
+                      },
+                      child: Text('? ${ks.isEmpty ? order.status.name : ks}',
+                          style: const TextStyle(fontSize: 11)),
                     ),
                   ),
-                ],
-              );
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  mainBtn,
-                  const SizedBox(height: 5),
-                  secondRow,
-                ],
-              );
-            }),
+                const SizedBox(height: 5),
+                // ── Ligne secondaire : Écouter + Annuler ───────────────────
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.record_voice_over, size: 13),
+                        label: const Text('Écouter',
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.primary,
+                          side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.5)),
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onPressed: () {
+                          debugPrint('👉 CLIC ECOUTER #${order.orderNumber}');
+                          widget.tts.announceOrder(order);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.cancel_outlined, size: 13),
+                        label: const Text('Annuler',
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.error,
+                          side: BorderSide(color: AppTheme.error.withValues(alpha: 0.5)),
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onPressed: () {
+                          debugPrint('👉 CLIC ANNULER #${order.orderNumber}');
+                          _confirmCancel(context);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1721,10 +1734,12 @@ class _KitchenItemRow extends StatelessWidget {
               ],
             ),
           ),
-          // Contrôles quantité — InkWell pour meilleure réponse tactile
-          InkWell(
-            borderRadius: BorderRadius.circular(5),
-            onTap: () => onChangeQty(item.quantity - 1),
+          // Contrôles quantité — GestureDetector (fiable sur Web sans Material ancêtre)
+          GestureDetector(
+            onTap: () {
+              debugPrint('👉 CLIC MOINS qty ${item.quantity} → ${item.quantity - 1}');
+              onChangeQty(item.quantity - 1);
+            },
             child: Container(
               width: 22, height: 22,
               alignment: Alignment.center,
@@ -1742,9 +1757,11 @@ class _KitchenItemRow extends StatelessWidget {
                 style: const TextStyle(color: Colors.white,
                     fontWeight: FontWeight.w900, fontSize: 13)),
           ),
-          InkWell(
-            borderRadius: BorderRadius.circular(5),
-            onTap: () => onChangeQty(item.quantity + 1),
+          GestureDetector(
+            onTap: () {
+              debugPrint('👉 CLIC PLUS qty ${item.quantity} → ${item.quantity + 1}');
+              onChangeQty(item.quantity + 1);
+            },
             child: Container(
               width: 22, height: 22,
               alignment: Alignment.center,
