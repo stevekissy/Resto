@@ -594,19 +594,20 @@ class FirebaseService {
   }
 
   /// Envoie une commande en ligne en cuisine.
-  /// Met à jour : sentToKitchen=true, kitchenStatus='waiting', sentToKitchenAt, status=1
+  /// Met à jour : sentToKitchen=true, kitchenStatus='pending', sentToKitchenAt, status=2 (preparing)
   Future<void> sendOnlineOrderToKitchen(String orderId) async {
     await _db.collection('orders').doc(orderId).update({
       'sentToKitchen':    true,
-      'kitchenStatus':    'pending',   // UNIFORME : 'pending' (jamais 'waiting')
+      'kitchenStatus':    'pending',             // UNIFORME : 'pending' (jamais 'waiting')
       'sentToKitchenAt':  FieldValue.serverTimestamp(),
       'orderStatus':      'sent_to_kitchen',
       'adminStatus':      'sent_to_kitchen',
+      'status':           2,                     // FIX: ClientOrderStatus.preparing.index — compteur cuisine
       'readyForCashier':  false,
       'cashierStatus':    'not_ready',
       'updatedAt':        FieldValue.serverTimestamp(),
     });
-    debugPrint('[FirebaseService] sendOnlineOrderToKitchen: orders/$orderId → kitchenStatus=pending');
+    debugPrint('[FirebaseService] sendOnlineOrderToKitchen: orders/$orderId → kitchenStatus=pending status=2');
   }
 
   Future<void> deleteOrder(String orderId) async {

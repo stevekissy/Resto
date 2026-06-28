@@ -708,10 +708,11 @@ class ClientFirebaseService {
 
     await _db.collection('orders').doc(orderId).update({
       'sentToKitchen':   true,
-      'kitchenStatus':   'pending',  // UNIFORME : toujours 'pending' (jamais 'waiting')
+      'kitchenStatus':   'pending',              // UNIFORME : toujours 'pending' (jamais 'waiting')
       'sentToKitchenAt': FieldValue.serverTimestamp(),
       'orderStatus':     'sent_to_kitchen',
       'adminStatus':     'sent_to_kitchen',
+      'status':          2,                      // FIX: ClientOrderStatus.preparing.index — OBLIGATOIRE pour compteur cuisine
       'readyForCashier': false,
       'cashierStatus':   'not_ready',
       'updatedAt':       FieldValue.serverTimestamp(),

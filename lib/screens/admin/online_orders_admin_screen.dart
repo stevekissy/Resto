@@ -215,7 +215,13 @@ class _OrdersTabState extends State<_OrdersTab> {
 
     // Filtre par statut
     if (_filterStatus != null) {
-      orders = orders.where((o) => o.status == _filterStatus).toList();
+      if (_filterStatus == ClientOrderStatus.preparing) {
+        // ── Onglet "Cuisine" : filtre sur sentToKitchen + kitchenStatus ──
+        // NE PAS filtrer sur status==preparing (il reste à 1/confirmed après sendToKitchen)
+        orders = orders.where(_isInKitchen).toList();
+      } else {
+        orders = orders.where((o) => o.status == _filterStatus).toList();
+      }
     }
 
     // Filtre par recherche
@@ -232,9 +238,27 @@ class _OrdersTabState extends State<_OrdersTab> {
     return orders;
   }
 
-  // Compteurs par statut
+  // Compteurs par statut ClientOrderStatus
   int _countByStatus(ClientOrderStatus s) =>
       widget.provider.orders.where((o) => o.status == s).length;
+
+  // ── Compteur Cuisine fiable ─────────────────────────────────────────────
+  // Filtre : sentToKitchen==true AND kitchenStatus in [pending,preparing,ready]
+  // Indépendant du champ 'status' (qui peut rester à 1/confirmed après sendToKitchen)
+  static const _kitchenStatuses = {'pending', 'preparing', 'ready'};
+
+  int get _kitchenOrderCount => widget.provider.orders.where((o) {
+    if (!o.sentToKitchen) return false;
+    final ks = o.kitchenStatus ?? '';
+    return _kitchenStatuses.contains(ks);
+  }).length;
+
+  // Filtre spécial pour l'onglet "Cuisine" : sentToKitchen==true (pas status==preparing)
+  bool _isInKitchen(ClientOrder o) {
+    if (!o.sentToKitchen) return false;
+    final ks = o.kitchenStatus ?? '';
+    return _kitchenStatuses.contains(ks);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -253,7 +277,7 @@ class _OrdersTabState extends State<_OrdersTab> {
               const SizedBox(width: 8),
               _QuickStat(label: 'Reçues', value: '${_countByStatus(ClientOrderStatus.pending)}', color: AppTheme.warning),
               const SizedBox(width: 8),
-              _QuickStat(label: 'Cuisine', value: '${_countByStatus(ClientOrderStatus.preparing)}', color: AppTheme.preparing),
+              _QuickStat(label: 'Cuisine', value: '$_kitchenOrderCount', color: AppTheme.preparing),
               const SizedBox(width: 8),
               _QuickStat(label: 'Prêtes', value: '${_countByStatus(ClientOrderStatus.ready)}', color: AppTheme.success),
               const SizedBox(width: 8),
@@ -334,7 +358,7 @@ class _OrdersTabState extends State<_OrdersTab> {
               const SizedBox(width: 6),
               _FilterChip(
                 label: 'Cuisine',
-                count: _countByStatus(ClientOrderStatus.preparing),
+                count: _kitchenOrderCount,      // FIX: sentToKitchen+kitchenStatus (pas status==preparing)
                 selected: _filterStatus == ClientOrderStatus.preparing,
                 color: const Color(0xFFFF6B00),
                 onTap: () => setState(() => _filterStatus = ClientOrderStatus.preparing),
@@ -505,7 +529,12 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
         // Commande reçue : seuls Annuler et Accepter (via bouton dédié _acceptOrder)
         return [ClientOrderStatus.cancelled];
       case ClientOrderStatus.confirmed:
-        // Commande acceptée : peut envoyer en cuisine ou annuler
+        // Commande acceptée :
+        // — Si cambuse-only → direct caisse (pas de cuisine)
+        // — Sinon → envoyer en cuisine
+        if (widget.order.isCambuseOnly) {
+          return [ClientOrderStatus.ready, ClientOrderStatus.cancelled];
+        }
         return [ClientOrderStatus.preparing, ClientOrderStatus.cancelled];
       case ClientOrderStatus.preparing:
         // ⛔ En préparation : gérée par cuisine uniquement.
@@ -524,8 +553,8 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
   String _statusActionLabel(ClientOrderStatus s) {
     switch (s) {
       case ClientOrderStatus.confirmed:   return 'Accepter';
-      case ClientOrderStatus.preparing:   return 'Envoyer en cuisine';
-      case ClientOrderStatus.ready:       return 'Marquer Prête';
+      case ClientOrderStatus.preparing:   return widget.order.isCambuseOnly ? 'Envoyer en caisse' : 'Envoyer en cuisine';
+      case ClientOrderStatus.ready:       return widget.order.isCambuseOnly ? 'Prête (caisse)' : 'Marquer Prête';
       case ClientOrderStatus.delivering:  return 'En livraison';
       case ClientOrderStatus.delivered:   return 'Marquer Livrée';
       case ClientOrderStatus.served:      return 'Marquer Servie';
@@ -594,6 +623,24 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
   /// widget.order.id = id du doc orders (depuis streamAdminOnlineOrders, data['id'] = d.id)
   Future<void> _sendToKitchen() async {
     if (_processing) return;
+
+    // ── Garde cambuse-only : pas de cuisine si aucun article 'menu' ──────
+    if (widget.order.isCambuseOnly) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Row(children: [
+            Icon(Icons.local_bar, color: Colors.white, size: 18),
+            SizedBox(width: 8),
+            Text('Commande cambuse uniquement → envoi direct caisse'),
+          ]),
+          backgroundColor: Color(0xFF0288D1),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
+        ));
+      }
+      return;
+    }
+
     setState(() => _processing = true);
     try {
       // SOURCE UNIQUE : widget.order.id = id du doc orders directement

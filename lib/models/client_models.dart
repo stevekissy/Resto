@@ -449,6 +449,10 @@ class ClientOrder {
   bool loyaltyPointsAwarded;        // true = points déjà crédités (idempotence)
   DateTime? loyaltyPointsAwardedAt; // timestamp de l'attribution
 
+  // ── Champs cuisine ──────────────────────────────────────────────────────
+  bool sentToKitchen;    // true = envoyée en cuisine (écrit par sendToKitchen())
+  String? kitchenStatus; // 'not_sent' | 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled'
+
   // ── Timestamps workflow ─────────────────────────────────────────────────
   DateTime? confirmedAt;     // admin confirme la commande
   DateTime? sentToKitchenAt; // envoyée en cuisine
@@ -495,6 +499,8 @@ class ClientOrder {
     this.orderNumber,
     this.loyaltyPointsAwarded = false,
     this.loyaltyPointsAwardedAt,
+    this.sentToKitchen = false,
+    this.kitchenStatus,
     this.confirmedAt,
     this.sentToKitchenAt,
     this.readyAt,
@@ -503,6 +509,11 @@ class ClientOrder {
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get grandTotal => totalAmount + deliveryFee;
+
+  /// true si la commande contient au moins 1 article type 'menu' (à préparer en cuisine)
+  bool get hasKitchenItems => items.any((i) => i.itemType == 'menu');
+  /// true si TOUS les articles sont 'cambuse' (pas de cuisine, direct caisse)
+  bool get isCambuseOnly => items.isNotEmpty && !hasKitchenItems;
 
   ClientOrder copyWith({
     String? id,
@@ -554,6 +565,8 @@ class ClientOrder {
     orderNumber: orderNumber ?? this.orderNumber,
     loyaltyPointsAwarded: loyaltyPointsAwarded ?? this.loyaltyPointsAwarded,
     loyaltyPointsAwardedAt: loyaltyPointsAwardedAt ?? this.loyaltyPointsAwardedAt,
+    sentToKitchen: this.sentToKitchen,
+    kitchenStatus: this.kitchenStatus,
     confirmedAt: this.confirmedAt,
     sentToKitchenAt: this.sentToKitchenAt,
     readyAt: this.readyAt,
@@ -662,6 +675,8 @@ class ClientOrder {
     loyaltyPointsAwardedAt: m['loyaltyPointsAwardedAt'] is int
         ? DateTime.fromMillisecondsSinceEpoch(m['loyaltyPointsAwardedAt'] as int)
         : null,
+    sentToKitchen: m['sentToKitchen'] as bool? ?? false,
+    kitchenStatus: m['kitchenStatus'] as String?,
     confirmedAt: m['confirmedAt'] is int
         ? DateTime.fromMillisecondsSinceEpoch(m['confirmedAt'] as int)
         : (m['confirmedAt'] is Timestamp ? (m['confirmedAt'] as Timestamp).toDate() : null),
