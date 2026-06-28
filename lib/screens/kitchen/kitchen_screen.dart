@@ -193,7 +193,9 @@ class _KitchenScreenState extends State<KitchenScreen> {
                             crossAxisCount: 2,
                             mainAxisSpacing: 12,
                             crossAxisSpacing: 12,
-                            childAspectRatio: 0.7,
+                            // ✅ FIX: ratio abaissé de 0.7 → 0.62 pour éviter le clipping
+                            // des boutons Action en bas de la carte (Commencer / Prêt)
+                            childAspectRatio: 0.62,
                           ),
                           itemCount: activeOrders.length,
                           itemBuilder: (context, i) => _KitchenOrderCard(
@@ -1497,10 +1499,15 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
           ),
 
           // Items — les boissons Cambuse (isCambuse==true) ne passent PAS en cuisine
+          // ⚠️ BUG FIX: physics: NeverScrollableScrollPhysics() OBLIGATOIRE
+          // Sans ça, le ListView intercepte TOUS les événements tactiles et
+          // les GestureDetector des boutons Action (Commencer, Prêt) ne reçoivent
+          // jamais les onTap → boutons visibles mais non cliquables.
           Builder(builder: (ctx) {
             final kitchenItems = order.items.where((i) => !i.isCambuse).toList();
             return Expanded(
               child: ListView.builder(
+                physics: const NeverScrollableScrollPhysics(), // ✅ FIX CRITIQUE
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 itemCount: kitchenItems.length,
                 itemBuilder: (context, i) {
@@ -1573,46 +1580,104 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                     final canChangeStatus = role == UserRole.kitchen ||
                                            role == UserRole.admin   ||
                                            role == UserRole.manager;
-                    // Pour les commandes online, utiliser kitchenStatus
-                    // 'waiting' = arrivée en cuisine, pas encore commencée
-                    // 'preparing' = en cours de préparation
-                    // Pour les commandes POS, utiliser status
-                    final bool isInPreparation = order.isOnlineOrder
-                        ? (order.kitchenStatus == 'preparing')
+
+                    // ── Détermination de l'état actuel ────────────────────
+                    // Online  : kitchenStatus 'pending'|'preparing' → needsStart
+                    //           kitchenStatus 'preparing' → needsReady
+                    // POS     : status pending|preparing → needsStart
+                    //           status preparing → needsReady
+                    final String ks = order.kitchenStatus ?? '';
+                    final bool isOnline = order.isOnlineOrder;
+
+                    // Commande déjà « Commencée » (en préparation)
+                    final bool isInPreparation = isOnline
+                        ? (ks == 'preparing')
                         : (order.status == OrderStatus.preparing);
-                    final bool needsStart = !isInPreparation;
+
+                    // Commande déjà « Prête » (kitchenStatus=ready ou status=ready)
+                    final bool isAlreadyReady = isOnline
+                        ? (ks == 'ready')
+                        : (order.status == OrderStatus.ready);
+
+                    // needsStart : pas encore commencée (pending / autre)
+                    final bool needsStart = !isInPreparation && !isAlreadyReady;
+
+                    // Label et couleur selon l'état
+                    final String btnLabel = needsStart
+                        ? 'Commencer'
+                        : (isInPreparation ? '✓ Prêt!' : '✓ Servir');
+                    final Color btnColor = canChangeStatus
+                        ? (needsStart
+                            ? AppTheme.preparing
+                            : (isInPreparation ? AppTheme.ready : AppTheme.success))
+                        : Colors.grey.shade700;
+
                     return GestureDetector(
+                      behavior: HitTestBehavior.opaque, // ✅ FIX: capture TOUS les clics sur la surface
                       onTap: canChangeStatus
-                          ? () {
-                              if (needsStart) {
-                                widget.provider.updateOrderStatus(
-                                    order.id, OrderStatus.preparing);
-                              } else {
-                                widget.provider.updateOrderStatus(
-                                    order.id, OrderStatus.ready);
-                                widget.tts.announceOrderReady(order);
+                          ? () async {
+                              // ── LOGS DEBUG ────────────────────────────────
+                              final statusBefore = isOnline ? ks : order.status.toString();
+                              debugPrint('[CUISINE][onTap] ▶ orderId=${order.id}');
+                              debugPrint('[CUISINE][onTap]   role=$role | canChange=$canChangeStatus');
+                              debugPrint('[CUISINE][onTap]   statusAvant=$statusBefore | needsStart=$needsStart | isInPrep=$isInPreparation');
+                              // ─────────────────────────────────────────────
+                              try {
+                                if (needsStart) {
+                                  debugPrint('[CUISINE][onTap]   → updateOrderStatus(preparing)');
+                                  await widget.provider.updateOrderStatus(
+                                      order.id, OrderStatus.preparing);
+                                  debugPrint('[CUISINE][onTap]   ✅ Firestore mis à jour → preparing');
+                                } else if (isInPreparation) {
+                                  debugPrint('[CUISINE][onTap]   → updateOrderStatus(ready)');
+                                  await widget.provider.updateOrderStatus(
+                                      order.id, OrderStatus.ready);
+                                  widget.tts.announceOrderReady(order);
+                                  debugPrint('[CUISINE][onTap]   ✅ Firestore mis à jour → ready');
+                                } else {
+                                  // Déjà ready → passer à served
+                                  debugPrint('[CUISINE][onTap]   → updateOrderStatus(served)');
+                                  await widget.provider.updateOrderStatus(
+                                      order.id, OrderStatus.served);
+                                  debugPrint('[CUISINE][onTap]   ✅ Firestore mis à jour → served');
+                                }
+                              } catch (e, st) {
+                                debugPrint('[CUISINE][onTap]   ❌ ERREUR Firestore: $e');
+                                debugPrint('[CUISINE][onTap]   STACKTRACE: $st');
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Erreur mise à jour: $e'),
+                                      backgroundColor: Colors.red,
+                                      duration: const Duration(seconds: 4),
+                                    ),
+                                  );
+                                }
                               }
                             }
                           : () {
+                              debugPrint('[CUISINE][onTap]   ⛔ REFUSÉ — role=$role (currentUser=${widget.provider.currentUser?.email})');
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Action réservée à la cuisine'),
+                                SnackBar(
+                                  content: Text(
+                                    role == null
+                                        ? 'Session expirée — reconnectez-vous'
+                                        : 'Action réservée à la cuisine (rôle actuel: ${role.name})',
+                                  ),
                                   backgroundColor: Colors.orange,
-                                  duration: Duration(seconds: 2),
+                                  duration: const Duration(seconds: 3),
                                 ),
                               );
                             },
                       child: Container(
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         decoration: BoxDecoration(
-                          color: canChangeStatus
-                              ? (needsStart ? AppTheme.preparing : AppTheme.ready)
-                              : Colors.grey.shade700,
+                          color: btnColor,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Center(
                           child: Text(
-                            needsStart ? 'Commencer' : '✓ Prêt!',
+                            btnLabel,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 11,
