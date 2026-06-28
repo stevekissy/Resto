@@ -17,7 +17,6 @@ import 'utils/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/client/client_main_screen.dart';
-// ignore: unused_import
 import 'screens/client/auth/client_auth_screen.dart';
 import 'services/firebase_service.dart';
 import 'services/client_firebase_service.dart';
@@ -204,8 +203,8 @@ class SankadiokroApp extends StatelessWidget {
 //
 //  Logique :
 //  • hasSession = true  → MainScreen directement (session restaurée)
-//  • hasSession = false → ClientMainScreen(showManagementButton: true)
-//                         ← Espace Client = accueil principal
+//  • hasSession = false → ClientAuthScreen(showManagementButton: true)
+//                         ← Logo + "Commander en ligne" + formulaire
 //                         Le bouton "Accès gestion" (discret, en bas)
 //                         ouvre LoginScreen pour le staff.
 //
@@ -299,10 +298,10 @@ class _AuthGateState extends State<_AuthGate> {
     // _authenticated peut être null uniquement si Firebase n'a pas encore
     // émis d'événement authStateChanges.
     if (_authenticated == null || _authenticated == false) {
-      // ── Aucune session → Espace Client en accueil principal ──────────
-      // Le bouton discret "Accès gestion" (showManagementButton: true) permet
-      // à l'équipe de naviguer vers LoginScreen sans changer le design.
-      return const ClientMainScreen(showManagementButton: true);
+      // ── Aucune session → Formulaire connexion client = accueil principal ──
+      // Logo + "Commander en ligne" + formulaire + bouton inscription.
+      // Le bouton discret "Accès gestion" en bas ouvre LoginScreen gestion.
+      return const ClientAuthScreen(showManagementButton: true);
     }
 
     // Session active confirmée → détecter le rôle (client vs staff)
@@ -443,10 +442,10 @@ class _SplashScreenState extends State<_SplashScreen>
     // basculer vers l'espace client (accueil principal) pour ne jamais bloquer.
     _safetyTimer = Timer(const Duration(seconds: 6), () {
       if (mounted) {
-        debugPrint('[SplashScreen] ⚠ Timeout 6s — basculement forcé vers ClientMainScreen');
+        debugPrint('[SplashScreen] ⚠ Timeout 6s — basculement forcé vers ClientAuthScreen');
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => const ClientMainScreen(showManagementButton: true),
+            builder: (_) => const ClientAuthScreen(showManagementButton: true),
           ),
           (route) => false,
         );

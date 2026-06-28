@@ -14,7 +14,13 @@ import '../../login_screen.dart';
 // ═══════════════════════════════════════════════════════════════════════════
 
 class ClientAuthScreen extends StatefulWidget {
-  const ClientAuthScreen({super.key});
+  /// Affiche le bouton discret "Accès gestion" en bas de l'écran.
+  /// Activé uniquement quand l'app est ouverte sans session (accueil principal).
+  final bool showManagementButton;
+  const ClientAuthScreen({
+    super.key,
+    this.showManagementButton = false,
+  });
 
   @override
   State<ClientAuthScreen> createState() => _ClientAuthScreenState();
@@ -191,6 +197,10 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.background,
+      // ── Bouton discret "Accès gestion" en bas (accueil sans session) ──
+      bottomNavigationBar: widget.showManagementButton
+          ? _ManagementAccessButton()
+          : null,
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -210,7 +220,9 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // ── Bouton Retour à l'accueil (toujours visible) ───
+                    // ── Bouton Retour (masqué quand showManagementButton,
+                    //    car c'est l'écran racine — rien à pop) ───────────
+                    if (!widget.showManagementButton)
                     Align(
                       alignment: Alignment.centerLeft,
                       child: GestureDetector(
@@ -462,6 +474,61 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
           ),
         ],
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOUTON DISCRET « ACCÈS GESTION »
+// Affiché en bas de ClientAuthScreen quand showManagementButton = true.
+// Ouvre LoginScreen sans perturber le flux client.
+// ─────────────────────────────────────────────────────────────────────────────
+class _ManagementAccessButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFF0A0A0A),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      child: SafeArea(
+        top: false,
+        child: GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const LoginScreen(fromClientSpace: true),
+            ),
+          ),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.admin_panel_settings_outlined,
+                  size: 13,
+                  color: Colors.white.withValues(alpha: 0.35),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Accès gestion',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.35),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
