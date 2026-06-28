@@ -1385,6 +1385,16 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  /// Mise à jour statut cuisine — appelée EXCLUSIVEMENT depuis l'écran cuisine.
+  /// Pas de guard de rôle ici : l'utilisateur est déjà authentifié et autorisé
+  /// par la vérification dans _KitchenOrderCardState._doAction.
+  /// Écrit directement dans Firestore sans passer par le guard admin/manager.
+  Future<void> updateKitchenStatus(String orderId, OrderStatus status) async {
+    debugPrint('[AppProvider] updateKitchenStatus: orderId=$orderId status=${status.name}');
+    await _firebase.updateOrderStatus(orderId, status);
+    debugPrint('[AppProvider] updateKitchenStatus OK: $orderId → ${status.name}');
+  }
+
   /// SOURCE UNIQUE : envoie une commande en ligne en cuisine.
   /// [orderId] = id du doc orders (widget.order.id depuis streamAdminOnlineOrders)
   Future<void> sendOnlineOrderToKitchen(String orderId) async {

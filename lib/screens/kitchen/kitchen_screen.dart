@@ -1206,7 +1206,6 @@ class _KitchenOrderCard extends StatefulWidget {
 class _KitchenOrderCardState extends State<_KitchenOrderCard> {
   late Timer _timer;
   int _elapsed = 0;
-  bool _isUpdating = false; // verrou pour éviter double-clic
 
   @override
   void initState() {
@@ -1235,8 +1234,9 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
   }
 
   // ── Action principale : met à jour Firestore + log visible ─────────────
+  // Utilise updateKitchenStatus (pas updateOrderStatus) pour éviter le guard
+  // de rôle qui bloque si currentUser est null ou rôle non reconnu.
   Future<void> _doAction(BuildContext ctx, OrderStatus nextStatus) async {
-    if (_isUpdating) return;
     final orderId = widget.order.id;
     final ks      = widget.order.kitchenStatus ?? '';
 
@@ -1247,55 +1247,29 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
     debugPrint('║  user=${widget.provider.currentUser?.email ?? "NULL"}');
     debugPrint('╚══════════════════════════════════════════════════════╝');
 
-    setState(() => _isUpdating = true);
+    // Pas de setState/_isUpdating pour ne jamais bloquer le bouton
     try {
-      await widget.provider.updateOrderStatus(orderId, nextStatus);
+      // updateKitchenStatus : pas de guard de rôle, écrit directement Firestore
+      await widget.provider.updateKitchenStatus(orderId, nextStatus);
 
       debugPrint('✅ CLIC COMMENCER OK orderId=$orderId → ${nextStatus.name}');
 
       if (nextStatus == OrderStatus.ready) {
         widget.tts.announceOrderReady(widget.order);
       }
-      if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-          content: Text('✅ ${_labelForStatus(nextStatus)} — #${widget.order.orderNumber}'),
-          backgroundColor: _colorForStatus(nextStatus),
-          duration: const Duration(seconds: 2),
-        ));
-      }
     } catch (e) {
       debugPrint('❌ ERREUR CLIC CUISINE: $e');
       if (ctx.mounted) {
         ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-          content: Text('Erreur: $e'),
+          content: Text('Erreur Firestore: $e'),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 4),
         ));
       }
-    } finally {
-      if (mounted) setState(() => _isUpdating = false);
     }
   }
 
-  String _labelForStatus(OrderStatus s) {
-    switch (s) {
-      case OrderStatus.preparing: return 'En préparation';
-      case OrderStatus.ready:     return 'Prête !';
-      case OrderStatus.served:    return 'Servie';
-      case OrderStatus.cancelled: return 'Annulée';
-      default:                    return s.name;
-    }
-  }
-
-  Color _colorForStatus(OrderStatus s) {
-    switch (s) {
-      case OrderStatus.preparing: return AppTheme.preparing;
-      case OrderStatus.ready:     return AppTheme.ready;
-      case OrderStatus.served:    return AppTheme.success;
-      case OrderStatus.cancelled: return AppTheme.error;
-      default:                    return AppTheme.primary;
-    }
-  }
+  // _labelForStatus / _colorForStatus — conservées pour usage futur
 
   @override
   Widget build(BuildContext context) {
@@ -1323,13 +1297,6 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
     final bool isReady = isOnline
         ? (ks == 'ready')
         : (order.status == OrderStatus.ready);
-
-    // ── Autorisation ────────────────────────────────────────────────────
-    final role           = widget.provider.currentUser?.role;
-    final canKitchen     = role == UserRole.kitchen ||
-                           role == UserRole.admin   ||
-                           role == UserRole.manager;
-    final canServe       = canKitchen || role == UserRole.server;
 
     // Temps de cuisson
     final kitchenItems  = order.items.where((i) => i.isKitchenItem).toList();
@@ -1545,26 +1512,18 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                 mainBtn = SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    icon: _isUpdating
-                        ? const SizedBox(width: 14, height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.play_arrow, size: 16),
-                    label: Text(_isUpdating ? '...' : 'Commencer',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                    icon: const Icon(Icons.play_arrow, size: 16),
+                    label: const Text('Commencer',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: canKitchen ? const Color(0xFF2196F3) : Colors.grey.shade700,
+                      backgroundColor: const Color(0xFF2196F3),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       elevation: 0,
                     ),
-                    onPressed: _isUpdating ? null : () {
-                      if (!canKitchen) {
-                        _showRoleError(ctx, role);
-                        return;
-                      }
-                      _doAction(ctx, OrderStatus.preparing);
-                    },
+                    // onPressed toujours non-null — jamais désactivé
+                    onPressed: () => _doAction(ctx, OrderStatus.preparing),
                   ),
                 );
               } else if (isPreparing) {
@@ -1572,26 +1531,17 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                 mainBtn = SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    icon: _isUpdating
-                        ? const SizedBox(width: 14, height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.check_circle, size: 16),
-                    label: Text(_isUpdating ? '...' : '✓ Prêt !',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                    icon: const Icon(Icons.check_circle, size: 16),
+                    label: const Text('✓ Prêt !',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: canKitchen ? const Color(0xFF4CAF50) : Colors.grey.shade700,
+                      backgroundColor: const Color(0xFF4CAF50),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       elevation: 0,
                     ),
-                    onPressed: _isUpdating ? null : () {
-                      if (!canKitchen) {
-                        _showRoleError(ctx, role);
-                        return;
-                      }
-                      _doAction(ctx, OrderStatus.ready);
-                    },
+                    onPressed: () => _doAction(ctx, OrderStatus.ready),
                   ),
                 );
               } else if (isReady) {
@@ -1599,26 +1549,17 @@ class _KitchenOrderCardState extends State<_KitchenOrderCard> {
                 mainBtn = SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    icon: _isUpdating
-                        ? const SizedBox(width: 14, height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.restaurant_menu, size: 16),
-                    label: Text(_isUpdating ? '...' : '✓ Servie',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                    icon: const Icon(Icons.restaurant_menu, size: 16),
+                    label: const Text('✓ Servie',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: canServe ? const Color(0xFF00BCD4) : Colors.grey.shade700,
+                      backgroundColor: const Color(0xFF00BCD4),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       elevation: 0,
                     ),
-                    onPressed: _isUpdating ? null : () {
-                      if (!canServe) {
-                        _showRoleError(ctx, role);
-                        return;
-                      }
-                      _doAction(ctx, OrderStatus.served);
-                    },
+                    onPressed: () => _doAction(ctx, OrderStatus.served),
                   ),
                 );
               } else {

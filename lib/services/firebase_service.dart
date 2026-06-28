@@ -546,11 +546,13 @@ class FirebaseService {
     if (status == OrderStatus.preparing) {
       data['startedAt']     = FieldValue.serverTimestamp();
       data['kitchenStatus'] = 'preparing';
+      data['orderStatus']   = 'preparing'; // champ orderStatus synchronisé
     }
 
     if (status == OrderStatus.ready) {
       data['readyAt']       = FieldValue.serverTimestamp();
       data['kitchenStatus'] = 'ready';
+      data['orderStatus']   = 'ready';
       // NE PAS mettre readyForCashier ici — la caisse n'est notifiée qu'à "served"
     }
 
