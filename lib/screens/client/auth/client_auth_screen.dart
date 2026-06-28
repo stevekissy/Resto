@@ -6,6 +6,7 @@ import '../../../models/client_models.dart';
 import '../../../providers/client_provider.dart';
 import '../../../services/client_firebase_service.dart';
 import '../../../utils/app_theme.dart';
+import '../../../widgets/common_widgets.dart';
 import '../client_main_screen.dart';
 import '../../login_screen.dart';
 
@@ -204,10 +205,14 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF0D47A1), Color(0xFF0A0A0A), Color(0xFF0A0A0A)],
-            stops: [0.0, 0.45, 1.0],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF0D47A1), // haut : bleu
+              Color(0xFF061428), // milieu : bleu foncé
+              Color(0xFF0A0A0A), // bas : noir
+            ],
+            stops: [0.0, 0.40, 1.0],
           ),
         ),
         child: SafeArea(
@@ -292,7 +297,10 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
                         ),
                       ),
                     ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 28),
+                    // ── Pied de page ───────────────────────────────────
+                    _buildFooter(),
+                    const SizedBox(height: 8),
                   ],
                 ),
               ),
@@ -303,21 +311,58 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
     );
   }
 
+  Widget _buildFooter() {
+    return Column(
+      children: [
+        Text(
+          'Version 1.0.0  ©  2025  Restaurant Sankadiokro',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.28),
+            fontSize: 10.5,
+            fontWeight: FontWeight.w400,
+            letterSpacing: 0.2,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 3),
+        Text(
+          'Yopougon Millionnaire  •  Abidjan, Côte d\'Ivoire',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.22),
+            fontSize: 10,
+            fontWeight: FontWeight.w400,
+            letterSpacing: 0.1,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
   Widget _buildLogo() {
     return Column(
       children: [
+        // ── Vrai logo PNG du restaurant (coins arrondis, même taille) ──
         Container(
-          width: 80, height: 80,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF1565C0), Color(0xFF2196F3)],
-              begin: Alignment.topLeft, end: Alignment.bottomRight,
-            ),
             borderRadius: BorderRadius.circular(20),
-            boxShadow: [BoxShadow(color: AppTheme.primary.withValues(alpha: 0.4), blurRadius: 20, spreadRadius: 2)],
+            boxShadow: [
+              BoxShadow(
+                color: AppTheme.primary.withValues(alpha: 0.35),
+                blurRadius: 24,
+                spreadRadius: 2,
+              ),
+            ],
           ),
-          child: const Center(
-            child: Text('S', style: TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.w900)),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Image.asset(
+              'assets/images/logo_sankadiokro.png',
+              width: 80,
+              height: 80,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SankaLogo(size: 80),
+            ),
           ),
         ),
         const SizedBox(height: 16),
