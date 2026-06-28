@@ -37,11 +37,16 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
 
-  final _nameCtrl    = TextEditingController();
-  final _emailCtrl   = TextEditingController();
-  final _phoneCtrl   = TextEditingController();
-  final _passCtrl    = TextEditingController();
-  final _confirmCtrl = TextEditingController();
+  final _nameCtrl     = TextEditingController();
+  final _emailCtrl    = TextEditingController();
+  final _phoneCtrl    = TextEditingController();
+  final _passCtrl     = TextEditingController();
+  final _confirmCtrl  = TextEditingController();
+  final _referralCtrl = TextEditingController();
+
+  // null = non vérifié, true = valide, false = invalide
+  bool? _referralValid;
+  bool  _referralChecking = false;
 
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
@@ -64,11 +69,18 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
     _phoneCtrl.dispose();
     _passCtrl.dispose();
     _confirmCtrl.dispose();
+    _referralCtrl.dispose();
     super.dispose();
   }
 
   void _switchMode(_AuthMode mode) {
-    setState(() => _mode = mode);
+    setState(() {
+      _mode = mode;
+      // Réinitialiser l'état parrainage à chaque changement de mode
+      _referralValid    = null;
+      _referralChecking = false;
+    });
+    _referralCtrl.clear();
     _animCtrl.reset();
     _animCtrl.forward();
   }
@@ -117,22 +129,76 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
   // ── Inscription ──────────────────────────────────────────────────────────
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
+
+    // ── Vérification code parrainage avant inscription ────────────────────
+    final referralCode = _referralCtrl.text.trim().toUpperCase();
+    if (referralCode.isNotEmpty) {
+      // Si le code a été tapé mais invalide → bloquer
+      if (_referralValid == false) {
+        _showError('Code parrainage invalide. Vérifiez le code ou laissez le champ vide.');
+        return;
+      }
+      // Si encore en cours de vérification → attendre
+      if (_referralChecking || _referralValid == null) {
+        setState(() => _isLoading = true);
+        try {
+          final svc    = ClientFirebaseService();
+          final result = await svc.checkReferralCode(referralCode);
+          if (!mounted) return;
+          if (result == null) {
+            setState(() => _isLoading = false);
+            _showError('Code parrainage invalide. Vérifiez le code ou laissez le champ vide.');
+            return;
+          }
+        } catch (_) {
+          if (mounted) setState(() => _isLoading = false);
+          _showError('Impossible de vérifier le code. Réessayez.');
+          return;
+        }
+      }
+    }
+
     setState(() => _isLoading = true);
     try {
-      final svc = ClientFirebaseService();
+      final svc  = ClientFirebaseService();
       final cred = await svc.registerWithEmail(
         email: _emailCtrl.text.trim(),
         password: _passCtrl.text,
       );
       final uid = cred.user!.uid;
+
       // Créer le profil client dans Firestore
       final client = ClientUser(
-        id: uid,
-        name: _nameCtrl.text.trim(),
+        id:    uid,
+        name:  _nameCtrl.text.trim(),
         email: _emailCtrl.text.trim(),
         phone: _phoneCtrl.text.trim(),
       );
       await svc.createClientProfile(client);
+
+      // ── Appliquer le code parrainage si présent et valide ───────────────
+      if (referralCode.isNotEmpty && _referralValid == true) {
+        final errMsg = await svc.applyReferralCode(
+          newClientId:  uid,
+          referralCode: referralCode,
+        );
+        if (errMsg != null) {
+          // Ne bloque pas l'inscription — juste un avertissement
+          debugPrint('[register] Parrainage non appliqué: $errMsg');
+        } else {
+          // Écrire aussi referralCodeUsed dans le profil client
+          await svc.updateClientProfile(uid, {
+            'referralCodeUsed': referralCode,
+            'referredBy':       await _getReferrerId(svc, referralCode),
+            'createdAt':        DateTime.now().millisecondsSinceEpoch,
+          });
+          debugPrint('[register] ✅ Parrainage appliqué: $referralCode → $uid');
+        }
+      }
+
+      // Initialiser le code de parrainage propre pour ce nouveau client
+      await svc.initReferralCode(uid);
+
       if (mounted) {
         final provider = context.read<ClientProvider>();
         await provider.init(uid);
@@ -147,6 +213,16 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
       _showError('Erreur lors de l\'inscription. Réessayez.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Récupère l'ID du parrain depuis son code parrainage
+  Future<String> _getReferrerId(ClientFirebaseService svc, String code) async {
+    try {
+      final result = await svc.checkReferralCode(code);
+      return result?['id'] as String? ?? '';
+    } catch (_) {
+      return '';
     }
   }
 
@@ -253,9 +329,9 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white70, size: 14),
+                              Icon(Icons.lock_outline, color: Colors.white70, size: 14),
                               SizedBox(width: 6),
-                              Text('Retour à l\'accueil',
+                              Text('Accès gestion',
                                   style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600)),
                             ],
                           ),
@@ -450,9 +526,44 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
             ),
             validator: (v) => v != _passCtrl.text ? 'Les mots de passe ne correspondent pas' : null,
           ),
+          const SizedBox(height: 14),
+          // ── Champ code parrainage ─────────────────────────────────────
+          _ReferralField(
+            controller: _referralCtrl,
+            isValid: _referralValid,
+            isChecking: _referralChecking,
+            onChanged: _onReferralChanged,
+          ),
         ],
       ],
     );
+  }
+
+  // ── Vérification live du code parrainage ──────────────────────────────
+  Future<void> _onReferralChanged(String value) async {
+    final code = value.trim().toUpperCase();
+    if (code.isEmpty) {
+      setState(() { _referralValid = null; _referralChecking = false; });
+      return;
+    }
+    // Attendre que le code ait au moins 6 caractères (format SKR-XXXXXX = 10)
+    if (code.length < 4) {
+      setState(() { _referralValid = null; _referralChecking = false; });
+      return;
+    }
+    setState(() => _referralChecking = true);
+    try {
+      final svc    = ClientFirebaseService();
+      final result = await svc.checkReferralCode(code);
+      if (!mounted) return;
+      setState(() {
+        _referralValid    = result != null;
+        _referralChecking = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() { _referralValid = null; _referralChecking = false; });
+    }
   }
 
   Widget _buildSubmitButton() {
@@ -574,6 +685,116 @@ class _ManagementAccessButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ── Widget champ code parrainage ─────────────────────────────────────────────
+// Affiche un indicateur visuel selon l'état de validation :
+//   • spinner  → vérification en cours
+//   • ✓ vert   → code valide
+//   • ✗ rouge  → code invalide
+
+class _ReferralField extends StatelessWidget {
+  final TextEditingController controller;
+  final bool? isValid;       // null=non vérifié, true=ok, false=invalide
+  final bool  isChecking;
+  final void Function(String) onChanged;
+
+  const _ReferralField({
+    required this.controller,
+    required this.isValid,
+    required this.isChecking,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Couleur de la bordure selon l'état
+    Color borderColor;
+    if (isValid == true)       { borderColor = const Color(0xFF4CAF50); }  // vert
+    else if (isValid == false) { borderColor = AppTheme.error; }           // rouge
+    else                       { borderColor = const Color(0xFF2A2A5A); }  // défaut
+
+    // Icône de suffixe
+    Widget? suffix;
+    if (isChecking) {
+      suffix = const Padding(
+        padding: EdgeInsets.all(14),
+        child: SizedBox(
+          width: 16, height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary),
+        ),
+      );
+    } else if (isValid == true) {
+      suffix = const Icon(Icons.check_circle_outline, color: Color(0xFF4CAF50), size: 20);
+    } else if (isValid == false) {
+      suffix = Icon(Icons.cancel_outlined, color: AppTheme.error, size: 20);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: controller,
+          keyboardType: TextInputType.text,
+          textCapitalization: TextCapitalization.characters,
+          style: const TextStyle(color: Colors.white, fontSize: 14, letterSpacing: 1.2),
+          onChanged: onChanged,
+          // Pas de validator obligatoire — champ optionnel
+          decoration: InputDecoration(
+            labelText: 'Code parrainage (optionnel)',
+            prefixIcon: Icon(Icons.card_giftcard_outlined, color: AppTheme.primary, size: 20),
+            suffixIcon: suffix,
+            filled: true,
+            fillColor: AppTheme.surfaceLight,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: borderColor),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(
+                color: isValid == true ? const Color(0xFF4CAF50) : AppTheme.primary,
+                width: 2,
+              ),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppTheme.error),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppTheme.error, width: 2),
+            ),
+            labelStyle: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            isDense: true,
+          ),
+        ),
+        // Message d'erreur si code invalide
+        if (isValid == false)
+          const Padding(
+            padding: EdgeInsets.only(top: 6, left: 4),
+            child: Text(
+              'Code parrainage invalide',
+              style: TextStyle(color: AppTheme.error, fontSize: 12),
+            ),
+          ),
+        // Message de confirmation si code valide
+        if (isValid == true)
+          const Padding(
+            padding: EdgeInsets.only(top: 6, left: 4),
+            child: Text(
+              'Code valide ✓',
+              style: TextStyle(color: Color(0xFF4CAF50), fontSize: 12),
+            ),
+          ),
+      ],
     );
   }
 }
