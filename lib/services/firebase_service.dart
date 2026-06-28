@@ -349,19 +349,36 @@ class FirebaseService {
   OrderStatus _parseOrderStatus(dynamic raw) {
     if (raw == null) return OrderStatus.pending;
     if (raw is int) {
-      if (raw >= 0 && raw < OrderStatus.values.length) return OrderStatus.values[raw];
-      return OrderStatus.pending;
+      // FIX CRITIQUE : mapping entre ClientOrderStatus (int) et OrderStatus (enum)
+      // ClientOrderStatus : pending=0, confirmed=1, preparing=2, ready=3, delivering=4,
+      //                     delivered=5, cancelled=6, served=7, paid=8
+      // OrderStatus        : pending=0, preparing=1, ready=2, served=3, cancelled=4
+      // → Ne pas utiliser OrderStatus.values[raw] directement car les index diffèrent!
+      switch (raw) {
+        case 0:  return OrderStatus.pending;    // ClientOrderStatus.pending
+        case 1:  return OrderStatus.pending;    // ClientOrderStatus.confirmed → pending cuisine
+        case 2:  return OrderStatus.preparing;  // ClientOrderStatus.preparing → ✅ en cuisine
+        case 3:  return OrderStatus.ready;      // ClientOrderStatus.ready
+        case 4:  return OrderStatus.pending;    // ClientOrderStatus.delivering (pas en cuisine)
+        case 5:  return OrderStatus.served;     // ClientOrderStatus.delivered
+        case 6:  return OrderStatus.cancelled;  // ClientOrderStatus.cancelled
+        case 7:  return OrderStatus.served;     // ClientOrderStatus.served
+        case 8:  return OrderStatus.served;     // ClientOrderStatus.paid
+        default: return OrderStatus.pending;
+      }
     }
     if (raw is String) {
       switch (raw) {
-        case 'pending':    return OrderStatus.pending;
-        case 'confirmed':  return OrderStatus.pending;  // confirmed → affiché comme pending en cuisine
-        case 'preparing':  return OrderStatus.preparing;
-        case 'ready':      return OrderStatus.ready;
+        case 'pending':           return OrderStatus.pending;
+        case 'confirmed':         return OrderStatus.pending;  // confirmed → pending cuisine
+        case 'preparing':         return OrderStatus.preparing;
+        case 'sent_to_kitchen':   return OrderStatus.preparing; // alias online
+        case 'ready':             return OrderStatus.ready;
         case 'served':
-        case 'delivered':  return OrderStatus.served;
-        case 'cancelled':  return OrderStatus.cancelled;
-        default:           return OrderStatus.pending;
+        case 'delivered':         return OrderStatus.served;
+        case 'paid':              return OrderStatus.served;
+        case 'cancelled':         return OrderStatus.cancelled;
+        default:                  return OrderStatus.pending;
       }
     }
     return OrderStatus.pending;

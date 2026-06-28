@@ -343,7 +343,10 @@ class OrderItem {
   }) : itemType = itemType ?? (isCambuse ? 'cambuse' : 'menu');
 
   /// true si cet article doit passer en cuisine
-  bool get isKitchenItem => itemType == 'menu' && !isCambuse;
+  /// FIX : basé UNIQUEMENT sur itemType (source de vérité).
+  /// isCambuse est un champ legacy POS — pour les commandes online,
+  /// seul itemType=='menu' fait foi. Ne pas combiner les deux.
+  bool get isKitchenItem => itemType == 'menu';
 
   double get totalPrice => unitPrice * quantity;
 

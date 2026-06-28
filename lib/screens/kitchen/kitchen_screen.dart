@@ -17,6 +17,9 @@ class KitchenScreen extends StatefulWidget {
 }
 
 class _KitchenScreenState extends State<KitchenScreen> {
+  // ── Filtre cuisine : statuts valides (jamais 'waiting', jamais vide) ──
+  static const _activeKitchenStatuses = {'pending', 'preparing', 'ready'};
+
   late Timer _timer;
   final TtsService _tts = TtsService();
   final Set<String> _announcedOrders = {};
@@ -82,12 +85,21 @@ class _KitchenScreenState extends State<KitchenScreen> {
     }
 
     // ── Commandes online envoyées en cuisine (filtre principal) ──────────
+    // FIX v2 :
+    //   • isOnlineOrder utilise source OU orderSource (champ alternatif)
+    //   • kitchenStatus inclut 'ready' (commande prête mais pas encore servie)
+    //   • Suppression de 'waiting' (jamais écrit par sendToKitchen)
+    //   • hasKitchenItems vérifié sur itemType=='menu' UNIQUEMENT (sans isCambuse)
+    //   • _activeKitchenStatuses est déclaré au niveau de la CLASSE (static const)
+
     final onlineInKitchen = allOrders.where((o) {
+      // Accepter source='online' OU orderSource='online' (double format)
       if (!o.isOnlineOrder) return false;
       if (!o.sentToKitchen) return false;
+      // hasKitchenItems : au moins un article avec itemType=='menu'
       if (!o.hasKitchenItems) return false;
       final ks = o.kitchenStatus ?? '';
-      return ks == 'pending' || ks == 'waiting' || ks == 'preparing';
+      return _activeKitchenStatuses.contains(ks);
     }).toList();
 
     // ── Commandes POS actives (filtre habituel) ───────────────────────────
