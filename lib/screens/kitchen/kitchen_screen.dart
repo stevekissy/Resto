@@ -123,8 +123,14 @@ class _KitchenScreenState extends State<KitchenScreen> {
     }).toList();
 
     // ── (B) Commandes POS classiques — sentToKitchen==false ───────────────
+    // RÈGLE STRICTE : les commandes online NE PASSENT JAMAIS par cette règle.
+    // Une commande online ne doit apparaître en cuisine QUE via la RÈGLE (A),
+    // c'est-à-dire après approbation admin explicite (sentToKitchen=true).
+    // Sans ce guard, une commande online pending avec hasKitchenItems=true
+    // arriverait en cuisine AVANT toute validation admin.
     final posActive = allOrders.where((o) {
-      if (o.sentToKitchen) return false;       // déjà dans onlineInKitchen
+      if (o.sentToKitchen) return false;       // déjà dans onlineInKitchen (RÈGLE A)
+      if (o.isOnlineOrder)  return false;       // FIX : online → RÈGLE (A) uniquement
       if (o.status == OrderStatus.cancelled) return false;
       if (!o.hasKitchenItems) return false;    // exclure cambuse-only POS
       return o.status == OrderStatus.pending || o.status == OrderStatus.preparing;
@@ -167,7 +173,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '🔎 Stream : ${allOrders.length} total · $onlineTotal online · $onlineSent sentToKitchen · ${onlineInKitchen.length} actives cuisine  [v28/06-11:30]',
+                  '🔎 Stream : ${allOrders.length} total · $onlineTotal online · $onlineSent sentToKitchen · ${onlineInKitchen.length} actives cuisine  [v28/06-16:00]',
                   style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 10, fontFamily: 'monospace'),
                 ),
                 if (onlineInKitchen.isNotEmpty)
