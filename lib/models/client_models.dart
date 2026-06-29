@@ -453,6 +453,13 @@ class ClientOrder {
   bool sentToKitchen;    // true = envoyée en cuisine (écrit par sendToKitchen())
   String? kitchenStatus; // 'not_sent' | 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled'
 
+  // ── Champs workflow admin (Firestore) ───────────────────────────────────
+  // Ces champs sont la source de vérité pour les filtres admin.
+  // adminStatus : 'received' | 'accepted' | 'sent_to_kitchen' | 'ready' | 'delivered' | 'cancelled'
+  // orderStatus : 'received' | 'accepted' | 'sent_to_kitchen' | 'ready' | 'delivering' | 'delivered' | 'served' | 'cancelled'
+  String? adminStatus;
+  String? orderStatus;
+
   // ── Timestamps workflow ─────────────────────────────────────────────────
   DateTime? confirmedAt;     // admin confirme la commande
   DateTime? sentToKitchenAt; // envoyée en cuisine
@@ -501,6 +508,8 @@ class ClientOrder {
     this.loyaltyPointsAwardedAt,
     this.sentToKitchen = false,
     this.kitchenStatus,
+    this.adminStatus,
+    this.orderStatus,
     this.confirmedAt,
     this.sentToKitchenAt,
     this.readyAt,
@@ -567,6 +576,8 @@ class ClientOrder {
     loyaltyPointsAwardedAt: loyaltyPointsAwardedAt ?? this.loyaltyPointsAwardedAt,
     sentToKitchen: this.sentToKitchen,
     kitchenStatus: this.kitchenStatus,
+    adminStatus: this.adminStatus,
+    orderStatus: this.orderStatus,
     confirmedAt: this.confirmedAt,
     sentToKitchenAt: this.sentToKitchenAt,
     readyAt: this.readyAt,
@@ -619,6 +630,8 @@ class ClientOrder {
     'deliveredAt': deliveredAt?.millisecondsSinceEpoch,
     'settledAt': settledAt?.millisecondsSinceEpoch,
     'source': 'online',
+    if (adminStatus != null) 'adminStatus': adminStatus,
+    if (orderStatus != null) 'orderStatus': orderStatus,
   };
 
   factory ClientOrder.fromMap(Map<String, dynamic> m) => ClientOrder(
@@ -677,6 +690,8 @@ class ClientOrder {
         : null,
     sentToKitchen: m['sentToKitchen'] as bool? ?? false,
     kitchenStatus: m['kitchenStatus'] as String?,
+    adminStatus:  m['adminStatus']  as String?,
+    orderStatus:  m['orderStatus']  as String?,
     confirmedAt: m['confirmedAt'] is int
         ? DateTime.fromMillisecondsSinceEpoch(m['confirmedAt'] as int)
         : (m['confirmedAt'] is Timestamp ? (m['confirmedAt'] as Timestamp).toDate() : null),

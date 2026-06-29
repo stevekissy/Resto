@@ -209,19 +209,76 @@ class _OrdersTabState extends State<_OrdersTab> {
     super.dispose();
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // LOGIQUE DE FILTRAGE — basée sur les champs Firestore réels
+  // (adminStatus, orderStatus, sentToKitchen, kitchenStatus)
+  // ══════════════════════════════════════════════════════════════════════
+
+  /// Détermine si une commande appartient à un filtre donné.
+  /// Utilise adminStatus / orderStatus / sentToKitchen / kitchenStatus
+  /// plutôt que o.status (qui revient à 0 après sendToKitchen côté POS).
+  bool _matchesFilter(ClientOrder o, ClientOrderStatus? filter) {
+    if (filter == null) return true; // "Toutes" → aucun filtre
+
+    switch (filter) {
+      // ── Reçues : commande en attente d'acceptation ──────────────────
+      case ClientOrderStatus.pending:
+        final as = o.adminStatus ?? '';
+        // Pas encore acceptée, pas annulée
+        return (as == 'received' || as == '') &&
+               o.status == ClientOrderStatus.pending &&
+               !o.sentToKitchen;
+
+      // ── Confirmées : acceptée mais PAS encore envoyée en cuisine ───
+      case ClientOrderStatus.confirmed:
+        final as = o.adminStatus ?? '';
+        return as == 'accepted' && !o.sentToKitchen;
+
+      // ── Cuisine : envoyée en cuisine (pending ou preparing) ─────────
+      case ClientOrderStatus.preparing:
+        if (o.sentToKitchen) return true;
+        final ks = o.kitchenStatus ?? '';
+        return ks == 'pending' || ks == 'preparing';
+
+      // ── Prêtes : cuisine a marqué ready ────────────────────────────
+      case ClientOrderStatus.ready:
+        final ks = o.kitchenStatus ?? '';
+        final as = o.adminStatus ?? '';
+        return ks == 'ready' || as == 'ready';
+
+      // ── Livraison ───────────────────────────────────────────────────
+      case ClientOrderStatus.delivering:
+        final os = o.orderStatus ?? '';
+        return os == 'delivering' || o.status == ClientOrderStatus.delivering;
+
+      // ── Livrées : delivered OU served ──────────────────────────────
+      case ClientOrderStatus.delivered:
+        final os = o.orderStatus ?? '';
+        return os == 'delivered' || os == 'served' ||
+               o.status == ClientOrderStatus.delivered ||
+               o.status == ClientOrderStatus.served  ||
+               o.status == ClientOrderStatus.paid;
+
+      // ── Annulées ────────────────────────────────────────────────────
+      case ClientOrderStatus.cancelled:
+        final os = o.orderStatus ?? '';
+        final as = o.adminStatus ?? '';
+        return os == 'cancelled' || as == 'cancelled' ||
+               o.status == ClientOrderStatus.cancelled;
+
+      // ── Fallback (served, paid, etc.) ───────────────────────────────
+      default:
+        return o.status == filter;
+    }
+  }
+
   List<ClientOrder> get _filteredOrders {
     var orders = List<ClientOrder>.from(widget.provider.orders);
     orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-    // Filtre par statut
+    // Filtre par statut — utilise _matchesFilter (champs Firestore réels)
     if (_filterStatus != null) {
-      if (_filterStatus == ClientOrderStatus.preparing) {
-        // ── Onglet "Cuisine" : filtre sur sentToKitchen + kitchenStatus ──
-        // NE PAS filtrer sur status==preparing (il reste à 1/confirmed après sendToKitchen)
-        orders = orders.where(_isInKitchen).toList();
-      } else {
-        orders = orders.where((o) => o.status == _filterStatus).toList();
-      }
+      orders = orders.where((o) => _matchesFilter(o, _filterStatus)).toList();
     }
 
     // Filtre par recherche
@@ -238,27 +295,12 @@ class _OrdersTabState extends State<_OrdersTab> {
     return orders;
   }
 
-  // Compteurs par statut ClientOrderStatus
-  int _countByStatus(ClientOrderStatus s) =>
-      widget.provider.orders.where((o) => o.status == s).length;
+  // ── Compteurs fiables (basés sur _matchesFilter, pas sur o.status) ──
+  int _countForFilter(ClientOrderStatus s) =>
+      widget.provider.orders.where((o) => _matchesFilter(o, s)).length;
 
-  // ── Compteur Cuisine fiable ─────────────────────────────────────────────
-  // Filtre : sentToKitchen==true AND kitchenStatus in [pending,preparing,ready]
-  // Indépendant du champ 'status' (qui peut rester à 1/confirmed après sendToKitchen)
-  static const _kitchenStatuses = {'pending', 'preparing', 'ready'};
-
-  int get _kitchenOrderCount => widget.provider.orders.where((o) {
-    if (!o.sentToKitchen) return false;
-    final ks = o.kitchenStatus ?? '';
-    return _kitchenStatuses.contains(ks);
-  }).length;
-
-  // Filtre spécial pour l'onglet "Cuisine" : sentToKitchen==true (pas status==preparing)
-  bool _isInKitchen(ClientOrder o) {
-    if (!o.sentToKitchen) return false;
-    final ks = o.kitchenStatus ?? '';
-    return _kitchenStatuses.contains(ks);
-  }
+  // Alias pour la cuisine (rétrocompatibilité avec les chips)
+  int get _kitchenOrderCount => _countForFilter(ClientOrderStatus.preparing);
 
   @override
   Widget build(BuildContext context) {
@@ -275,13 +317,13 @@ class _OrdersTabState extends State<_OrdersTab> {
             children: [
               _QuickStat(label: 'Total', value: '$total', color: AppTheme.primary),
               const SizedBox(width: 8),
-              _QuickStat(label: 'Reçues', value: '${_countByStatus(ClientOrderStatus.pending)}', color: AppTheme.warning),
+              _QuickStat(label: 'Reçues', value: '${_countForFilter(ClientOrderStatus.pending)}', color: AppTheme.warning),
               const SizedBox(width: 8),
               _QuickStat(label: 'Cuisine', value: '$_kitchenOrderCount', color: AppTheme.preparing),
               const SizedBox(width: 8),
-              _QuickStat(label: 'Prêtes', value: '${_countByStatus(ClientOrderStatus.ready)}', color: AppTheme.success),
+              _QuickStat(label: 'Prêtes', value: '${_countForFilter(ClientOrderStatus.ready)}', color: AppTheme.success),
               const SizedBox(width: 8),
-              _QuickStat(label: 'Livraison', value: '${_countByStatus(ClientOrderStatus.delivering)}', color: const Color(0xFFF57C00)),
+              _QuickStat(label: 'Livraison', value: '${_countForFilter(ClientOrderStatus.delivering)}', color: const Color(0xFFF57C00)),
             ],
           ),
         ),
@@ -342,7 +384,7 @@ class _OrdersTabState extends State<_OrdersTab> {
               const SizedBox(width: 6),
               _FilterChip(
                 label: 'Reçues',
-                count: _countByStatus(ClientOrderStatus.pending),
+                count: _countForFilter(ClientOrderStatus.pending),
                 selected: _filterStatus == ClientOrderStatus.pending,
                 color: AppTheme.warning,
                 onTap: () => setState(() => _filterStatus = ClientOrderStatus.pending),
@@ -350,7 +392,7 @@ class _OrdersTabState extends State<_OrdersTab> {
               const SizedBox(width: 6),
               _FilterChip(
                 label: 'Confirmées',
-                count: _countByStatus(ClientOrderStatus.confirmed),
+                count: _countForFilter(ClientOrderStatus.confirmed),
                 selected: _filterStatus == ClientOrderStatus.confirmed,
                 color: AppTheme.success,
                 onTap: () => setState(() => _filterStatus = ClientOrderStatus.confirmed),
@@ -366,7 +408,7 @@ class _OrdersTabState extends State<_OrdersTab> {
               const SizedBox(width: 6),
               _FilterChip(
                 label: 'Prêtes',
-                count: _countByStatus(ClientOrderStatus.ready),
+                count: _countForFilter(ClientOrderStatus.ready),
                 selected: _filterStatus == ClientOrderStatus.ready,
                 color: const Color(0xFF4CAF50),
                 onTap: () => setState(() => _filterStatus = ClientOrderStatus.ready),
@@ -374,7 +416,7 @@ class _OrdersTabState extends State<_OrdersTab> {
               const SizedBox(width: 6),
               _FilterChip(
                 label: 'Livraison',
-                count: _countByStatus(ClientOrderStatus.delivering),
+                count: _countForFilter(ClientOrderStatus.delivering),
                 selected: _filterStatus == ClientOrderStatus.delivering,
                 color: const Color(0xFFF57C00),
                 onTap: () => setState(() => _filterStatus = ClientOrderStatus.delivering),
@@ -382,7 +424,7 @@ class _OrdersTabState extends State<_OrdersTab> {
               const SizedBox(width: 6),
               _FilterChip(
                 label: 'Livrées',
-                count: _countByStatus(ClientOrderStatus.delivered),
+                count: _countForFilter(ClientOrderStatus.delivered),
                 selected: _filterStatus == ClientOrderStatus.delivered,
                 color: AppTheme.success,
                 onTap: () => setState(() => _filterStatus = ClientOrderStatus.delivered),
@@ -390,7 +432,7 @@ class _OrdersTabState extends State<_OrdersTab> {
               const SizedBox(width: 6),
               _FilterChip(
                 label: 'Annulées',
-                count: _countByStatus(ClientOrderStatus.cancelled),
+                count: _countForFilter(ClientOrderStatus.cancelled),
                 selected: _filterStatus == ClientOrderStatus.cancelled,
                 color: AppTheme.error,
                 onTap: () => setState(() => _filterStatus = ClientOrderStatus.cancelled),
@@ -523,21 +565,63 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
   final _fmtDate = DateFormat('dd/MM HH:mm', 'fr_FR');
 
   // ── Workflow des statuts ─────────────────────────────────────────────
+  // Utilise l'état LOGIQUE réel (adminStatus + kitchenStatus + sentToKitchen)
+  // plutôt que o.status qui peut être désynchronisé après sendToKitchen().
   List<ClientOrderStatus> _nextStatuses(ClientOrderStatus current) {
+    final order = widget.order;
+    final adminSt  = order.adminStatus  ?? '';
+    final orderSt  = order.orderStatus  ?? '';
+    final kitchenSt = order.kitchenStatus ?? '';
+
+    // ── En cuisine (envoyée via sentToKitchen) ──────────────────────
+    // Même si status == pending (0), si sentToKitchen==true → bloquée cuisine
+    if (order.sentToKitchen &&
+        (kitchenSt == 'pending' || kitchenSt == 'preparing')) {
+      return []; // ⛔ cuisine gère seule
+    }
+
+    // ── Prête (cuisine a marqué ready) ─────────────────────────────
+    if (kitchenSt == 'ready' || adminSt == 'ready') {
+      return [ClientOrderStatus.delivering, ClientOrderStatus.delivered];
+    }
+
+    // ── En livraison ────────────────────────────────────────────────
+    if (orderSt == 'delivering' || current == ClientOrderStatus.delivering) {
+      return [ClientOrderStatus.delivered];
+    }
+
+    // ── Livrée / Servie / Payée → clôturée ─────────────────────────
+    if (orderSt == 'delivered' || orderSt == 'served' ||
+        current == ClientOrderStatus.delivered ||
+        current == ClientOrderStatus.served  ||
+        current == ClientOrderStatus.paid) {
+      return [];
+    }
+
+    // ── Annulée ─────────────────────────────────────────────────────
+    if (orderSt == 'cancelled' || adminSt == 'cancelled' ||
+        current == ClientOrderStatus.cancelled) {
+      return [];
+    }
+
+    // ── Acceptée (adminStatus=='accepted', pas encore en cuisine) ───
+    if (adminSt == 'accepted') {
+      if (order.isCambuseOnly) {
+        return [ClientOrderStatus.ready, ClientOrderStatus.cancelled];
+      }
+      return [ClientOrderStatus.preparing, ClientOrderStatus.cancelled];
+    }
+
+    // ── Fallback sur le status enum ─────────────────────────────────
     switch (current) {
       case ClientOrderStatus.pending:
-        // Commande reçue : seuls Annuler et Accepter (via bouton dédié _acceptOrder)
         return [ClientOrderStatus.cancelled];
       case ClientOrderStatus.confirmed:
-        // Commande acceptée :
-        // — Si cambuse-only → direct caisse (pas de cuisine)
-        // — Sinon → envoyer en cuisine
-        if (widget.order.isCambuseOnly) {
+        if (order.isCambuseOnly) {
           return [ClientOrderStatus.ready, ClientOrderStatus.cancelled];
         }
         return [ClientOrderStatus.preparing, ClientOrderStatus.cancelled];
       case ClientOrderStatus.preparing:
-        // ⛔ En préparation : gérée par cuisine uniquement.
         return [];
       case ClientOrderStatus.ready:
         return [ClientOrderStatus.delivering, ClientOrderStatus.delivered];
@@ -898,10 +982,30 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
   Widget build(BuildContext context) {
     final order = widget.order;
     final status = order.status;
+    final adminSt   = order.adminStatus  ?? '';
+    final orderSt   = order.orderStatus  ?? '';
+    final kitchenSt = order.kitchenStatus ?? '';
     final nextStatuses = _nextStatuses(status);
     final isDelivery = order.orderType == OrderType.delivery;
+
+    // isClosed : toutes les étapes terminales (livrée, servi, payé, annulé)
     final isClosed = status == ClientOrderStatus.delivered ||
-                     status == ClientOrderStatus.cancelled;
+                     status == ClientOrderStatus.served    ||
+                     status == ClientOrderStatus.paid      ||
+                     status == ClientOrderStatus.cancelled ||
+                     orderSt == 'delivered' || orderSt == 'served' ||
+                     adminSt == 'cancelled' || orderSt == 'cancelled';
+
+    // isInKitchen : envoyée en cuisine, pas encore prête
+    final isInKitchen = order.sentToKitchen &&
+        (kitchenSt == 'pending' || kitchenSt == 'preparing');
+
+    // effectiveStatus : pour la border/couleur de la carte
+    // Si en cuisine mais status==0 (POS), on affiche la couleur "preparing"
+    final effectiveStatus = isInKitchen ? ClientOrderStatus.preparing
+        : (kitchenSt == 'ready' || adminSt == 'ready') ? ClientOrderStatus.ready
+        : (orderSt == 'delivering') ? ClientOrderStatus.delivering
+        : status;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -909,12 +1013,12 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
         color: AppTheme.cardBg,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: status == ClientOrderStatus.pending
+          color: effectiveStatus == ClientOrderStatus.pending
               ? AppTheme.warning.withValues(alpha: 0.7)
-              : status.color.withValues(alpha: 0.35),
-          width: status == ClientOrderStatus.pending ? 1.5 : 1,
+              : effectiveStatus.color.withValues(alpha: 0.35),
+          width: effectiveStatus == ClientOrderStatus.pending ? 1.5 : 1,
         ),
-        boxShadow: status == ClientOrderStatus.pending
+        boxShadow: effectiveStatus == ClientOrderStatus.pending
             ? [BoxShadow(color: AppTheme.warning.withValues(alpha: 0.15), blurRadius: 12)]
             : null,
       ),
@@ -934,10 +1038,10 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                       Container(
                         width: 38, height: 38,
                         decoration: BoxDecoration(
-                          color: status.color.withValues(alpha: 0.15),
+                          color: effectiveStatus.color.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: Icon(status.icon, color: status.color, size: 18),
+                        child: Icon(effectiveStatus.icon, color: effectiveStatus.color, size: 18),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -982,11 +1086,11 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: status.color.withValues(alpha: 0.15),
+                                    color: effectiveStatus.color.withValues(alpha: 0.15),
                                     borderRadius: BorderRadius.circular(6),
                                   ),
-                                  child: Text(status.label,
-                                      style: TextStyle(color: status.color, fontSize: 9, fontWeight: FontWeight.w700)),
+                                  child: Text(effectiveStatus.label,
+                                      style: TextStyle(color: effectiveStatus.color, fontSize: 9, fontWeight: FontWeight.w700)),
                                 ),
                               ],
                             ),
@@ -1348,7 +1452,9 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                         ),
                       // Encaisser solde
                       if (!isClosed && order.remainingAmount > 0 &&
-                          (order.status == ClientOrderStatus.delivering || order.status == ClientOrderStatus.delivered))
+                          (order.status == ClientOrderStatus.delivering ||
+                           order.status == ClientOrderStatus.delivered  ||
+                           orderSt == 'delivering' || orderSt == 'delivered'))
                         _ActionBtn(
                           icon: Icons.attach_money,
                           label: 'Encaisser solde',
@@ -1364,8 +1470,10 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
           ],
 
           // ── Boutons workflow de statut ────────────────────────────────
-          // Bouton Accepter dédié (commande reçue uniquement)
-          if (!isClosed && status == ClientOrderStatus.pending)
+          // Bouton Accepter dédié (commande reçue, pas encore acceptée)
+          if (!isClosed && !isInKitchen &&
+              status == ClientOrderStatus.pending &&
+              (order.adminStatus == null || order.adminStatus == 'received' || order.adminStatus == ''))
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
               child: _processing
@@ -1428,7 +1536,7 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                     ),
             )
           // ── Badge verrouillé : commande en préparation (cuisine) ─────
-          else if (!isClosed && status == ClientOrderStatus.preparing)
+          else if (!isClosed && isInKitchen)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               child: Container(
@@ -1460,12 +1568,21 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               child: Row(
                 children: [
-                  Icon(status == ClientOrderStatus.delivered ? Icons.check_circle : Icons.cancel,
-                      color: status.color, size: 14),
+                  Icon(
+                    (status == ClientOrderStatus.cancelled ||
+                     adminSt == 'cancelled' || orderSt == 'cancelled')
+                        ? Icons.cancel
+                        : Icons.check_circle,
+                    color: effectiveStatus.color,
+                    size: 14,
+                  ),
                   const SizedBox(width: 6),
                   Text(
-                    status == ClientOrderStatus.delivered ? '✓ Commande clôturée' : '✗ Commande annulée',
-                    style: TextStyle(color: status.color, fontSize: 12, fontWeight: FontWeight.w600),
+                    (status == ClientOrderStatus.cancelled ||
+                     adminSt == 'cancelled' || orderSt == 'cancelled')
+                        ? '✗ Commande annulée'
+                        : '✓ Commande clôturée',
+                    style: TextStyle(color: effectiveStatus.color, fontSize: 12, fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
