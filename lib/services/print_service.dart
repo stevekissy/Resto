@@ -1664,6 +1664,149 @@ $prtBtn
   // ─────────────────────────────────────────────────────────────────────
   //  BILAN COMPTABLE A4
   // ─────────────────────────────────────────────────────────────────────
+  // ── Point de Caisse ────────────────────────────────────────────────────────
+  /// Imprime / exporte le point de caisse d'un jour donné (historique ou aujourd'hui).
+  /// [report] = Map retournée par FirebaseService.fetchHistoricalCashReport()
+  void printPointCaisse({required Map<String, dynamic> report}) {
+    final html = _buildPointCaisseHtml(report: report);
+    if (kIsWeb) {
+      print_web.webOpenPrintWindow(html);
+    } else {
+      if (kDebugMode) debugPrint('[PrintService] Mobile: point de caisse');
+    }
+  }
+
+  String _buildPointCaisseHtml({required Map<String, dynamic> report}) {
+    final date         = report['date']         as DateTime;
+    final reports      = report['reports']       as List<Map<String, dynamic>>;
+    final charges      = report['charges']       as List<Map<String, dynamic>>;
+    final totalRevenue = (report['totalRevenue'] as num).toDouble();
+    final totalCharges = (report['totalCharges'] as num).toDouble();
+    final netRevenue   = (report['netRevenue']   as num).toDouble();
+    final byMethod     = report['byMethod']      as Map<String, double>;
+    final mainCashier  = report['mainCashier']   as String;
+    final invoiceCount = report['invoiceCount']  as int;
+
+    final dateFmt    = DateFormat('EEEE d MMMM yyyy', 'fr_FR');
+    final timeFmt    = DateFormat('HH:mm', 'fr_FR');
+    final numFmt     = NumberFormat('#,###', 'fr_FR');
+    final printedAt  = DateFormat('dd/MM/yyyy HH:mm', 'fr_FR').format(DateTime.now());
+    final isToday    = date.day == DateTime.now().day &&
+                       date.month == DateTime.now().month &&
+                       date.year == DateTime.now().year;
+    final titleLabel = isToday ? 'POINT DE CAISSE DU JOUR' : 'POINT DE CAISSE HISTORIQUE';
+
+    // Construire les lignes de modes de paiement
+    final methodRows = byMethod.entries.map((e) => '''
+      <tr>
+        <td>${_escape(e.key)}</td>
+        <td class="right">${numFmt.format(e.value)} F</td>
+      </tr>''').join();
+
+    // Construire les lignes des encaissements (max 30)
+    final encRows = reports.take(30).map((r) {
+      final ms  = r['settledAtMs'] as int;
+      final dt  = DateTime.fromMillisecondsSinceEpoch(ms);
+      final num = r['orderNumber'];
+      final numStr = num is int ? '#$num' : (num?.toString() ?? '-');
+      return '''
+      <tr>
+        <td>${_escape(numStr)}</td>
+        <td>${_escape(r['tableNumber'] as String)}</td>
+        <td>${_escape(r['paymentMethod'] as String? ?? '')}</td>
+        <td class="right">${numFmt.format(r['amount'] as double)} F</td>
+        <td class="right">${timeFmt.format(dt)}</td>
+      </tr>''';
+    }).join();
+
+    // Construire les lignes des charges
+    final chargeRows = charges.map((c) => '''
+      <tr>
+        <td>${_escape(c['label'] as String)}</td>
+        <td>${_escape(c['note'] as String? ?? '')}</td>
+        <td class="right">${numFmt.format(c['amount'] as double)} F</td>
+      </tr>''').join();
+
+    final netColor = netRevenue >= 0 ? '#1B5E20' : '#B71C1C';
+
+    return '''
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"/>
+<title>$titleLabel — ${DateFormat('dd/MM/yyyy').format(date)}</title>
+<style>
+${_thermalCss()}
+.title-point-caisse { background:#E8F5E9; color:#1B5E20; border:1.5px solid #1B5E20; }
+.kpi-table { width:100%; border-collapse:collapse; margin:6px 0; }
+.kpi-table td { padding:3px 2px; font-size:11px; }
+.kpi-table td.right { text-align:right; font-weight:bold; }
+.kpi-brut  { color:#1B5E20; }
+.kpi-charge{ color:#B71C1C; }
+.kpi-net   { color:${netColor}; font-size:13px; font-weight:900; }
+.section-title { font-size:10px; font-weight:bold; letter-spacing:0.8px;
+                 text-transform:uppercase; margin:8px 0 4px 0;
+                 padding-bottom:2px; border-bottom:1px dashed #999; }
+.detail-table { width:100%; border-collapse:collapse; font-size:9.5px; }
+.detail-table th { font-size:9px; text-transform:uppercase; color:#555;
+                   padding:2px; border-bottom:1px solid #ddd; }
+.detail-table td { padding:2px; border-bottom:1px dotted #eee; }
+.detail-table td.right { text-align:right; }
+.no-data { font-size:10px; color:#888; text-align:center; padding:6px; }
+.cashier-block { font-size:10px; margin:4px 0; }
+.cashier-block span { font-weight:bold; }
+</style>
+</head><body><div class="receipt">
+
+${_htmlHeader(titleLabel, 'title-point-caisse')}
+
+<div class="cashier-block">
+  Date : <span>${dateFmt.format(date)}</span>
+</div>
+${mainCashier.isNotEmpty ? '<div class="cashier-block">Caissier : <span>${_escape(mainCashier)}</span></div>' : ''}
+<div class="cashier-block">Imprimé le : <span>$printedAt</span></div>
+
+<hr class="sep-dashed"/>
+
+<!-- KPIs -->
+<div class="section-title">Résumé</div>
+<table class="kpi-table">
+  <tr><td>Recette Brute</td><td class="right kpi-brut">${numFmt.format(totalRevenue)} F CFA</td></tr>
+  <tr><td>Charges du Jour</td><td class="right kpi-charge">${numFmt.format(totalCharges)} F CFA</td></tr>
+  <tr><td style="border-top:1px solid #999;padding-top:4px;font-weight:bold;">Recette Nette</td>
+      <td class="right kpi-net" style="border-top:1px solid #999;">${numFmt.format(netRevenue)} F CFA</td></tr>
+  <tr><td>Factures réglées</td><td class="right"><b>$invoiceCount</b></td></tr>
+</table>
+
+<!-- Modes de paiement -->
+<div class="section-title">Modes de Paiement</div>
+${byMethod.isEmpty ? '<p class="no-data">Aucun encaissement</p>' : '''
+<table class="detail-table">
+  <tr><th>Mode</th><th class="right">Montant</th></tr>
+  $methodRows
+</table>'''}
+
+<!-- Détail encaissements -->
+<div class="section-title">Détail des Encaissements ($invoiceCount)</div>
+${reports.isEmpty ? '<p class="no-data">Aucun encaissement ce jour</p>' : '''
+<table class="detail-table">
+  <tr><th>Fact.</th><th>Table</th><th>Mode</th><th class="right">Montant</th><th class="right">Heure</th></tr>
+  $encRows
+</table>
+${reports.length > 30 ? '<p class="no-data">... et ${reports.length - 30} autres</p>' : ''}'''}
+
+<!-- Détail charges -->
+<div class="section-title">Détail des Charges</div>
+${charges.isEmpty ? '<p class="no-data">Aucune charge ce jour</p>' : '''
+<table class="detail-table">
+  <tr><th>Libellé</th><th>Note</th><th class="right">Montant</th></tr>
+  $chargeRows
+</table>'''}
+
+<hr class="sep-solid"/>
+$_htmlFooter
+$_printButton
+</div></body></html>''';
+  }
+
   void printBilan({required AccountingReport report}) {
     final html = _buildBilanHtml(report: report);
     if (kIsWeb) {

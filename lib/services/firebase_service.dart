@@ -1398,6 +1398,116 @@ class FirebaseService {
     debugPrint('[FirebaseService] Charge supprimée : $id');
   }
 
+  // ── Point de Caisse Historique ────────────────────────────────────────────
+  //
+  // Agrège depuis deux sources Firestore pour une date donnée :
+  //   • cash_reports    → encaissements du jour (settledAtMs)
+  //   • daily_charges   → charges du jour (date)
+  //
+  // Retourne une Map structurée prête à l'affichage.
+  // Pas d'index composite : on filtre en mémoire côté client.
+  // ─────────────────────────────────────────────────────────────────────────
+  Future<Map<String, dynamic>> fetchHistoricalCashReport(DateTime date) async {
+    final dateStart = DateTime(date.year, date.month, date.day);
+    final dateEnd   = DateTime(date.year, date.month, date.day, 23, 59, 59, 999);
+    final startMs   = dateStart.millisecondsSinceEpoch;
+    final endMs     = dateEnd.millisecondsSinceEpoch;
+
+    // ── 1. Encaissements — cash_reports ────────────────────────────────────
+    final reportsSnap = await _db.collection('cash_reports').get();
+    final reports = <Map<String, dynamic>>[];
+    for (final doc in reportsSnap.docs) {
+      try {
+        final d = doc.data();
+        final ms = (d['settledAtMs'] as num?)?.toInt() ?? 0;
+        if (ms < startMs || ms > endMs) continue;
+        reports.add({
+          'id':                       doc.id,
+          'settlementInvoiceNumber':  d['settlementInvoiceNumber'] as String? ?? '',
+          'orderId':                  d['orderId']    as String? ?? '',
+          'orderNumber':              d['orderNumber'],
+          'tableNumber':              d['tableNumber'] as String? ?? '',
+          'cashierId':                d['cashierId']   as String? ?? '',
+          'cashierName':              d['cashierName'] as String? ?? '',
+          'paymentMethod':            d['paymentMethod'] as String? ?? 'Espèces',
+          'amount':                   (d['amount'] as num?)?.toDouble() ?? 0.0,
+          'amountPaid':               (d['amountPaid'] as num?)?.toDouble() ?? 0.0,
+          'changeAmount':             (d['changeAmount'] as num?)?.toDouble() ?? 0.0,
+          'settledAtMs':              ms,
+        });
+      } catch (e) {
+        debugPrint('[fetchHistoricalCashReport] cash_reports doc ${doc.id}: $e');
+      }
+    }
+
+    // ── 2. Charges — daily_charges ──────────────────────────────────────────
+    final chargesSnap = await _db.collection('daily_charges').get();
+    final charges = <Map<String, dynamic>>[];
+    for (final doc in chargesSnap.docs) {
+      try {
+        final d = doc.data();
+        final chargeDate = _toDateTime(d['date']);
+        if (chargeDate.year  != date.year  ||
+            chargeDate.month != date.month ||
+            chargeDate.day   != date.day) continue;
+        charges.add({
+          'id':        doc.id,
+          'label':     d['label']     as String? ?? '',
+          'amount':    (d['amount']   as num?)?.toDouble() ?? 0.0,
+          'note':      d['note']      as String? ?? '',
+          'createdBy': d['createdBy'] as String? ?? '',
+          'date':      chargeDate,
+        });
+      } catch (e) {
+        debugPrint('[fetchHistoricalCashReport] daily_charges doc ${doc.id}: $e');
+      }
+    }
+
+    // ── 3. Agrégats ────────────────────────────────────────────────────────
+    final totalRevenue  = reports.fold<double>(0, (s, r) => s + (r['amount'] as double));
+    final totalCharges  = charges.fold<double>(0, (s, c) => s + (c['amount'] as double));
+    final netRevenue    = totalRevenue - totalCharges;
+
+    // Répartition par mode de paiement
+    final byMethod = <String, double>{};
+    for (final r in reports) {
+      final method = r['paymentMethod'] as String? ?? 'Espèces';
+      byMethod[method] = (byMethod[method] ?? 0) + (r['amount'] as double);
+    }
+
+    // Caissier principal (celui qui a fait le plus d'encaissements)
+    final cashierCount = <String, int>{};
+    for (final r in reports) {
+      final name = r['cashierName'] as String? ?? '';
+      if (name.isNotEmpty) cashierCount[name] = (cashierCount[name] ?? 0) + 1;
+    }
+    String mainCashier = '';
+    if (cashierCount.isNotEmpty) {
+      mainCashier = cashierCount.entries
+          .reduce((a, b) => a.value >= b.value ? a : b)
+          .key;
+    }
+
+    reports.sort((a, b) => (b['settledAtMs'] as int).compareTo(a['settledAtMs'] as int));
+    charges.sort((a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
+
+    debugPrint('[fetchHistoricalCashReport] date=${date.day}/${date.month}/${date.year} '
+        '→ ${reports.length} encaissements, ${charges.length} charges, '
+        'brut=$totalRevenue net=$netRevenue');
+
+    return {
+      'date':          date,
+      'reports':       reports,
+      'charges':       charges,
+      'totalRevenue':  totalRevenue,
+      'totalCharges':  totalCharges,
+      'netRevenue':    netRevenue,
+      'byMethod':      byMethod,
+      'mainCashier':   mainCashier,
+      'invoiceCount':  reports.length,
+    };
+  }
+
   // =================== RECEIPTS ===================
 
   /// Sauvegarde un reçu (encaissement ou règlement) dans Firestore

@@ -5,6 +5,7 @@ import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../../models/models.dart';
+import '../../services/firebase_service.dart';
 import '../../services/print_service.dart';
 import '../../services/tts_service.dart';
 
@@ -1299,147 +1300,310 @@ class _PointCaisseTab extends StatefulWidget {
 }
 
 class _PointCaisseTabState extends State<_PointCaisseTab> {
-  bool _showRecetteVente = false;
-  DateTime _recetteDate = DateTime.now();
+  // ── État mode historique ──────────────────────────────────────────────────
+  bool _showRecetteVente  = false;
+  DateTime _recetteDate   = DateTime.now();
+  DateTime _selectedDate  = DateTime.now();  // date de recherche historique
+  bool _isHistoricMode    = false;           // false = aujourd'hui, true = historique
+  bool _isLoadingHistoric = false;
+  Map<String, dynamic>? _historicReport;
+  String? _historicError;
+
+  Future<void> _loadHistoric(AppProvider provider) async {
+    setState(() { _isLoadingHistoric = true; _historicError = null; _historicReport = null; });
+    try {
+      final svc    = FirebaseService();
+      final report = await svc.fetchHistoricalCashReport(_selectedDate);
+      if (mounted) setState(() { _historicReport = report; _isLoadingHistoric = false; });
+    } catch (e) {
+      if (mounted) setState(() { _historicError = 'Erreur : $e'; _isLoadingHistoric = false; });
+    }
+  }
+
+  void _goToday() {
+    setState(() {
+      _selectedDate    = DateTime.now();
+      _isHistoricMode  = false;
+      _historicReport  = null;
+      _historicError   = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    final fmt = NumberFormat('#,###', 'fr_FR');
+    final fmt   = NumberFormat('#,###', 'fr_FR');
     final today = DateTime.now();
 
-    // Uniquement les règlements définitifs du jour
-    // Filtre sur settledAt (date du règlement) et non createdAt (date de commande)
-    final todayPaid = provider.orders
-        .where((o) {
-          if (!o.settlementInvoiceGenerated || !o.isPaid) return false;
-          final settled = o.settledAt;
-          if (settled == null) return false;
-          return settled.day == today.day &&
-              settled.month == today.month &&
-              settled.year == today.year;
-        })
-        .toList();
+    // ── Mode aujourd'hui : données live depuis le stream ──────────────────
+    final todayPaid = provider.orders.where((o) {
+      if (!o.settlementInvoiceGenerated || !o.isPaid) return false;
+      final settled = o.settledAt;
+      if (settled == null) return false;
+      return settled.day == today.day && settled.month == today.month && settled.year == today.year;
+    }).toList();
 
-    final totalCash = todayPaid
-        .where((o) => o.paymentMethod == 'Espèces')
-        .fold<double>(0, (s, o) => s + o.totalAmount);
-    final totalMobile = todayPaid
-        .where((o) =>
-            o.paymentMethod != null &&
-            o.paymentMethod != 'Espèces' &&
-            o.paymentMethod != 'Carte Bancaire')
-        .fold<double>(0, (s, o) => s + o.totalAmount);
-    final totalCard = todayPaid
-        .where((o) => o.paymentMethod == 'Carte Bancaire')
-        .fold<double>(0, (s, o) => s + o.totalAmount);
+    final totalCash   = todayPaid.where((o) => o.paymentMethod == 'Espèces').fold<double>(0, (s, o) => s + o.totalAmount);
+    final totalMobile = todayPaid.where((o) => o.paymentMethod != null && o.paymentMethod != 'Espèces' && o.paymentMethod != 'Carte Bancaire').fold<double>(0, (s, o) => s + o.totalAmount);
+    final totalCard   = todayPaid.where((o) => o.paymentMethod == 'Carte Bancaire').fold<double>(0, (s, o) => s + o.totalAmount);
     final totalCharges = provider.todayTotalCharges;
-    final netRevenue = provider.todayRevenue - totalCharges;
+    final netRevenue   = provider.todayRevenue - totalCharges;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          // En-tête
-          GlassCard(
-            border:
-                Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
-            child: Column(
-              children: [
-                const Text('POINT DE CAISSE DU JOUR',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 15,
-                        letterSpacing: 1)),
-                const SizedBox(height: 4),
-                Text(
-                    DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(today),
-                    style: const TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 12)),
-              ],
-            ),
-          ),
+          // ── Barre de recherche historique ────────────────────────────────
+          _buildSearchBar(context, provider, fmt),
           const SizedBox(height: 16),
-          // Grille 4 cartes
-          GridView.count(
-            crossAxisCount: 2,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            childAspectRatio: 1.2,
+
+          // ── Mode historique : résultats Firestore ─────────────────────────
+          if (_isHistoricMode) ...[
+            _buildHistoricContent(context, provider, fmt),
+          ] else ...[
+            // ── Mode aujourd'hui : live stream ────────────────────────────
+            _buildTodayHeader(today),
+            const SizedBox(height: 16),
+            _buildKpiGrid(fmt, provider.todayRevenue, totalCharges, netRevenue, todayPaid.length),
+            const SizedBox(height: 16),
+            _buildPaymentMethodsCard(fmt, totalCash, totalMobile, totalCard, provider.todayRevenue),
+            const SizedBox(height: 16),
+            _buildRecetteVenteCard(context, provider, fmt),
+            const SizedBox(height: 16),
+            _buildChargesCard(context, provider, fmt, totalCharges),
+            const SizedBox(height: 16),
+            _buildTransactionsCard(fmt, todayPaid),
+            const SizedBox(height: 16),
+            // Bouton impression point du jour
+            _buildPrintButton(context, provider, fmt, today, todayPaid, provider.todayRevenue, totalCharges, netRevenue),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Barre de recherche ────────────────────────────────────────────────────
+  Widget _buildSearchBar(BuildContext context, AppProvider provider, NumberFormat fmt) {
+    return GlassCard(
+      border: Border.all(color: const Color(0xFF7B1FA2).withValues(alpha: 0.5)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionHeader(title: 'Recherche Historique', icon: Icons.manage_search),
+          const SizedBox(height: 12),
+          Row(
             children: [
-              StatCard(
-                  title: 'Recette Brute',
-                  value: '${fmt.format(provider.todayRevenue)} F',
-                  icon: Icons.payments,
-                  color: AppTheme.success),
-              StatCard(
-                  title: 'Charges du Jour',
-                  value: '${fmt.format(totalCharges)} F',
-                  icon: Icons.money_off,
-                  color: AppTheme.error),
-              StatCard(
-                  title: 'Recette Nette',
-                  value: '${fmt.format(netRevenue)} F',
-                  icon: Icons.account_balance_wallet,
-                  color: netRevenue >= 0
-                      ? AppTheme.primary
-                      : AppTheme.error),
-              StatCard(
-                  title: 'Commandes',
-                  value: todayPaid.length.toString(),
-                  icon: Icons.receipt_long,
-                  color: AppTheme.warning),
+              // Sélecteur de date
+              Expanded(
+                child: GestureDetector(
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: _selectedDate,
+                      firstDate: DateTime(2024),
+                      lastDate: DateTime.now(),
+                      builder: (ctx, child) => Theme(
+                        data: Theme.of(ctx).copyWith(
+                          colorScheme: const ColorScheme.dark(
+                            primary: Color(0xFF9C27B0),
+                            surface: AppTheme.surface,
+                          ),
+                        ),
+                        child: child!,
+                      ),
+                    );
+                    if (picked != null && mounted) {
+                      setState(() { _selectedDate = picked; });
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceLight,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFF9C27B0).withValues(alpha: 0.4)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.calendar_month, color: Color(0xFFCE93D8), size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            DateFormat('dd MMMM yyyy', 'fr_FR').format(_selectedDate),
+                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        const Icon(Icons.arrow_drop_down, color: Color(0xFFCE93D8), size: 18),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Bouton Rechercher
+              GestureDetector(
+                onTap: _isLoadingHistoric ? null : () async {
+                  setState(() => _isHistoricMode = true);
+                  await _loadHistoric(provider);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF7B1FA2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: _isLoadingHistoric
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Row(
+                          children: [
+                            Icon(Icons.search, color: Colors.white, size: 16),
+                            SizedBox(width: 4),
+                            Text('Rechercher', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 16),
-          // Détail par Mode de Paiement
-          GlassCard(
-            child: Column(
-              children: [
-                const SectionHeader(
-                    title: 'Détail par Mode de Paiement',
-                    icon: Icons.pie_chart_outline),
-                const SizedBox(height: 14),
-                ...[
-                  ['Espèces', totalCash, AppTheme.warning, Icons.money],
-                  [
-                    'Mobile Money',
-                    totalMobile,
-                    const Color(0xFF9C27B0),
-                    Icons.phone_android
+          const SizedBox(height: 8),
+          // Bouton Aujourd'hui
+          if (_isHistoricMode)
+            GestureDetector(
+              onTap: _goToday,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.today, color: AppTheme.primary, size: 15),
+                    SizedBox(width: 6),
+                    Text("Revenir au Point de Caisse d'Aujourd'hui",
+                        style: TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w700)),
                   ],
-                  [
-                    'Carte Bancaire',
-                    totalCard,
-                    AppTheme.primary,
-                    Icons.credit_card
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── Contenu mode historique ───────────────────────────────────────────────
+  Widget _buildHistoricContent(BuildContext context, AppProvider provider, NumberFormat fmt) {
+    if (_isLoadingHistoric) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: Center(child: Column(
+          children: [
+            CircularProgressIndicator(color: Color(0xFF9C27B0)),
+            SizedBox(height: 12),
+            Text('Chargement...', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+          ],
+        )),
+      );
+    }
+
+    if (_historicError != null) {
+      return GlassCard(
+        border: Border.all(color: AppTheme.error.withValues(alpha: 0.4)),
+        child: Column(
+          children: [
+            const Icon(Icons.error_outline, color: AppTheme.error, size: 36),
+            const SizedBox(height: 8),
+            Text(_historicError!, style: const TextStyle(color: AppTheme.error, fontSize: 12), textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            GestureDetector(
+              onTap: () => _loadHistoric(provider),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(8)),
+                child: const Text('Réessayer', style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_historicReport == null) return const SizedBox.shrink();
+
+    final r            = _historicReport!;
+    final date         = r['date']         as DateTime;
+    final reports      = r['reports']       as List<Map<String, dynamic>>;
+    final charges      = r['charges']       as List<Map<String, dynamic>>;
+    final totalRevenue = (r['totalRevenue'] as num).toDouble();
+    final totalCharges = (r['totalCharges'] as num).toDouble();
+    final netRevenue   = (r['netRevenue']   as num).toDouble();
+    final byMethod     = r['byMethod']      as Map<String, double>;
+    final mainCashier  = r['mainCashier']   as String;
+    final invoiceCount = r['invoiceCount']  as int;
+
+    return Column(
+      children: [
+        // En-tête historique
+        GlassCard(
+          border: Border.all(color: const Color(0xFF7B1FA2).withValues(alpha: 0.5)),
+          child: Column(
+            children: [
+              const Text('POINT DE CAISSE HISTORIQUE',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1)),
+              const SizedBox(height: 4),
+              Text(DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(date),
+                  style: const TextStyle(color: Color(0xFFCE93D8), fontSize: 13, fontWeight: FontWeight.w600)),
+              if (mainCashier.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.person, color: AppTheme.textSecondary, size: 13),
+                    const SizedBox(width: 4),
+                    Text('Caissier : $mainCashier',
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
                   ],
-                ].map((row) {
-                  final total = provider.todayRevenue;
-                  final pct =
-                      total > 0 ? (row[1] as double) / total : 0.0;
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+
+        // KPIs
+        _buildKpiGrid(fmt, totalRevenue, totalCharges, netRevenue, invoiceCount),
+        const SizedBox(height: 14),
+
+        // Modes de paiement (données réelles Firestore)
+        GlassCard(
+          child: Column(
+            children: [
+              const SectionHeader(title: 'Modes de Paiement', icon: Icons.pie_chart_outline),
+              const SizedBox(height: 12),
+              if (byMethod.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text('Aucun encaissement ce jour',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                )
+              else
+                ...byMethod.entries.map((e) {
+                  final pct = totalRevenue > 0 ? e.value / totalRevenue : 0.0;
+                  final color = _methodColor(e.key);
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Column(
                       children: [
                         Row(
                           children: [
-                            Icon(row[3] as IconData,
-                                color: row[2] as Color, size: 18),
+                            Icon(_methodIcon(e.key), color: color, size: 18),
                             const SizedBox(width: 10),
-                            Expanded(
-                                child: Text(row[0] as String,
-                                    style: const TextStyle(
-                                        color: AppTheme.textPrimary,
-                                        fontSize: 13))),
-                            Text('${fmt.format(row[1])} F',
-                                style: TextStyle(
-                                    color: row[2] as Color,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 13)),
+                            Expanded(child: Text(e.key, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13))),
+                            Text('${fmt.format(e.value)} F',
+                                style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13)),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -1448,8 +1612,7 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
                           child: LinearProgressIndicator(
                             value: pct,
                             backgroundColor: AppTheme.surfaceLight,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                                row[2] as Color),
+                            valueColor: AlwaysStoppedAnimation<Color>(color),
                             minHeight: 6,
                           ),
                         ),
@@ -1457,265 +1620,530 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
                     ),
                   );
                 }),
-              ],
-            ),
+            ],
           ),
-          const SizedBox(height: 16),
-          // ── Recette de Vente ──────────────────────────────────────────────
-          GlassCard(
-            border: Border.all(color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    const SectionHeader(title: 'Recette de Vente', icon: Icons.bar_chart),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () => setState(() => _showRecetteVente = !_showRecetteVente),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1565C0).withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(_showRecetteVente ? Icons.expand_less : Icons.expand_more,
-                                color: const Color(0xFF42A5F5), size: 14),
-                            const SizedBox(width: 4),
-                            Text(_showRecetteVente ? 'Masquer' : 'Afficher',
-                                style: const TextStyle(color: Color(0xFF42A5F5), fontSize: 11, fontWeight: FontWeight.w700)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
+        ),
+        const SizedBox(height: 14),
+
+        // Détail des encaissements
+        GlassCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SectionHeader(title: 'Encaissements ($invoiceCount)', icon: Icons.receipt_long),
+              const SizedBox(height: 10),
+              if (reports.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text('Aucun encaissement ce jour',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                )
+              else ...[
+                // En-tête tableau
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: const [
+                      SizedBox(width: 50, child: Text('Facture', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10, fontWeight: FontWeight.w700))),
+                      SizedBox(width: 60, child: Text('Table', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10, fontWeight: FontWeight.w700))),
+                      Expanded(child: Text('Mode', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10, fontWeight: FontWeight.w700))),
+                      Text('Montant', style: TextStyle(color: AppTheme.textSecondary, fontSize: 10, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
                 ),
-                if (_showRecetteVente) ...[
-                  const SizedBox(height: 10),
-                  // Filtre date
-                  Row(
-                    children: [
-                      const Icon(Icons.calendar_today, color: AppTheme.textSecondary, size: 14),
-                      const SizedBox(width: 6),
-                      Text(DateFormat('dd/MM/yyyy', 'fr_FR').format(_recetteDate),
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                      const Spacer(),
-                      GestureDetector(
-                        onTap: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: _recetteDate,
-                            firstDate: DateTime(2024),
-                            lastDate: DateTime.now(),
-                            builder: (ctx, child) => Theme(
-                              data: Theme.of(ctx).copyWith(
-                                colorScheme: const ColorScheme.dark(
-                                  primary: AppTheme.primary,
-                                  surface: AppTheme.surface,
-                                ),
-                              ),
-                              child: child!,
-                            ),
-                          );
-                          if (picked != null) setState(() => _recetteDate = picked);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primary.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
-                          ),
-                          child: const Row(
+                const Divider(color: Color(0xFF2A2A5A), height: 1),
+                ...reports.map((rep) {
+                  final ms     = rep['settledAtMs'] as int;
+                  final dt     = DateTime.fromMillisecondsSinceEpoch(ms);
+                  final num    = rep['orderNumber'];
+                  final numStr = num is int ? '#$num' : (num?.toString() ?? '-');
+                  final method = rep['paymentMethod'] as String? ?? 'Espèces';
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 50,
+                          child: Text(numStr, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 11, fontWeight: FontWeight.w600)),
+                        ),
+                        SizedBox(
+                          width: 60,
+                          child: Text(rep['tableNumber'] as String? ?? '-',
+                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11), overflow: TextOverflow.ellipsis),
+                        ),
+                        Expanded(
+                          child: Row(
                             children: [
-                              Icon(Icons.edit_calendar, color: AppTheme.primary, size: 13),
-                              SizedBox(width: 4),
-                              Text('Changer', style: TextStyle(color: AppTheme.primary, fontSize: 11)),
+                              Icon(_methodIcon(method), color: _methodColor(method), size: 11),
+                              const SizedBox(width: 3),
+                              Expanded(child: Text(method, style: TextStyle(color: _methodColor(method), fontSize: 10), overflow: TextOverflow.ellipsis)),
                             ],
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  _RecetteVenteTable(
-                    orders: provider.orders,
-                    filterDate: _recetteDate,
-                    fmt: fmt,
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Charges du Jour
-          GlassCard(
-            border: Border.all(
-                color: AppTheme.error.withValues(alpha: 0.3)),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    const SectionHeader(
-                        title: 'Charges du Jour',
-                        icon: Icons.money_off),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () =>
-                          _showAddChargeDialog(context, provider),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color:
-                              AppTheme.error.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: AppTheme.error
-                                  .withValues(alpha: 0.4)),
-                        ),
-                        child: const Row(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Icon(Icons.add,
-                                color: AppTheme.error, size: 14),
-                            SizedBox(width: 4),
-                            Text('Ajouter',
-                                style: TextStyle(
-                                    color: AppTheme.error,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700)),
+                            Text('${fmt.format(rep['amount'] as double)} F',
+                                style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700, fontSize: 12)),
+                            Text(DateFormat('HH:mm').format(dt),
+                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9)),
                           ],
                         ),
-                      ),
+                      ],
                     ),
+                  );
+                }),
+                const Divider(color: Color(0xFF2A2A5A)),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('TOTAL ENCAISSEMENTS',
+                        style: TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700, fontSize: 11)),
+                    Text('${fmt.format(totalRevenue)} F CFA',
+                        style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w900, fontSize: 14)),
                   ],
                 ),
-                const SizedBox(height: 12),
-                if (provider.todayCharges.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Text(
-                        'Aucune charge enregistrée aujourd\'hui',
-                        style: TextStyle(
-                            color: AppTheme.textSecondary,
-                            fontSize: 12)),
-                  )
-                else ...[
-                  ...provider.todayCharges.map((charge) => Padding(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 5),
-                        child: Row(
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+
+        // Détail des charges
+        GlassCard(
+          border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SectionHeader(title: 'Charges du Jour', icon: Icons.money_off),
+              const SizedBox(height: 10),
+              if (charges.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text('Aucune charge ce jour',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                )
+              else ...[
+                ...charges.map((c) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.circle, color: AppTheme.error, size: 8),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(Icons.circle,
-                                color: AppTheme.error, size: 8),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  Text(charge['label'] as String,
-                                      style: const TextStyle(
-                                          color: AppTheme.textPrimary,
-                                          fontSize: 13)),
-                                  if ((charge['note'] as String?)
-                                          ?.isNotEmpty ==
-                                      true)
-                                    Text(charge['note'] as String,
-                                        style: const TextStyle(
-                                            color:
-                                                AppTheme.textSecondary,
-                                            fontSize: 11)),
-                                ],
-                              ),
-                            ),
-                            Text('${fmt.format(charge['amount'])} F',
-                                style: const TextStyle(
-                                    color: AppTheme.error,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 13)),
-                            const SizedBox(width: 6),
-                            GestureDetector(
-                              onTap: () => provider.removeDailyCharge(
-                                  charge['id'] as String),
-                              child: const Icon(Icons.close,
-                                  color: AppTheme.textSecondary,
-                                  size: 16),
-                            ),
+                            Text(c['label'] as String,
+                                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13)),
+                            if ((c['note'] as String).isNotEmpty)
+                              Text(c['note'] as String,
+                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
                           ],
                         ),
-                      )),
-                  const Divider(color: Color(0xFF2A2A5A)),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('TOTAL CHARGES',
-                          style: TextStyle(
-                              color: AppTheme.error,
-                              fontWeight: FontWeight.w700)),
-                      Text('${fmt.format(totalCharges)} F CFA',
-                          style: const TextStyle(
-                              color: AppTheme.error,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16)),
+                      ),
+                      Text('${fmt.format(c['amount'] as double)} F',
+                          style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700, fontSize: 13)),
                     ],
                   ),
-                ],
+                )),
+                const Divider(color: Color(0xFF2A2A5A)),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('TOTAL CHARGES',
+                        style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700)),
+                    Text('${fmt.format(totalCharges)} F CFA',
+                        style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w900, fontSize: 16)),
+                  ],
+                ),
               ],
-            ),
+            ],
           ),
-          const SizedBox(height: 16),
-          // Dernières Transactions
-          GlassCard(
-            child: Column(
+        ),
+        const SizedBox(height: 16),
+
+        // Bouton impression historique
+        GestureDetector(
+          onTap: () => PrintService().printPointCaisse(report: r),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 13),
+            decoration: BoxDecoration(
+              color: const Color(0xFF7B1FA2).withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF9C27B0).withValues(alpha: 0.6)),
+            ),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const SectionHeader(
-                    title: 'Dernières Transactions',
-                    icon: Icons.history),
-                const SizedBox(height: 12),
-                ...todayPaid.take(10).map((o) => Padding(
-                      padding:
-                          const EdgeInsets.symmetric(vertical: 5),
-                      child: Row(
-                        mainAxisAlignment:
-                            MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                              '#${o.orderNumber} ${o.tableLabel}',
-                              style: const TextStyle(
-                                  color: AppTheme.textPrimary,
-                                  fontSize: 12)),
-                          Text(o.paymentMethod ?? '-',
-                              style: const TextStyle(
-                                  color: AppTheme.textSecondary,
-                                  fontSize: 11)),
-                          Text('${fmt.format(o.totalAmount)} F',
-                              style: const TextStyle(
-                                  color: AppTheme.success,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12)),
-                        ],
-                      ),
-                    )),
-                if (todayPaid.isEmpty)
-                  const EmptyState(
-                      icon: Icons.receipt,
-                      title: 'Aucune transaction aujourd\'hui'),
+                Icon(Icons.print, color: Color(0xFFCE93D8), size: 18),
+                SizedBox(width: 8),
+                Text('Imprimer / Exporter PDF',
+                    style: TextStyle(color: Color(0xFFCE93D8), fontWeight: FontWeight.w800, fontSize: 14)),
               ],
             ),
           ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  // ── Helpers design réutilisables ──────────────────────────────────────────
+
+  Widget _buildTodayHeader(DateTime today) {
+    return GlassCard(
+      border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
+      child: Column(
+        children: [
+          const Text('POINT DE CAISSE DU JOUR',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1)),
+          const SizedBox(height: 4),
+          Text(DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(today),
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
         ],
       ),
     );
   }
 
-  void _showAddChargeDialog(
-      BuildContext context, AppProvider provider) {
-    final labelCtrl = TextEditingController();
+  Widget _buildKpiGrid(NumberFormat fmt, double revenue, double charges, double net, int count) {
+    return GridView.count(
+      crossAxisCount: 2,
+      mainAxisSpacing: 12,
+      crossAxisSpacing: 12,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      childAspectRatio: 1.2,
+      children: [
+        StatCard(title: 'Recette Brute', value: '${fmt.format(revenue)} F', icon: Icons.payments, color: AppTheme.success),
+        StatCard(title: 'Charges du Jour', value: '${fmt.format(charges)} F', icon: Icons.money_off, color: AppTheme.error),
+        StatCard(
+            title: 'Recette Nette',
+            value: '${fmt.format(net)} F',
+            icon: Icons.account_balance_wallet,
+            color: net >= 0 ? AppTheme.primary : AppTheme.error),
+        StatCard(title: 'Factures', value: count.toString(), icon: Icons.receipt_long, color: AppTheme.warning),
+      ],
+    );
+  }
+
+  Widget _buildPaymentMethodsCard(NumberFormat fmt, double cash, double mobile, double card, double total) {
+    return GlassCard(
+      child: Column(
+        children: [
+          const SectionHeader(title: 'Détail par Mode de Paiement', icon: Icons.pie_chart_outline),
+          const SizedBox(height: 14),
+          ...[
+            ['Espèces',       cash,   AppTheme.warning,          Icons.money],
+            ['Mobile Money',  mobile, const Color(0xFF9C27B0),   Icons.phone_android],
+            ['Carte Bancaire',card,   AppTheme.primary,          Icons.credit_card],
+          ].map((row) {
+            final pct = total > 0 ? (row[1] as double) / total : 0.0;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Icon(row[3] as IconData, color: row[2] as Color, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(row[0] as String,
+                          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13))),
+                      Text('${fmt.format(row[1])} F',
+                          style: TextStyle(color: row[2] as Color, fontWeight: FontWeight.w700, fontSize: 13)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: pct,
+                      backgroundColor: AppTheme.surfaceLight,
+                      valueColor: AlwaysStoppedAnimation<Color>(row[2] as Color),
+                      minHeight: 6,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecetteVenteCard(BuildContext context, AppProvider provider, NumberFormat fmt) {
+    return GlassCard(
+      border: Border.all(color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const SectionHeader(title: 'Recette de Vente', icon: Icons.bar_chart),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => setState(() => _showRecetteVente = !_showRecetteVente),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1565C0).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(_showRecetteVente ? Icons.expand_less : Icons.expand_more,
+                          color: const Color(0xFF42A5F5), size: 14),
+                      const SizedBox(width: 4),
+                      Text(_showRecetteVente ? 'Masquer' : 'Afficher',
+                          style: const TextStyle(color: Color(0xFF42A5F5), fontSize: 11, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_showRecetteVente) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Icon(Icons.calendar_today, color: AppTheme.textSecondary, size: 14),
+                const SizedBox(width: 6),
+                Text(DateFormat('dd/MM/yyyy', 'fr_FR').format(_recetteDate),
+                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: _recetteDate,
+                      firstDate: DateTime(2024),
+                      lastDate: DateTime.now(),
+                      builder: (ctx, child) => Theme(
+                        data: Theme.of(ctx).copyWith(
+                          colorScheme: const ColorScheme.dark(primary: AppTheme.primary, surface: AppTheme.surface),
+                        ),
+                        child: child!,
+                      ),
+                    );
+                    if (picked != null) setState(() => _recetteDate = picked);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.edit_calendar, color: AppTheme.primary, size: 13),
+                        SizedBox(width: 4),
+                        Text('Changer', style: TextStyle(color: AppTheme.primary, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _RecetteVenteTable(orders: provider.orders, filterDate: _recetteDate, fmt: fmt),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChargesCard(BuildContext context, AppProvider provider, NumberFormat fmt, double totalCharges) {
+    return GlassCard(
+      border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const SectionHeader(title: 'Charges du Jour', icon: Icons.money_off),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => _showAddChargeDialog(context, provider),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppTheme.error.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppTheme.error.withValues(alpha: 0.4)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.add, color: AppTheme.error, size: 14),
+                      SizedBox(width: 4),
+                      Text('Ajouter', style: TextStyle(color: AppTheme.error, fontSize: 11, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (provider.todayCharges.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text("Aucune charge enregistrée aujourd'hui",
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+            )
+          else ...[
+            ...provider.todayCharges.map((charge) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(
+                children: [
+                  const Icon(Icons.circle, color: AppTheme.error, size: 8),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(charge['label'] as String,
+                            style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13)),
+                        if ((charge['note'] as String?)?.isNotEmpty == true)
+                          Text(charge['note'] as String,
+                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                  Text('${fmt.format(charge['amount'])} F',
+                      style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700, fontSize: 13)),
+                  const SizedBox(width: 6),
+                  GestureDetector(
+                    onTap: () => provider.removeDailyCharge(charge['id'] as String),
+                    child: const Icon(Icons.close, color: AppTheme.textSecondary, size: 16),
+                  ),
+                ],
+              ),
+            )),
+            const Divider(color: Color(0xFF2A2A5A)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('TOTAL CHARGES', style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700)),
+                Text('${fmt.format(totalCharges)} F CFA',
+                    style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w900, fontSize: 16)),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransactionsCard(NumberFormat fmt, List<Order> todayPaid) {
+    return GlassCard(
+      child: Column(
+        children: [
+          const SectionHeader(title: 'Dernières Transactions', icon: Icons.history),
+          const SizedBox(height: 12),
+          ...todayPaid.take(10).map((o) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('#${o.orderNumber} ${o.tableLabel}',
+                    style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12)),
+                Text(o.paymentMethod ?? '-',
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                Text('${fmt.format(o.totalAmount)} F',
+                    style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600, fontSize: 12)),
+              ],
+            ),
+          )),
+          if (todayPaid.isEmpty)
+            const EmptyState(icon: Icons.receipt, title: "Aucune transaction aujourd'hui"),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrintButton(BuildContext context, AppProvider provider, NumberFormat fmt,
+      DateTime today, List<Order> todayPaid, double revenue, double charges, double net) {
+    return GestureDetector(
+      onTap: () {
+        // Construire la Map report pour le point du jour
+        final byMethod = <String, double>{};
+        for (final o in todayPaid) {
+          final method = o.paymentMethod ?? 'Espèces';
+          byMethod[method] = (byMethod[method] ?? 0) + o.totalAmount;
+        }
+        final cashierCounts = <String, int>{};
+        for (final o in todayPaid) {
+          final name = o.cashierName ?? '';
+          if (name.isNotEmpty) cashierCounts[name] = (cashierCounts[name] ?? 0) + 1;
+        }
+        String mainCashier = '';
+        if (cashierCounts.isNotEmpty) {
+          mainCashier = cashierCounts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+        }
+        final reports = todayPaid.map((o) => <String, dynamic>{
+          'orderNumber':   o.orderNumber,
+          'tableNumber':   o.tableLabel,
+          'paymentMethod': o.paymentMethod ?? 'Espèces',
+          'amount':        o.totalAmount,
+          'settledAtMs':   o.settledAt?.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch,
+        }).toList();
+        final chargesData = provider.todayCharges.map((c) => <String, dynamic>{
+          'label':  c['label'] ?? '',
+          'amount': (c['amount'] as num?)?.toDouble() ?? 0.0,
+          'note':   c['note'] ?? '',
+          'date':   today,
+        }).toList();
+        PrintService().printPointCaisse(report: {
+          'date':         today,
+          'reports':      reports,
+          'charges':      chargesData,
+          'totalRevenue': revenue,
+          'totalCharges': charges,
+          'netRevenue':   net,
+          'byMethod':     byMethod,
+          'mainCashier':  mainCashier,
+          'invoiceCount': todayPaid.length,
+        });
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(
+          color: AppTheme.success.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.success.withValues(alpha: 0.5)),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.print, color: AppTheme.success, size: 18),
+            SizedBox(width: 8),
+            Text('Imprimer / Exporter PDF',
+                style: TextStyle(color: AppTheme.success, fontWeight: FontWeight.w800, fontSize: 14)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Helpers méthodes de paiement ──────────────────────────────────────────
+  Color _methodColor(String method) {
+    if (method == 'Espèces') return AppTheme.warning;
+    if (method == 'Carte Bancaire') return AppTheme.primary;
+    return const Color(0xFF9C27B0); // Mobile Money et autres
+  }
+
+  IconData _methodIcon(String method) {
+    if (method == 'Espèces') return Icons.money;
+    if (method == 'Carte Bancaire') return Icons.credit_card;
+    return Icons.phone_android;
+  }
+
+  void _showAddChargeDialog(BuildContext context, AppProvider provider) {
+    final labelCtrl  = TextEditingController();
     final amountCtrl = TextEditingController();
-    final noteCtrl = TextEditingController();
+    final noteCtrl   = TextEditingController();
 
     showDialog(
       context: context,
@@ -1730,8 +2158,7 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
               decoration: const InputDecoration(
                 labelText: 'Libellé *',
                 hintText: 'Ex: Électricité, Salaire, Achat...',
-                prefixIcon:
-                    Icon(Icons.label_outline, size: 18),
+                prefixIcon: Icon(Icons.label_outline, size: 18),
               ),
             ),
             const SizedBox(height: 10),
@@ -1741,8 +2168,7 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(
                 labelText: 'Montant (F CFA) *',
-                prefixIcon: Icon(Icons.money,
-                    color: AppTheme.error, size: 18),
+                prefixIcon: Icon(Icons.money, color: AppTheme.error, size: 18),
               ),
             ),
             const SizedBox(height: 10),
@@ -1751,34 +2177,23 @@ class _PointCaisseTabState extends State<_PointCaisseTab> {
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(
                 labelText: 'Note (optionnel)',
-                prefixIcon:
-                    Icon(Icons.notes_outlined, size: 18),
+                prefixIcon: Icon(Icons.notes_outlined, size: 18),
               ),
             ),
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
             onPressed: () {
-              final label = labelCtrl.text.trim();
-              final amount =
-                  double.tryParse(amountCtrl.text);
-              if (label.isNotEmpty &&
-                  amount != null &&
-                  amount > 0) {
-                provider.addDailyCharge(
-                    label: label,
-                    amount: amount,
-                    note: noteCtrl.text.trim());
+              final label  = labelCtrl.text.trim();
+              final amount = double.tryParse(amountCtrl.text);
+              if (label.isNotEmpty && amount != null && amount > 0) {
+                provider.addDailyCharge(label: label, amount: amount, note: noteCtrl.text.trim());
                 Navigator.pop(context);
               }
             },
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.error),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
             child: const Text('Ajouter'),
           ),
         ],
