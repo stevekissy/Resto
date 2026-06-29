@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../models/client_models.dart';
@@ -1424,17 +1425,44 @@ class AppProvider extends ChangeNotifier {
         );
         debugPrint('[AppProvider] updateKitchenStatus(served) → facture provisoire générée');
 
-        // Sync commandes en ligne
-        try {
-          if (order.isOnlineOrder) {
-            final clientSvc = ClientFirebaseService();
-            await clientSvc.syncKitchenStatusToClientOrder(
-              internalOrderId: orderId,
-              clientStatus: ClientOrderStatus.delivered,
-            );
+        // ── Fidélité + Parrainage pour commandes en ligne ─────────────────
+        // syncKitchenStatusToClientOrder() est un NO-OP (source unique orders).
+        // On appelle directement awardLoyaltyPoints + processReferralBonus
+        // car updateKitchenStatus est le SEUL point d'entrée pour "served" cuisine.
+        if (order.isOnlineOrder) {
+          final clientSvc = ClientFirebaseService();
+          try {
+            // Lire loyaltyPointsEarned depuis Firestore — absent du modèle Order POS
+            final orderDoc = await FirebaseFirestore.instance
+                .collection('orders')
+                .doc(orderId)
+                .get();
+            final orderData = orderDoc.data() ?? {};
+            final pts = (orderData['loyaltyPointsEarned'] as num?)?.toInt() ?? 0;
+            final cid = (orderData['clientId'] as String?)?.trim() ?? '';
+
+            debugPrint('[AppProvider] loyalty → orderId=$orderId cid=$cid pts=$pts');
+
+            if (cid.isNotEmpty) {
+              // Attribution des points fidélité (idempotent — vérifie loyaltyPointsAwarded)
+              await clientSvc.awardLoyaltyPoints(
+                clientOrderId: orderId,
+                clientId:      cid,
+                pointsToAward: pts,
+              );
+              // Bonus parrainage (idempotent — vérifie referralBonusAwarded)
+              await clientSvc.processReferralBonus(
+                clientId: cid,
+                orderId:  orderId,
+              );
+              debugPrint('[AppProvider] loyalty ✅ fidélité+parrainage traités pour $cid');
+            } else {
+              debugPrint('[AppProvider] loyalty ⚠️ clientId vide pour $orderId — skip fidélité');
+            }
+          } catch (e) {
+            // Non bloquant : la commande est déjà marquée served
+            debugPrint('[AppProvider] loyalty ❌ erreur (non bloquant): $e');
           }
-        } catch (e) {
-          debugPrint('[AppProvider] sync client_orders (served): $e');
         }
         return;
       }

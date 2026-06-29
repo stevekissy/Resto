@@ -38,9 +38,13 @@ class _ClientOrdersScreenState extends State<ClientOrdersScreen>
   Widget build(BuildContext context) {
     final provider = ClientProviderProxy.watch(context);
     final active = provider.activeOrders;
+    // FIX : historique = toutes commandes terminées
+    // delivered (livraison), served (sur place/à emporter), paid (clôturée), cancelled
     final history = provider.orders
         .where((o) =>
             o.status == ClientOrderStatus.delivered ||
+            o.status == ClientOrderStatus.served    ||
+            o.status == ClientOrderStatus.paid      ||
             o.status == ClientOrderStatus.cancelled)
         .toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));

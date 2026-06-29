@@ -1037,25 +1037,25 @@ class ClientFirebaseService {
       return;
     }
 
-    // ── Vérification : statut final (livré/servi/payé) + payé ─────────────
+    // ── Vérification : statut final (livré/servi/payé) ───────────────────
     final deliveryStatusIndex = (data['status'] as num?)?.toInt() ?? -1;
-    final paymentStatusIndex  = (data['paymentStatus'] as num?)?.toInt() ?? -1;
     final orderStatusStr      = data['orderStatus'] as String? ?? '';
-    
-    // Statuts finaux acceptés : delivered(5), served(7), paid(8) — ou via string
+    final kitchenStatusStr    = data['kitchenStatus'] as String? ?? '';
+
+    // Statuts finaux acceptés : delivered(5), served(7), paid(8) — ou via string/kitchenStatus
+    // FIX : ne PAS bloquer sur paymentStatus — pour les commandes restaurant,
+    // le paiement caisse arrive après le service (paymentStatus reste à 0/pending).
+    // La règle métier réelle : commande servie = points accordés.
     final isDelivered = deliveryStatusIndex == 5  // ClientOrderStatus.delivered
                      || deliveryStatusIndex == 7  // ClientOrderStatus.served
                      || deliveryStatusIndex == 8  // ClientOrderStatus.paid
                      || orderStatusStr == 'delivered'
                      || orderStatusStr == 'served'
-                     || orderStatusStr == 'paid';
-    final isFullyPaid      = paymentStatusIndex == 2; // ClientPaymentStatus.fullyPaid
-    final paymentMethod    = (data['paymentMethod'] as num?)?.toInt() ?? -1;
-    final isCashOnDelivery = paymentMethod == 0;
-    final paymentOk = isFullyPaid || (isCashOnDelivery && isDelivered);
+                     || orderStatusStr == 'paid'
+                     || kitchenStatusStr == 'served'; // FIX : cuisine a marqué served
 
-    if (!isDelivered || !paymentOk) {
-      debugPrintOrder('[loyalty] Conditions non remplies (status=$deliveryStatusIndex/$orderStatusStr, paymentOk=$paymentOk) — skip');
+    if (!isDelivered) {
+      debugPrintOrder('[loyalty] Commande pas encore servie (status=$deliveryStatusIndex/$orderStatusStr/ks=$kitchenStatusStr) — skip');
       return;
     }
 
