@@ -79,38 +79,47 @@ class _KitchenScreenState extends State<KitchenScreen> {
     // ── LOG DEBUG : afficher toutes les commandes reçues dans le stream ──
     final allOrders = provider.orders;
     if (kDebugMode) {
-      debugPrint('[CUISINE] Stream reçu : ${allOrders.length} commandes total');
+      debugPrint('[CUISINE v3] Stream reçu : ${allOrders.length} commandes total');
       for (final o in allOrders) {
+        final ks = o.kitchenStatus ?? 'null';
+        final inKitchen = o.sentToKitchen && _activeKitchenStatuses.contains(ks);
         debugPrint(
-          '[CUISINE] id=${o.id.substring(0, 12)}… '
-          'source=${o.source} isOnline=${o.isOnlineOrder} '
-          'sentToKitchen=${o.sentToKitchen} kitchenStatus=${o.kitchenStatus} '
-          'hasKitchenItems=${o.hasKitchenItems} status=${o.status.name}',
+          '[CUISINE v3] ${inKitchen ? "✅" : "❌"} id=${o.id.substring(0, 12)}… '
+          'sentToKitchen=${o.sentToKitchen} ks=$ks '
+          'isOnline=${o.isOnlineOrder} hasKitchenItems=${o.hasKitchenItems} '
+          'items=${o.items.length} status=${o.status.name}',
         );
       }
     }
 
-    // ── Commandes online envoyées en cuisine (filtre principal) ──────────
-    // FIX v2 :
-    //   • isOnlineOrder utilise source OU orderSource (champ alternatif)
-    //   • kitchenStatus inclut 'ready' (commande prête mais pas encore servie)
-    //   • Suppression de 'waiting' (jamais écrit par sendToKitchen)
-    //   • hasKitchenItems vérifié sur itemType=='menu' UNIQUEMENT (sans isCambuse)
-    //   • _activeKitchenStatuses est déclaré au niveau de la CLASSE (static const)
+    // ── FIX v3 : filtre aligné sur l'onglet "Cuisine" de Commandes en ligne ──
+    //
+    // RÈGLE UNIQUE pour les commandes online :
+    //   sentToKitchen == true  ET  kitchenStatus in {pending, preparing, ready}
+    //   → Identique au filtre _isInKitchen() de online_orders_admin_screen.dart
+    //   → NE PAS vérifier isOnlineOrder ni hasKitchenItems : ces deux conditions
+    //     peuvent bloquer des commandes dont les items ne sont pas encore parsés.
+    //
+    // RÈGLE pour les commandes POS :
+    //   hasKitchenItems ET status in {pending, preparing}
+    //   (les commandes POS n'ont pas sentToKitchen)
 
     final onlineInKitchen = allOrders.where((o) {
-      // Accepter source='online' OU orderSource='online' (double format)
-      if (!o.isOnlineOrder) return false;
+      // Filtre online : exactement le même que l'onglet Cuisine
       if (!o.sentToKitchen) return false;
-      // hasKitchenItems : au moins un article avec itemType=='menu'
-      if (!o.hasKitchenItems) return false;
       final ks = o.kitchenStatus ?? '';
-      return _activeKitchenStatuses.contains(ks);
+      if (!_activeKitchenStatuses.contains(ks)) return false;
+      // Exclure les commandes sans aucun plat cuisine (cambuse-only)
+      // mais seulement si les items sont parsés (liste non vide)
+      if (o.items.isNotEmpty && !o.hasKitchenItems) return false;
+      return true;
     }).toList();
 
     // ── Commandes POS actives (filtre habituel) ───────────────────────────
+    // Ne pas inclure les commandes déjà dans onlineInKitchen (sentToKitchen==true)
     final posActive = allOrders.where((o) {
-      if (o.isOnlineOrder) return false;
+      if (o.sentToKitchen) return false; // déjà dans onlineInKitchen si actif
+      if (o.isOnlineOrder) return false; // online non envoyée en cuisine → pas ici
       if (o.status == OrderStatus.cancelled) return false;
       if (!o.hasKitchenItems) return false;
       return o.status == OrderStatus.pending || o.status == OrderStatus.preparing;
@@ -127,8 +136,16 @@ class _KitchenScreenState extends State<KitchenScreen> {
 
     // ── Bandeau debug visible en cuisine ──────────────────────────────────
     final onlineTotal = allOrders.where((o) => o.isOnlineOrder).length;
-    final onlineSent  = allOrders.where((o) => o.isOnlineOrder && o.sentToKitchen).length;
+    // FIX v3 : sentToKitchen==true est la seule condition fiable
+    final onlineSent  = allOrders.where((o) => o.sentToKitchen).length;
     final onlineKitchenIds = onlineInKitchen.map((o) => o.id.substring(0, 10)).join(', ');
+    // Diagnostic : commandes sentToKitchen mais filtrées (pour debug)
+    final sentButFiltered = allOrders.where((o) {
+      if (!o.sentToKitchen) return false;
+      final ks = o.kitchenStatus ?? '';
+      if (_activeKitchenStatuses.contains(ks)) return false; // déjà dans onlineInKitchen
+      return true; // sentToKitchen mais kitchenStatus hors {pending,preparing,ready}
+    }).toList();
 
     return Scaffold(
       body: Column(
@@ -147,19 +164,26 @@ class _KitchenScreenState extends State<KitchenScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '🔎 Stream cuisine : ${allOrders.length} total · $onlineTotal online · $onlineSent envoyées en cuisine · ${onlineInKitchen.length} actives',
+                  '🔎 Stream : ${allOrders.length} total · $onlineTotal online · $onlineSent sentToKitchen · ${onlineInKitchen.length} actives cuisine',
                   style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 10, fontFamily: 'monospace'),
                 ),
                 if (onlineInKitchen.isNotEmpty)
                   Text(
-                    '📋 orderId cuisine : $onlineKitchenIds…',
+                    '✅ En cuisine : $onlineKitchenIds…',
                     style: const TextStyle(color: Color(0xFF81C784), fontSize: 10, fontFamily: 'monospace'),
                     overflow: TextOverflow.ellipsis,
                   ),
                 if (onlineInKitchen.isEmpty && onlineSent > 0)
                   Text(
-                    '⚠ ${onlineSent} commande(s) online envoyées mais filtrées — vérifier kitchenStatus',
+                    '⚠ $onlineSent sentToKitchen mais 0 actif — kitchenStatus: ${allOrders.where((o) => o.sentToKitchen).map((o) => o.kitchenStatus ?? "null").join(",")}',
                     style: const TextStyle(color: Color(0xFFFFB74D), fontSize: 10, fontFamily: 'monospace'),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                if (sentButFiltered.isNotEmpty)
+                  Text(
+                    '🚫 Filtrés (ks hors range) : ${sentButFiltered.map((o) => "${o.id.substring(0,8)}…=${o.kitchenStatus}").join(", ")}',
+                    style: const TextStyle(color: Color(0xFFEF5350), fontSize: 10, fontFamily: 'monospace'),
+                    overflow: TextOverflow.ellipsis,
                   ),
               ],
             ),
