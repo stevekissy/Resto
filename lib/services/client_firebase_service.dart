@@ -700,65 +700,71 @@ class ClientFirebaseService {
     debugPrint('[syncKitchenStatusToClientOrder] NO-OP (source unique orders) orderId=$internalOrderId status=$clientStatus');
   }
 
-  /// SOURCE UNIQUE : normalise le doc orders en structure POS puis envoie en cuisine.
+  /// SOURCE UNIQUE — Normalise complètement le doc 'orders' au format POS avant envoi cuisine.
   ///
-  /// CORRECTION BUG RACINE :
-  /// La commande online était créée avec une structure différente (orderNumber en
-  /// string '#0042', status en string, items sans les champs POS, etc.), ce qui
-  /// empêchait streamOrders() / AppProvider de la parser correctement.
+  /// RÈGLE FONDAMENTALE : après cet appel, le doc Firestore est identique à un doc
+  /// créé par saveOrder() côté POS. Tous les champs critiques sont réécrits avec
+  /// les types corrects. Aucun résidu de la structure online n'est laissé.
   ///
-  /// Cette méthode lit le doc Firestore, reconstitue tous les champs critiques
-  /// AU FORMAT POS (identique à Order.toMap()), puis fait un set() atomique.
-  /// Les champs online-spécifiques (source, clientId, clientName, etc.) sont conservés.
+  /// Utilise set(merge: true) pour garantir l'écriture atomique de tous les champs
+  /// même si update() échoue silencieusement sur certains champs.
   ///
   /// [orderId] = id du doc orders (widget.order.id depuis streamAdminOnlineOrders)
   Future<void> sendToKitchen(String orderId) async {
-    debugPrint('[sendToKitchen] START orderId=$orderId');
+    debugPrint('[sendToKitchen] ▶ START orderId=$orderId');
 
-    // ── Lire le doc actuel pour récupérer les champs online ──────────────
+    // ── 1. Lire le doc actuel ──────────────────────────────────────────────
     final snap = await _db.collection('orders').doc(orderId).get();
-    if (!snap.exists) throw Exception('Commande introuvable : $orderId');
-    final raw = snap.data()!;
+    if (!snap.exists) throw Exception('[sendToKitchen] Commande introuvable : $orderId');
+    final raw = Map<String, dynamic>.from(snap.data()!);
 
-    // ── Normaliser orderNumber en int ─────────────────────────────────────
-    // Les commandes online stockent orderNumber comme '#0042' (string).
-    // streamOrders() attend un int. On parse et on écrase.
+    // ── 2. Normaliser orderNumber : string '#0042' → int 42 ───────────────
     final rawNum = raw['orderNumber'];
-    int orderNumberInt;
+    final int orderNumberInt;
     if (rawNum is int) {
       orderNumberInt = rawNum;
+    } else if (rawNum is double) {
+      orderNumberInt = rawNum.toInt();
     } else if (rawNum is String) {
-      // '#0042' → 42  |  '42' → 42
       orderNumberInt = int.tryParse(rawNum.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
     } else {
       orderNumberInt = 0;
     }
 
-    // ── Normaliser les items au format POS (OrderItem.toMap()) ────────────
-    // Les items online ont 'name'/'price' comme alias — on conserve les deux
-    // et on s'assure que 'productName', 'unitPrice', 'itemType' sont présents.
-    final rawItems = raw['items'] as List? ?? [];
-    final normalizedItems = rawItems.map((i) {
-      final m = Map<String, dynamic>.from(i as Map);
-      // productName : priorité sur 'productName', fallback 'name'
-      final pName = (m['productName'] as String?)?.isNotEmpty == true
+    // ── 3. Normaliser les items au format OrderItem.toMap() exact ─────────
+    // Garantit que chaque item a : productName, unitPrice, itemType, isCambuse
+    // Les commandes online peuvent stocker 'name'/'price' au lieu de 'productName'/'unitPrice'
+    final rawItems = (raw['items'] as List?)?.cast<Object>() ?? [];
+    final normalizedItems = rawItems.map((item) {
+      final m = Map<String, dynamic>.from(item as Map);
+
+      // productName : priorité 'productName' > 'name'
+      final pName = ((m['productName'] as String?) ?? '').isNotEmpty
           ? m['productName'] as String
-          : (m['name'] as String? ?? '');
-      // unitPrice : priorité sur 'unitPrice', fallback 'price'
+          : ((m['name'] as String?) ?? '');
+
+      // unitPrice : priorité 'unitPrice' > 'price'
       final uPrice = (m['unitPrice'] as num?)?.toDouble()
           ?? (m['price'] as num?)?.toDouble()
           ?? 0.0;
-      // itemType : 'menu' par défaut (toujours cuisine sauf si explicitement 'cambuse')
+
+      // itemType : priorité 'itemType' explicite > déduction depuis isCambuse > défaut 'menu'
+      // CRITIQUE : 'menu' = va en cuisine, 'cambuse' = boisson directement en caisse
       final isCamb = m['isCambuse'] as bool? ?? false;
-      final itemType = (m['itemType'] as String?)?.isNotEmpty == true
-          ? m['itemType'] as String
-          : (isCamb ? 'cambuse' : 'menu');
-      // specialComment : priorité 'specialComment', fallback 'comment'
-      final rawComment = m['comment'] as String? ?? '';
+      final rawType = (m['itemType'] as String?) ?? '';
+      final itemType = rawType.isNotEmpty ? rawType : (isCamb ? 'cambuse' : 'menu');
+
+      // specialComment : 'specialComment' > 'comment'
+      final rawCmt = (m['comment'] as String?) ?? '';
       final specialComment = (m['specialComment'] as String?)
-          ?? (rawComment.isNotEmpty ? rawComment : null);
-      return {
-        'productId':      m['productId'] as String? ?? '',
+          ?? (rawCmt.isNotEmpty ? rawCmt : null);
+
+      // category : 'category' > 'categoryName'
+      final cat = (m['category'] as String?)
+          ?? (m['categoryName'] as String?);
+
+      return <String, dynamic>{
+        'productId':      (m['productId'] as String?) ?? '',
         'productName':    pName,
         'name':           pName,           // alias cuisine
         'quantity':       (m['quantity'] as num?)?.toInt() ?? 1,
@@ -766,56 +772,72 @@ class ClientFirebaseService {
         'price':          uPrice,          // alias cuisine
         'specialComment': specialComment,
         'isCambuse':      isCamb || itemType == 'cambuse',
-        'itemType':       itemType,        // CRITIQUE : 'menu' | 'cambuse'
+        'itemType':       itemType,        // SOURCE DE VÉRITÉ : 'menu' | 'cambuse'
         'cambuseItemId':  m['cambuseItemId'] as String?,
-        'category':       m['category'] as String?,
+        'category':       cat,
       };
     }).toList();
 
-    // ── Vérifier si la commande a des plats (items cuisine) ──────────────
-    final hasKitchenItems = normalizedItems.any((i) => i['itemType'] == 'menu');
+    // ── 4. Calculer hasKitchenItems depuis les items normalisés ───────────
+    // Persisté en Firestore pour que les filtres puissent l'utiliser sans parser les items
+    final hasKitchenItemsBool = normalizedItems.any((i) => i['itemType'] == 'menu');
 
-    // ── Reconstruire orderType au format POS ─────────────────────────────
-    final rawOrderType = raw['orderType'] as String? ?? '';
-    String posOrderType;
-    switch (rawOrderType) {
-      case 'takeaway':  posOrderType = 'takeaway';  break;
-      case 'dine_in':   posOrderType = 'dine_in';   break;
-      case 'delivery':  posOrderType = 'delivery';  break;
-      default:          posOrderType = 'delivery';  break;
+    // ── 5. Normaliser orderType et tableNumber ────────────────────────────
+    final rawOT = (raw['orderType'] as String?) ?? '';
+    final String posOrderType;
+    switch (rawOT) {
+      case 'takeaway': posOrderType = 'takeaway'; break;
+      case 'dine_in':  posOrderType = 'dine_in';  break;
+      default:         posOrderType = 'delivery'; break;
     }
+    final tableNumber = (raw['tableNumber'] as String?)
+        ?? (posOrderType == 'takeaway' ? 'À Emporter'
+           : posOrderType == 'dine_in' ? 'Sur place'
+           : 'Livraison');
 
-    // tableNumber lisible pour cuisine/caisse
-    final tableNumber = raw['tableNumber'] as String?
-        ?? (posOrderType == 'takeaway' ? 'À Emporter' : 'Livraison');
-
-    // totalAmount : lire 'totalAmount' online, fallback recalcul
+    // ── 6. totalAmount ────────────────────────────────────────────────────
     final totalAmount = (raw['totalAmount'] as num?)?.toDouble()
-        ?? normalizedItems.fold<double>(0, (s, i) =>
+        ?? normalizedItems.fold<double>(0.0, (s, i) =>
             s + ((i['unitPrice'] as num? ?? 0) * (i['quantity'] as num? ?? 1)));
 
-    // ── Écriture atomique — format POS complet ────────────────────────────
-    // On utilise set() avec merge:false pour remplacer les champs clés
-    // tout en préservant les champs non listés (update partiel).
-    // Pour garantir la compatibilité totale avec streamOrders(), on écrit
-    // TOUS les champs que Order.toMap() produit.
-    await _db.collection('orders').doc(orderId).update({
-      // ── Champs POS critiques ──────────────────────────────────────────
-      'orderNumber':    orderNumberInt,      // int, pas string '#0042'
-      'items':          normalizedItems,     // format OrderItem.toMap()
-      'status':         0,                  // OrderStatus.pending.index (cuisine prend le relais)
-      'orderStatus':    'pending',           // string aligné sur le parseur
-      'cashStatus':     0,                  // CashStatus.pending_cashout.index
+    final discount = (raw['discount'] as num?)?.toDouble()
+        ?? (raw['loyaltyDiscountAmount'] as num?)?.toDouble()
+        ?? 0.0;
+
+    // ── 7. serverName (affiché en cuisine/caisse) ─────────────────────────
+    final serverName = (raw['clientName'] as String?)
+        ?? (raw['serverName'] as String?)
+        ?? '';
+
+    // ── 8. Écriture set(merge: true) — TOUS les champs POS garantis ──────
+    // set(merge: true) remplace chaque champ listé sans effacer les autres.
+    // Plus fiable que update() qui peut échouer silencieusement sur des
+    // champs déjà à leur valeur cible selon certaines règles Firestore.
+    await _db.collection('orders').doc(orderId).set({
+      // ── Identité ─────────────────────────────────────────────────────
+      'id':             orderId,
+      'orderNumber':    orderNumberInt,       // int (jamais string '#0042')
+      // ── Articles ─────────────────────────────────────────────────────
+      'items':          normalizedItems,      // format OrderItem.toMap() exact
+      'hasKitchenItems': hasKitchenItemsBool, // persisté pour filtres rapides
+      // ── Statuts POS (types corrects pour streamOrders) ────────────────
+      'status':         0,                    // OrderStatus.pending.index
+      'orderStatus':    'pending',            // string lu en priorité par _parseOrderStatus
+      'kitchenStatus':  'pending',            // lu par filtre cuisine
+      'cashStatus':     0,                    // CashStatus.pending_cashout.index
       'isPaid':         false,
-      'discount':       (raw['discount'] as num?)?.toDouble() ?? 0.0,
-      'tableNumber':    tableNumber,
-      'orderType':      posOrderType,
-      'serverName':     raw['clientName'] as String? ?? raw['serverName'] as String? ?? '',
-      'isUrgent':       raw['isUrgent'] as bool? ?? false,
+      'cashoutInvoiceGenerated':    false,
+      'settlementInvoiceGenerated': false,
+      // ── Montants ─────────────────────────────────────────────────────
       'totalAmount':    totalAmount,
-      // ── Workflow cuisine — format POS ─────────────────────────────────
-      'sentToKitchen':   true,
-      'kitchenStatus':   'pending',          // sera mis à 'preparing' par la cuisine
+      'discount':       discount,
+      // ── Table / type ─────────────────────────────────────────────────
+      'tableNumber':    tableNumber,
+      'orderType':      posOrderType,         // 'delivery' | 'takeaway' | 'dine_in'
+      'serverName':     serverName,
+      'isUrgent':       raw['isUrgent'] as bool? ?? false,
+      // ── Workflow cuisine ──────────────────────────────────────────────
+      'sentToKitchen':   true,               // CRITIQUE : active le filtre kitchen_screen
       'adminStatus':     'sent_to_kitchen',
       'sentToKitchenAt': FieldValue.serverTimestamp(),
       // ── Source online conservée ───────────────────────────────────────
@@ -824,15 +846,14 @@ class ClientFirebaseService {
       'clientId':        raw['clientId'],
       'clientName':      raw['clientName'],
       'clientPhone':     raw['clientPhone'],
-      // ── Caisse initialisée ────────────────────────────────────────────
-      'cashoutInvoiceGenerated':   false,
-      'settlementInvoiceGenerated': false,
       // ── Timestamps ────────────────────────────────────────────────────
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+      'createdAt':       raw['createdAt'] ?? FieldValue.serverTimestamp(),
+      'updatedAt':       FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
 
-    debugPrint('[sendToKitchen] ✅ orderId=$orderId normalisé POS → orderNumber=$orderNumberInt '
-        'hasKitchenItems=$hasKitchenItems items=${normalizedItems.length}');
+    debugPrint('[sendToKitchen] ✅ orderId=$orderId → orderNumber=$orderNumberInt '
+        'hasKitchenItems=$hasKitchenItemsBool items=${normalizedItems.length} '
+        'orderType=$posOrderType tableNumber=$tableNumber');
 
     // ── Notification Firestore ─────────────────────────────────────────────
     try {

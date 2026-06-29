@@ -92,38 +92,41 @@ class _KitchenScreenState extends State<KitchenScreen> {
       }
     }
 
-    // ── FIX v4 : filtre UNIFIÉ — commandes POS et online traitées pareil ──
+    // ── FIX v5 : filtre UNIFIÉ RENFORCÉ — commandes POS + online ──────────
     //
-    // Après normalisation POS dans sendToKitchen(), les commandes online ont :
-    //   status = OrderStatus.pending (int 0)
+    // Après sendToKitchen() (set merge:true), les commandes online ont :
+    //   status = 0 (OrderStatus.pending)
+    //   orderStatus = 'pending'
     //   kitchenStatus = 'pending'
     //   sentToKitchen = true
+    //   hasKitchenItems = true (persisté Firestore)
     //   items[].itemType = 'menu' | 'cambuse'
     //
-    // RÈGLE UNIQUE pour TOUTES les commandes actives en cuisine :
-    //   (A) sentToKitchen==true  ET  kitchenStatus in {pending, preparing, ready}
-    //       → commandes online acceptées + POS si jamais sentToKitchen est vrai
-    //   (B) sentToKitchen==false  ET  status in {pending, preparing}  ET  hasKitchenItems
-    //       → commandes POS classiques (sentToKitchen reste false)
+    // RÈGLE (A) : sentToKitchen==true + kitchenStatus in {pending,preparing,ready}
+    //   → Commandes online envoyées en cuisine (et POS si sentToKitchen activé)
+    //   → NE PAS filtrer sur hasKitchenItems ici : la commande a été
+    //     explicitement envoyée en cuisine par un admin — elle doit apparaître.
     //
-    // Dans les deux cas : exclure cambuse-only (pas de plats cuisine)
+    // RÈGLE (B) : sentToKitchen==false + status in {pending,preparing} + hasKitchenItems
+    //   → Commandes POS classiques (jamais passées par le workflow admin online)
 
     final onlineInKitchen = allOrders.where((o) {
-      // (A) Commandes envoyées en cuisine via le workflow admin online
+      // (A) Explicitement envoyée en cuisine — confiance totale dans kitchenStatus
       if (!o.sentToKitchen) return false;
       final ks = o.kitchenStatus ?? '';
+      // Vérifier que kitchenStatus est un statut actif cuisine
       if (!_activeKitchenStatuses.contains(ks)) return false;
-      // Exclure cambuse-only (items parsés et aucun plat)
-      if (o.items.isNotEmpty && !o.hasKitchenItems) return false;
+      // Exclure seulement si on est certain que c'est cambuse-only ET qu'il y a des items parsés
+      // (items.isEmpty peut arriver si le parsing a échoué — dans ce cas on inclut quand même)
+      if (o.items.isNotEmpty && o.isCambuseOnly) return false;
       return true;
     }).toList();
 
-    // ── Commandes POS actives — sentToKitchen==false ──────────────────────
+    // ── (B) Commandes POS classiques — sentToKitchen==false ───────────────
     final posActive = allOrders.where((o) {
-      // (B) Commandes POS classiques — jamais envoyées via admin online
-      if (o.sentToKitchen) return false; // déjà dans onlineInKitchen
+      if (o.sentToKitchen) return false;       // déjà dans onlineInKitchen
       if (o.status == OrderStatus.cancelled) return false;
-      if (!o.hasKitchenItems) return false;
+      if (!o.hasKitchenItems) return false;    // exclure cambuse-only POS
       return o.status == OrderStatus.pending || o.status == OrderStatus.preparing;
     }).toList();
 
@@ -136,17 +139,15 @@ class _KitchenScreenState extends State<KitchenScreen> {
 
     final readyOrders = provider.readyOrders;
 
-    // ── Bandeau debug visible en cuisine ──────────────────────────────────
-    final onlineTotal = allOrders.where((o) => o.isOnlineOrder).length;
-    // FIX v3 : sentToKitchen==true est la seule condition fiable
-    final onlineSent  = allOrders.where((o) => o.sentToKitchen).length;
-    final onlineKitchenIds = onlineInKitchen.map((o) => o.id.substring(0, 10)).join(', ');
-    // Diagnostic : commandes sentToKitchen mais filtrées (pour debug)
+    // ── Bandeau debug ─────────────────────────────────────────────────────
+    final onlineTotal  = allOrders.where((o) => o.isOnlineOrder).length;
+    final onlineSent   = allOrders.where((o) => o.sentToKitchen).length;
+    final onlineKitchenIds = onlineInKitchen.map((o) => '${o.id.substring(0,8)}(${o.kitchenStatus})').join(', ');
+    // Diagnostic : sentToKitchen mais kitchenStatus hors range
     final sentButFiltered = allOrders.where((o) {
       if (!o.sentToKitchen) return false;
       final ks = o.kitchenStatus ?? '';
-      if (_activeKitchenStatuses.contains(ks)) return false; // déjà dans onlineInKitchen
-      return true; // sentToKitchen mais kitchenStatus hors {pending,preparing,ready}
+      return !_activeKitchenStatuses.contains(ks);
     }).toList();
 
     return Scaffold(

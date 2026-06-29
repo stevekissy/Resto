@@ -479,46 +479,53 @@ class FirebaseService {
   List<OrderItem> _parseOrderItems(dynamic raw) {
     if (raw == null) return [];
     try {
-      return (raw as List).map((i) {
-        final m = i as Map<String, dynamic>;
-        // Lecture avec fallbacks : productName → name, unitPrice → price
-        // Les anciens docs et docs online utilisent 'name'/'price'
-        final productName = (m['productName'] as String?)?.isNotEmpty == true
+      return (raw as List).map((item) {
+        final m = Map<String, dynamic>.from(item as Map);
+
+        // productName : 'productName' > 'name'
+        final productName = ((m['productName'] as String?) ?? '').isNotEmpty
             ? m['productName'] as String
-            : (m['name'] as String? ?? '');
+            : ((m['name'] as String?) ?? '');
+
+        // unitPrice : 'unitPrice' > 'price'
         final unitPrice = (m['unitPrice'] as num?)?.toDouble()
             ?? (m['price'] as num?)?.toDouble()
             ?? 0.0;
-        // specialComment peut être dans 'comment' (docs online)
-        final rawComment = m['comment'] as String? ?? '';
+
+        // specialComment : 'specialComment' > 'comment'
+        final rawCmt = (m['comment'] as String?) ?? '';
         final specialComment = (m['specialComment'] as String?)
-            ?? (rawComment.isNotEmpty ? rawComment : null);
-        // ── itemType + isCambuse ──────────────────────────────────────────
-        // Les commandes en ligne stockent itemType='menu'/'cambuse'.
-        // Les commandes POS peuvent stocker isCambuse=true.
-        // On lit les DEUX et on les combine pour éviter les faux-négatifs.
+            ?? (rawCmt.isNotEmpty ? rawCmt : null);
+
+        // itemType + isCambuse : source de vérité = 'itemType' explicite
+        // Les commandes online et POS utilisent itemType='menu'/'cambuse'.
+        // isCambuse est le champ legacy POS — les deux sont combinés.
         final isCamb = m['isCambuse'] as bool? ?? false;
-        final rawItemType = m['itemType'] as String?;
-        // Priorité : itemType explicite > isCambuse > défaut 'menu'
-        final resolvedItemType = rawItemType?.isNotEmpty == true
-            ? rawItemType!
+        final rawType = (m['itemType'] as String?) ?? '';
+        // Priorité : itemType explicite > isCambuse > DÉFAUT 'menu'
+        // (défaut 'menu' : si itemType absent, on considère que c'est un plat cuisine)
+        final resolvedItemType = rawType.isNotEmpty
+            ? rawType
             : (isCamb ? 'cambuse' : 'menu');
         final resolvedIsCambuse = isCamb || resolvedItemType == 'cambuse';
 
+        // category : 'category' > 'categoryName'
+        final cat = (m['category'] as String?) ?? (m['categoryName'] as String?);
+
         return OrderItem(
-          productId: m['productId'] as String? ?? '',
-          productName: productName,
-          quantity: (m['quantity'] as num?)?.toInt() ?? 1,
-          unitPrice: unitPrice,
+          productId:     (m['productId'] as String?) ?? '',
+          productName:   productName,
+          quantity:      (m['quantity'] as num?)?.toInt() ?? 1,
+          unitPrice:     unitPrice,
           specialComment: specialComment,
-          isCambuse: resolvedIsCambuse,
+          isCambuse:     resolvedIsCambuse,
           cambuseItemId: m['cambuseItemId'] as String?,
-          category: m['category'] as String?,
-          itemType: resolvedItemType,
+          category:      cat,
+          itemType:      resolvedItemType,
         );
       }).toList();
     } catch (e) {
-      debugPrint('[parseOrderItems] $e');
+      debugPrint('[parseOrderItems] erreur: $e');
       return [];
     }
   }
