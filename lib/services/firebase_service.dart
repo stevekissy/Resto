@@ -391,7 +391,14 @@ class FirebaseService {
           final data = d.data();
           return Order(
             id: d.id,
-            orderNumber: (data['orderNumber'] as num?)?.toInt() ?? 0,
+            // FIX : orderNumber peut être int (POS) ou string '#0042' (online)
+            orderNumber: (() {
+              final v = data['orderNumber'];
+              if (v is int) return v;
+              if (v is double) return v.toInt();
+              if (v is String) return int.tryParse(v.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+              return 0;
+            })(),
             tableNumber: data['tableNumber'] as String? ?? '',
             serverName: data['serverName'] as String?,
             items: _parseOrderItems(data['items']),

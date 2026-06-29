@@ -70,8 +70,11 @@ class AppProvider extends ChangeNotifier {
   /// IMPORTANT : exclure aussi les commandes online déjà envoyées en cuisine
   /// (elles passent par le filtre isOnlineOrder dans kitchen_screen)
   List<Order> get pendingOrders => _orders.where((o) {
-    if (o.isOnlineOrder) return false; // géré séparément par le filtre online
-    return o.status == OrderStatus.pending && o.hasKitchenItems;
+    // FIX : inclure les commandes online envoyées en cuisine (sentToKitchen==true)
+    // Elles ont status=pending et kitchenStatus='pending' après normalisation POS
+    if (o.status != OrderStatus.pending) return false;
+    if (!o.hasKitchenItems) return false;
+    return true;
   }).toList();
 
   List<Order> get preparingOrders => _orders.where((o) => o.status == OrderStatus.preparing).toList();

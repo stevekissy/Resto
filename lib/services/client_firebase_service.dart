@@ -700,45 +700,155 @@ class ClientFirebaseService {
     debugPrint('[syncKitchenStatusToClientOrder] NO-OP (source unique orders) orderId=$internalOrderId status=$clientStatus');
   }
 
-  /// SOURCE UNIQUE : update direct du doc orders par orderId.
+  /// SOURCE UNIQUE : normalise le doc orders en structure POS puis envoie en cuisine.
+  ///
+  /// CORRECTION BUG RACINE :
+  /// La commande online était créée avec une structure différente (orderNumber en
+  /// string '#0042', status en string, items sans les champs POS, etc.), ce qui
+  /// empêchait streamOrders() / AppProvider de la parser correctement.
+  ///
+  /// Cette méthode lit le doc Firestore, reconstitue tous les champs critiques
+  /// AU FORMAT POS (identique à Order.toMap()), puis fait un set() atomique.
+  /// Les champs online-spécifiques (source, clientId, clientName, etc.) sont conservés.
+  ///
   /// [orderId] = id du doc orders (widget.order.id depuis streamAdminOnlineOrders)
-  /// Plus de triple-stratégie, plus de client_orders.
   Future<void> sendToKitchen(String orderId) async {
     debugPrint('[sendToKitchen] START orderId=$orderId');
 
-    await _db.collection('orders').doc(orderId).update({
-      'sentToKitchen':   true,
-      'kitchenStatus':   'pending',              // UNIFORME : toujours 'pending' (jamais 'waiting')
-      'sentToKitchenAt': FieldValue.serverTimestamp(),
-      'orderStatus':     'sent_to_kitchen',
-      'adminStatus':     'sent_to_kitchen',
-      'status':          2,                      // FIX: ClientOrderStatus.preparing.index — OBLIGATOIRE pour compteur cuisine
-      'readyForCashier': false,
-      'cashierStatus':   'not_ready',
-      'updatedAt':       FieldValue.serverTimestamp(),
-    });
-    debugPrint('[sendToKitchen] ✅ orders/$orderId → sentToKitchen=true kitchenStatus=pending');
+    // ── Lire le doc actuel pour récupérer les champs online ──────────────
+    final snap = await _db.collection('orders').doc(orderId).get();
+    if (!snap.exists) throw Exception('Commande introuvable : $orderId');
+    final raw = snap.data()!;
 
-    // Notification Firestore
+    // ── Normaliser orderNumber en int ─────────────────────────────────────
+    // Les commandes online stockent orderNumber comme '#0042' (string).
+    // streamOrders() attend un int. On parse et on écrase.
+    final rawNum = raw['orderNumber'];
+    int orderNumberInt;
+    if (rawNum is int) {
+      orderNumberInt = rawNum;
+    } else if (rawNum is String) {
+      // '#0042' → 42  |  '42' → 42
+      orderNumberInt = int.tryParse(rawNum.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+    } else {
+      orderNumberInt = 0;
+    }
+
+    // ── Normaliser les items au format POS (OrderItem.toMap()) ────────────
+    // Les items online ont 'name'/'price' comme alias — on conserve les deux
+    // et on s'assure que 'productName', 'unitPrice', 'itemType' sont présents.
+    final rawItems = raw['items'] as List? ?? [];
+    final normalizedItems = rawItems.map((i) {
+      final m = Map<String, dynamic>.from(i as Map);
+      // productName : priorité sur 'productName', fallback 'name'
+      final pName = (m['productName'] as String?)?.isNotEmpty == true
+          ? m['productName'] as String
+          : (m['name'] as String? ?? '');
+      // unitPrice : priorité sur 'unitPrice', fallback 'price'
+      final uPrice = (m['unitPrice'] as num?)?.toDouble()
+          ?? (m['price'] as num?)?.toDouble()
+          ?? 0.0;
+      // itemType : 'menu' par défaut (toujours cuisine sauf si explicitement 'cambuse')
+      final isCamb = m['isCambuse'] as bool? ?? false;
+      final itemType = (m['itemType'] as String?)?.isNotEmpty == true
+          ? m['itemType'] as String
+          : (isCamb ? 'cambuse' : 'menu');
+      // specialComment : priorité 'specialComment', fallback 'comment'
+      final rawComment = m['comment'] as String? ?? '';
+      final specialComment = (m['specialComment'] as String?)
+          ?? (rawComment.isNotEmpty ? rawComment : null);
+      return {
+        'productId':      m['productId'] as String? ?? '',
+        'productName':    pName,
+        'name':           pName,           // alias cuisine
+        'quantity':       (m['quantity'] as num?)?.toInt() ?? 1,
+        'unitPrice':      uPrice,
+        'price':          uPrice,          // alias cuisine
+        'specialComment': specialComment,
+        'isCambuse':      isCamb || itemType == 'cambuse',
+        'itemType':       itemType,        // CRITIQUE : 'menu' | 'cambuse'
+        'cambuseItemId':  m['cambuseItemId'] as String?,
+        'category':       m['category'] as String?,
+      };
+    }).toList();
+
+    // ── Vérifier si la commande a des plats (items cuisine) ──────────────
+    final hasKitchenItems = normalizedItems.any((i) => i['itemType'] == 'menu');
+
+    // ── Reconstruire orderType au format POS ─────────────────────────────
+    final rawOrderType = raw['orderType'] as String? ?? '';
+    String posOrderType;
+    switch (rawOrderType) {
+      case 'takeaway':  posOrderType = 'takeaway';  break;
+      case 'dine_in':   posOrderType = 'dine_in';   break;
+      case 'delivery':  posOrderType = 'delivery';  break;
+      default:          posOrderType = 'delivery';  break;
+    }
+
+    // tableNumber lisible pour cuisine/caisse
+    final tableNumber = raw['tableNumber'] as String?
+        ?? (posOrderType == 'takeaway' ? 'À Emporter' : 'Livraison');
+
+    // totalAmount : lire 'totalAmount' online, fallback recalcul
+    final totalAmount = (raw['totalAmount'] as num?)?.toDouble()
+        ?? normalizedItems.fold<double>(0, (s, i) =>
+            s + ((i['unitPrice'] as num? ?? 0) * (i['quantity'] as num? ?? 1)));
+
+    // ── Écriture atomique — format POS complet ────────────────────────────
+    // On utilise set() avec merge:false pour remplacer les champs clés
+    // tout en préservant les champs non listés (update partiel).
+    // Pour garantir la compatibilité totale avec streamOrders(), on écrit
+    // TOUS les champs que Order.toMap() produit.
+    await _db.collection('orders').doc(orderId).update({
+      // ── Champs POS critiques ──────────────────────────────────────────
+      'orderNumber':    orderNumberInt,      // int, pas string '#0042'
+      'items':          normalizedItems,     // format OrderItem.toMap()
+      'status':         0,                  // OrderStatus.pending.index (cuisine prend le relais)
+      'orderStatus':    'pending',           // string aligné sur le parseur
+      'cashStatus':     0,                  // CashStatus.pending_cashout.index
+      'isPaid':         false,
+      'discount':       (raw['discount'] as num?)?.toDouble() ?? 0.0,
+      'tableNumber':    tableNumber,
+      'orderType':      posOrderType,
+      'serverName':     raw['clientName'] as String? ?? raw['serverName'] as String? ?? '',
+      'isUrgent':       raw['isUrgent'] as bool? ?? false,
+      'totalAmount':    totalAmount,
+      // ── Workflow cuisine — format POS ─────────────────────────────────
+      'sentToKitchen':   true,
+      'kitchenStatus':   'pending',          // sera mis à 'preparing' par la cuisine
+      'adminStatus':     'sent_to_kitchen',
+      'sentToKitchenAt': FieldValue.serverTimestamp(),
+      // ── Source online conservée ───────────────────────────────────────
+      'source':          'online',
+      'orderSource':     'online',
+      'clientId':        raw['clientId'],
+      'clientName':      raw['clientName'],
+      'clientPhone':     raw['clientPhone'],
+      // ── Caisse initialisée ────────────────────────────────────────────
+      'cashoutInvoiceGenerated':   false,
+      'settlementInvoiceGenerated': false,
+      // ── Timestamps ────────────────────────────────────────────────────
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    debugPrint('[sendToKitchen] ✅ orderId=$orderId normalisé POS → orderNumber=$orderNumberInt '
+        'hasKitchenItems=$hasKitchenItems items=${normalizedItems.length}');
+
+    // ── Notification Firestore ─────────────────────────────────────────────
     try {
-      final orderDoc = await _db.collection('orders').doc(orderId).get();
-      if (orderDoc.exists) {
-        final data = orderDoc.data()!;
-        final clientName  = data['clientName']  as String? ?? 'Client';
-        final orderNumber = data['orderNumber'] as String? ?? '';
-        final notifId     = _uuid.v4();
-        await _db.collection('notifications').doc(notifId).set({
-          'id':          notifId,
-          'type':        'order_preparing',
-          'title':       '🍳 Commande envoyée en cuisine',
-          'message':     'Commande $orderNumber de $clientName envoyée en cuisine',
-          'orderId':     orderId,
-          'createdAt':   FieldValue.serverTimestamp(),
-          'isRead':      false,
-          'read':        false,
-          'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
-        });
-      }
+      final clientName  = raw['clientName']  as String? ?? 'Client';
+      final notifId     = _uuid.v4();
+      await _db.collection('notifications').doc(notifId).set({
+        'id':          notifId,
+        'type':        'order_preparing',
+        'title':       '🍳 Commande envoyée en cuisine',
+        'message':     'Commande #${orderNumberInt.toString().padLeft(4,'0')} de $clientName envoyée en cuisine',
+        'orderId':     orderId,
+        'createdAt':   FieldValue.serverTimestamp(),
+        'isRead':      false,
+        'read':        false,
+        'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
+      });
     } catch (e) {
       debugPrint('[sendToKitchen] ❌ Notif: $e');
     }

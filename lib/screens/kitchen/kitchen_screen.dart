@@ -92,34 +92,36 @@ class _KitchenScreenState extends State<KitchenScreen> {
       }
     }
 
-    // ── FIX v3 : filtre aligné sur l'onglet "Cuisine" de Commandes en ligne ──
+    // ── FIX v4 : filtre UNIFIÉ — commandes POS et online traitées pareil ──
     //
-    // RÈGLE UNIQUE pour les commandes online :
-    //   sentToKitchen == true  ET  kitchenStatus in {pending, preparing, ready}
-    //   → Identique au filtre _isInKitchen() de online_orders_admin_screen.dart
-    //   → NE PAS vérifier isOnlineOrder ni hasKitchenItems : ces deux conditions
-    //     peuvent bloquer des commandes dont les items ne sont pas encore parsés.
+    // Après normalisation POS dans sendToKitchen(), les commandes online ont :
+    //   status = OrderStatus.pending (int 0)
+    //   kitchenStatus = 'pending'
+    //   sentToKitchen = true
+    //   items[].itemType = 'menu' | 'cambuse'
     //
-    // RÈGLE pour les commandes POS :
-    //   hasKitchenItems ET status in {pending, preparing}
-    //   (les commandes POS n'ont pas sentToKitchen)
+    // RÈGLE UNIQUE pour TOUTES les commandes actives en cuisine :
+    //   (A) sentToKitchen==true  ET  kitchenStatus in {pending, preparing, ready}
+    //       → commandes online acceptées + POS si jamais sentToKitchen est vrai
+    //   (B) sentToKitchen==false  ET  status in {pending, preparing}  ET  hasKitchenItems
+    //       → commandes POS classiques (sentToKitchen reste false)
+    //
+    // Dans les deux cas : exclure cambuse-only (pas de plats cuisine)
 
     final onlineInKitchen = allOrders.where((o) {
-      // Filtre online : exactement le même que l'onglet Cuisine
+      // (A) Commandes envoyées en cuisine via le workflow admin online
       if (!o.sentToKitchen) return false;
       final ks = o.kitchenStatus ?? '';
       if (!_activeKitchenStatuses.contains(ks)) return false;
-      // Exclure les commandes sans aucun plat cuisine (cambuse-only)
-      // mais seulement si les items sont parsés (liste non vide)
+      // Exclure cambuse-only (items parsés et aucun plat)
       if (o.items.isNotEmpty && !o.hasKitchenItems) return false;
       return true;
     }).toList();
 
-    // ── Commandes POS actives (filtre habituel) ───────────────────────────
-    // Ne pas inclure les commandes déjà dans onlineInKitchen (sentToKitchen==true)
+    // ── Commandes POS actives — sentToKitchen==false ──────────────────────
     final posActive = allOrders.where((o) {
-      if (o.sentToKitchen) return false; // déjà dans onlineInKitchen si actif
-      if (o.isOnlineOrder) return false; // online non envoyée en cuisine → pas ici
+      // (B) Commandes POS classiques — jamais envoyées via admin online
+      if (o.sentToKitchen) return false; // déjà dans onlineInKitchen
       if (o.status == OrderStatus.cancelled) return false;
       if (!o.hasKitchenItems) return false;
       return o.status == OrderStatus.pending || o.status == OrderStatus.preparing;
