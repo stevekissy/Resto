@@ -413,7 +413,14 @@ class FirebaseService {
             servedAt: _toDateTimeNullable(data['servedAt']),
             discount: (data['discount'] as num?)?.toDouble() ?? 0,
             isPaid: data['isPaid'] as bool? ?? false,
-            paymentMethod: data['paymentMethod'] as String?,
+            // FIX CRASH : paymentMethod peut être int (3) dans commandes online
+            // (int as String?) lance une TypeError en Dart → commande ignorée silencieusement
+            paymentMethod: (() {
+              final v = data['paymentMethod'];
+              if (v == null) return null;
+              if (v is String) return v;
+              return null; // int/double → on ignore (pas utilisé pour l'affichage cuisine)
+            })(),
             amountPaid: (data['amountPaid'] as num?)?.toDouble() ?? 0,
             // ── Cycle de vie caisse 2 étapes ──────────────────────────
             // cashStatus peut être stocké en int (POS) ou en String (commandes online)
@@ -441,7 +448,13 @@ class FirebaseService {
             cancelledAt: _toDateTimeNullable(data['cancelledAt']),
             cancelledBy: data['cancelledBy'] as String?,
             cancelReason: data['cancelReason'] as String?,
-            paymentStatus: data['paymentStatus'] as String?,
+            // FIX CRASH : paymentStatus peut être int (0) dans commandes online
+            paymentStatus: (() {
+              final v = data['paymentStatus'];
+              if (v == null) return null;
+              if (v is String) return v;
+              return null; // int → on ignore
+            })(),
             settlementStatus: data['settlementStatus'] as String?,
             // ── Commandes en ligne ────────────────────────────────────
             orderType: _parseOrderType(data['orderType'], data['tableNumber'] as String?),
