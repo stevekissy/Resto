@@ -16,10 +16,10 @@ const RESOURCES = {"canvaskit/chromium/canvaskit.js": "5e27aae346eee469027c80af0
 "canvaskit/skwasm_heavy.js.symbols": "3c01ec03b5de6d62c34e17014d1decd3",
 "canvaskit/skwasm_heavy.wasm": "8034ad26ba2485dab2fd49bdd786837b",
 "flutter.js": "888483df48293866f9f41d3d9274a779",
-"flutter_bootstrap.js": "18a5ba11442dd7440c1092773784238e",
-"index.html": "d5869c0e5a3f81b61bacea643c35664f",
-"/": "d5869c0e5a3f81b61bacea643c35664f",
-"main.dart.js": "e6f866ca0e048cb630afc1f6a9b453c8",
+"flutter_bootstrap.js": "92bc114334ff4ac5c598cb1ed74ada4b",
+"index.html": "6ccb8ef7829f03c51ad340d4a9cde7b8",
+"/": "6ccb8ef7829f03c51ad340d4a9cde7b8",
+"main.dart.js": "49fb81abf51f90cb3ac46df9425f615f",
 "version.json": "aa77f69ad8103e3262d7089fd5e06e4a",
 "assets/assets/images/logo_sankadiokro.png": "def07d15f48b6b0dae3aa777f7757a1b",
 "assets/packages/cupertino_icons/assets/CupertinoIcons.ttf": "33b7d9392238c04c131b6ce224e13711",
@@ -36,7 +36,8 @@ const RESOURCES = {"canvaskit/chromium/canvaskit.js": "5e27aae346eee469027c80af0
 "icons/Icon-maskable-512.png": "301a7604d45b3e739efc881eb04896ea",
 "favicon.png": "5dcef449791fa27946b3d35ad8803796",
 "manifest.json": "25bca7d48ae75206e8de1a33a0f55723",
-"_redirects": "930f19ec5a9811cccaa445fa446ca71c"};
+"_redirects": "930f19ec5a9811cccaa445fa446ca71c",
+"_headers": "1be0aad9c86bc45a26cde2567b78c209"};
 // The application shell files that are downloaded before a service worker can
 // start.
 const CORE = ["main.dart.js",

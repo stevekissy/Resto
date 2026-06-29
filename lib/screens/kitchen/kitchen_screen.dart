@@ -167,7 +167,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '🔎 Stream : ${allOrders.length} total · $onlineTotal online · $onlineSent sentToKitchen · ${onlineInKitchen.length} actives cuisine',
+                  '🔎 Stream : ${allOrders.length} total · $onlineTotal online · $onlineSent sentToKitchen · ${onlineInKitchen.length} actives cuisine  [v28/06-11:30]',
                   style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 10, fontFamily: 'monospace'),
                 ),
                 if (onlineInKitchen.isNotEmpty)

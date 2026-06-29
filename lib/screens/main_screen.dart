@@ -25,8 +25,8 @@ import '../services/notification_service.dart';
 import 'login_screen.dart';
 
 // ── Constante de version — badge discret dans le drawer ──
-const String _kBuildCommit = 'b7e2f91';
-const String _kBuildDate = '27/06 15:00';
+const String _kBuildCommit = 'f3a8c12';
+const String _kBuildDate = '28/06 11:30';
 
 /// Widget affiché quand un utilisateur tente d'accéder à un module interdit.
 class _AccessDeniedScreen extends StatelessWidget {
