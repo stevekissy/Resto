@@ -25,8 +25,8 @@ import '../services/notification_service.dart';
 import 'login_screen.dart';
 
 // ── Constante de version — badge discret dans le drawer ──
-const String _kBuildCommit = '68df346';
-const String _kBuildDate = '28/06 16:00';
+const String _kBuildCommit = 'v2.4.0';
+const String _kBuildDate = '30/06 03:31';
 
 /// Widget affiché quand un utilisateur tente d'accéder à un module interdit.
 class _AccessDeniedScreen extends StatelessWidget {
@@ -120,70 +120,87 @@ class _MainScreenState extends State<MainScreen> {
     final role = provider.currentUser?.role ?? UserRole.server;
 
     // Chaque item définit sa clé permission Firestore
+    // Ordre d'affichage obligatoire (voir specs UX v2.4.0)
     final all = [
+      // 1. Tableau de bord
       _NavItem(
         icon: Icons.dashboard, label: 'Tableau de bord',
         screen: const DashboardScreen(), permissionKey: 'dashboard',
       ),
+      // 2. Commandes
       _NavItem(
         icon: Icons.receipt_long, label: 'Commandes',
         screen: const OrderScreen(), permissionKey: 'orders',
       ),
-      _NavItem(
-        icon: Icons.restaurant, label: 'Cuisine',
-        screen: const KitchenScreen(), permissionKey: 'kitchen',
-      ),
-      _NavItem(
-        icon: Icons.point_of_sale, label: 'Caisse',
-        screen: const CashierScreen(), permissionKey: 'cashier',
-      ),
-      _NavItem(
-        icon: Icons.inventory, label: 'Stock',
-        screen: const StockScreen(), permissionKey: 'stock',
-      ),
-      _NavItem(
-        icon: Icons.people, label: 'Personnel',
-        screen: const StaffScreen(), permissionKey: 'personnel',
-      ),
-      _NavItem(
-        icon: Icons.chat, label: 'Messages',
-        screen: const MessagingScreen(), permissionKey: 'messages',
-      ),
-      _NavItem(
-        icon: Icons.bar_chart, label: 'Statistiques',
-        screen: const StatsScreen(), permissionKey: 'statistics',
-      ),
-      _NavItem(
-        icon: Icons.local_shipping, label: 'Fournisseurs',
-        screen: const SupplierScreen(), permissionKey: 'suppliers',
-      ),
-      _NavItem(
-        icon: Icons.restaurant_menu, label: 'Produits',
-        screen: const ProductsAdminScreen(), permissionKey: 'productManagement',
-      ),
-      _NavItem(
-        icon: Icons.event_note, label: 'Réservations',
-        screen: const ReservationScreen(), permissionKey: 'reservations',
-      ),
-      _NavItem(
-        icon: Icons.calculate, label: 'Comptabilité',
-        screen: const AccountingScreen(), permissionKey: 'accounting',
-      ),
-      _NavItem(
-        icon: Icons.notifications, label: 'Notifications',
-        screen: const NotificationScreen(), permissionKey: 'notifications',
-      ),
-      _NavItem(
-        icon: Icons.admin_panel_settings, label: 'Gestion Admins',
-        screen: const AdminManagementScreen(), permissionKey: 'adminManagement',
-      ),
+      // 3. Commandes en ligne
       _NavItem(
         icon: Icons.storefront_outlined, label: 'Commandes en ligne',
         screen: const OnlineOrdersAdminScreen(), permissionKey: 'onlineOrders',
       ),
+      // 4. Cuisine
+      _NavItem(
+        icon: Icons.restaurant, label: 'Cuisine',
+        screen: const KitchenScreen(), permissionKey: 'kitchen',
+      ),
+      // 5. Caisse
+      _NavItem(
+        icon: Icons.point_of_sale, label: 'Caisse',
+        screen: const CashierScreen(), permissionKey: 'cashier',
+      ),
+      // 6. Stock
+      _NavItem(
+        icon: Icons.inventory, label: 'Stock',
+        screen: const StockScreen(), permissionKey: 'stock',
+      ),
+      // 7. Cambuse
       _NavItem(
         icon: Icons.liquor, label: 'Cambuse',
         screen: const CambuseScreen(), permissionKey: 'cambuse',
+      ),
+      // 8. Produits
+      _NavItem(
+        icon: Icons.restaurant_menu, label: 'Produits',
+        screen: const ProductsAdminScreen(), permissionKey: 'productManagement',
+      ),
+      // 9. Réservation
+      _NavItem(
+        icon: Icons.event_note, label: 'Réservation',
+        screen: const ReservationScreen(), permissionKey: 'reservations',
+      ),
+      // 10. Messages
+      _NavItem(
+        icon: Icons.chat, label: 'Messages',
+        screen: const MessagingScreen(), permissionKey: 'messages',
+      ),
+      // 11. Notifications
+      _NavItem(
+        icon: Icons.notifications, label: 'Notifications',
+        screen: const NotificationScreen(), permissionKey: 'notifications',
+      ),
+      // 12. Personnel
+      _NavItem(
+        icon: Icons.people, label: 'Personnel',
+        screen: const StaffScreen(), permissionKey: 'personnel',
+      ),
+      // 13. Fournisseurs
+      _NavItem(
+        icon: Icons.local_shipping, label: 'Fournisseurs',
+        screen: const SupplierScreen(), permissionKey: 'suppliers',
+      ),
+      // 14. Comptabilité
+      _NavItem(
+        icon: Icons.calculate, label: 'Comptabilité',
+        screen: const AccountingScreen(), permissionKey: 'accounting',
+      ),
+      // 15. Statistiques
+      _NavItem(
+        icon: Icons.bar_chart, label: 'Statistiques',
+        screen: const StatsScreen(), permissionKey: 'statistics',
+      ),
+      // 16. Gestion administrateur
+      _NavItem(
+        icon: Icons.admin_panel_settings, label: 'Gestion administrateur',
+        screen: const AdminManagementScreen(), permissionKey: 'adminManagement',
       ),
     ];
 
