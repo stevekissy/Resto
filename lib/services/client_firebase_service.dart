@@ -1,5 +1,7 @@
+import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
 import '../models/client_models.dart';
 import '../models/models.dart';
@@ -956,6 +958,47 @@ class ClientFirebaseService {
 
   // ── Promotions ─────────────────────────────────────────────────────────
 
+  /// Upload une image de promotion vers Firebase Storage.
+  /// Retourne l'URL de téléchargement publique.
+  /// [bytes] — bytes de l'image
+  /// [promoId] — identifiant de la promotion (UUID généré avant l'appel)
+  /// [mimeType] — 'image/jpeg' | 'image/png' | 'image/webp'
+  Future<String> uploadPromotionImage({
+    required Uint8List bytes,
+    required String promoId,
+    String mimeType = 'image/jpeg',
+  }) async {
+    final ext = mimeType.split('/').last; // 'jpeg', 'png', 'webp'
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('promotions/$promoId/image.$ext');
+    final task = await ref.putData(
+      bytes,
+      SettableMetadata(contentType: mimeType),
+    );
+    return await task.ref.getDownloadURL();
+  }
+
+  /// Supprime l'image d'une promotion dans Firebase Storage (si elle existe).
+  Future<void> deletePromotionImage(String promoId) async {
+    try {
+      // Essaie les trois extensions courantes
+      for (final ext in ['jpeg', 'png', 'webp']) {
+        try {
+          await FirebaseStorage.instance
+              .ref()
+              .child('promotions/$promoId/image.$ext')
+              .delete();
+          break; // Supprimé avec succès → on arrête
+        } catch (_) {
+          // Ce format n'existe pas, on essaie le suivant
+        }
+      }
+    } catch (_) {
+      // Ignorer si aucun fichier à supprimer
+    }
+  }
+
   Stream<List<Promotion>> streamActivePromotions() {
     return _db
         .collection('promotions')
@@ -976,18 +1019,41 @@ class ClientFirebaseService {
   }
 
   Future<String> addPromotion(Promotion promo) async {
-    final id = _uuid.v4();
+    // Utiliser l'id déjà généré (pré-alloué pour l'upload image)
+    // ou en générer un nouveau si vide
+    final id = promo.id.isNotEmpty ? promo.id : _uuid.v4();
     final data = promo.toMap();
     data['id'] = id;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    data['createdAt'] = nowMs;
+    data['updatedAt'] = nowMs;
+    // Alias champs demandés
+    data['active'] = promo.isActive;
+    data['minimumAmount'] = promo.minOrder;
+    data['startDate'] = promo.validFrom?.millisecondsSinceEpoch;
+    data['endDate'] = promo.validUntil?.millisecondsSinceEpoch;
+    data['promoCode'] = promo.code;
     await _db.collection('promotions').doc(id).set(data);
     return id;
   }
 
   Future<void> updatePromotion(Promotion promo) async {
-    await _db.collection('promotions').doc(promo.id).update(promo.toMap());
+    final data = promo.toMap();
+    data['updatedAt'] = DateTime.now().millisecondsSinceEpoch;
+    // Alias champs
+    data['active'] = promo.isActive;
+    data['minimumAmount'] = promo.minOrder;
+    data['startDate'] = promo.validFrom?.millisecondsSinceEpoch;
+    data['endDate'] = promo.validUntil?.millisecondsSinceEpoch;
+    data['promoCode'] = promo.code;
+    // Ne pas écraser createdAt lors d'une mise à jour
+    data.remove('createdAt');
+    await _db.collection('promotions').doc(promo.id).update(data);
   }
 
   Future<void> deletePromotion(String promoId) async {
+    // Supprimer aussi l'image Storage si elle existe
+    await deletePromotionImage(promoId);
     await _db.collection('promotions').doc(promoId).delete();
   }
 

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -2297,6 +2298,20 @@ class _PromoAdminCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Image promotion (si définie) ─────────────────────────────
+          if (promo.imageUrl != null && promo.imageUrl!.isNotEmpty) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.network(
+                promo.imageUrl!,
+                height: 120,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           Row(
             children: [
               Container(
@@ -2470,21 +2485,28 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
   DateTime? _validUntil;
   bool _isLoading = false;
 
+  // ── Gestion image ──────────────────────────────────────────────────────
+  String? _currentImageUrl;   // URL Storage existante (édition)
+  Uint8List? _previewBytes;   // bytes sélectionnés localement
+  String _pickedMime = 'image/jpeg';
+  bool _imageChanged = false;
+
   bool get _isEdit => widget.existing != null;
 
   @override
   void initState() {
     super.initState();
     final p = widget.existing;
-    _titleCtrl   = TextEditingController(text: p?.title ?? '');
-    _descCtrl    = TextEditingController(text: p?.description ?? '');
-    _valueCtrl   = TextEditingController(text: p?.value.toStringAsFixed(0) ?? '10');
-    _codeCtrl    = TextEditingController(text: p?.code ?? '');
+    _titleCtrl    = TextEditingController(text: p?.title ?? '');
+    _descCtrl     = TextEditingController(text: p?.description ?? '');
+    _valueCtrl    = TextEditingController(text: p?.value.toStringAsFixed(0) ?? '10');
+    _codeCtrl     = TextEditingController(text: p?.code ?? '');
     _minOrderCtrl = TextEditingController(text: p?.minOrder?.toStringAsFixed(0) ?? '');
-    _type        = p?.type ?? PromotionType.percentage;
-    _isActive    = p?.isActive ?? true;
-    _validFrom   = p?.validFrom;
-    _validUntil  = p?.validUntil;
+    _type         = p?.type ?? PromotionType.percentage;
+    _isActive     = p?.isActive ?? true;
+    _validFrom    = p?.validFrom;
+    _validUntil   = p?.validUntil;
+    _currentImageUrl = p?.imageUrl;
   }
 
   @override
@@ -2496,6 +2518,167 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
     _minOrderCtrl.dispose();
     super.dispose();
   }
+
+  // ── Picker image ───────────────────────────────────────────────────────
+  Future<void> _pickImage() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        maxHeight: 600,
+        imageQuality: 80,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      // Détecter le type MIME depuis les magic bytes
+      String mime = 'image/jpeg';
+      if (bytes.length >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50) {
+        mime = 'image/png';
+      } else if (bytes.length >= 4 && bytes[0] == 0x52 && bytes[1] == 0x49) {
+        mime = 'image/webp';
+      }
+      setState(() {
+        _previewBytes = bytes;
+        _pickedMime = mime;
+        _imageChanged = true;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur sélection image : $e'),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  void _removeImage() {
+    setState(() {
+      _previewBytes    = null;
+      _currentImageUrl = null;
+      _imageChanged    = true;
+    });
+  }
+
+  // ── Aperçu image ──────────────────────────────────────────────────────
+  Widget _buildImageSection() {
+    final hasPreview = _previewBytes != null;
+    final hasExisting = _currentImageUrl != null && _currentImageUrl!.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Image promotion (optionnel)',
+          style: TextStyle(
+            color: AppTheme.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (hasPreview) ..._imagePreviewStack(
+          child: Image.memory(
+            _previewBytes!,
+            height: 150,
+            width: double.infinity,
+            fit: BoxFit.cover,
+          ),
+        ) else if (hasExisting) ..._imagePreviewStack(
+          child: Image.network(
+            _currentImageUrl!,
+            height: 150,
+            width: double.infinity,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _imagePlaceholder(),
+          ),
+        ) else
+          _imagePlaceholder(),
+      ],
+    );
+  }
+
+  List<Widget> _imagePreviewStack({required Widget child}) => [
+    Stack(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: child,
+        ),
+        Positioned(
+          top: 6, right: 6,
+          child: Row(
+            children: [
+              _imageBtn(
+                icon: Icons.edit_outlined,
+                tooltip: 'Changer l\'image',
+                onTap: _pickImage,
+              ),
+              const SizedBox(width: 6),
+              _imageBtn(
+                icon: Icons.close,
+                tooltip: 'Supprimer l\'image',
+                onTap: _removeImage,
+                color: AppTheme.error,
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  ];
+
+  Widget _imagePlaceholder() => GestureDetector(
+    onTap: _pickImage,
+    child: Container(
+      height: 100,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceLight,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: const Color(0xFF2A2A5A),
+          style: BorderStyle.solid,
+        ),
+      ),
+      child: const Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.add_photo_alternate_outlined,
+              color: AppTheme.textSecondary, size: 32),
+          SizedBox(height: 6),
+          Text(
+            'Appuyer pour ajouter une image',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _imageBtn({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+    Color color = Colors.white,
+  }) =>
+    GestureDetector(
+      onTap: onTap,
+      child: Tooltip(
+        message: tooltip,
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Icon(icon, color: color, size: 16),
+        ),
+      ),
+    );
 
   @override
   Widget build(BuildContext context) {
@@ -2531,6 +2714,10 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
               ),
             ),
             const SizedBox(height: 10),
+
+            // Image (optionnel)
+            _buildImageSection(),
+            const SizedBox(height: 12),
 
             // Description
             TextField(
@@ -2677,8 +2864,10 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
     final title = _titleCtrl.text.trim();
     if (title.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Le titre est obligatoire'),
-            backgroundColor: AppTheme.error),
+        const SnackBar(
+          content: Text('Le titre est obligatoire'),
+          backgroundColor: AppTheme.error,
+        ),
       );
       return;
     }
@@ -2689,51 +2878,110 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
       final minOrder = _minOrderCtrl.text.trim().isNotEmpty
           ? double.tryParse(_minOrderCtrl.text)
           : null;
+      final code = _codeCtrl.text.trim().isNotEmpty
+          ? _codeCtrl.text.trim() : null;
 
       if (_isEdit) {
+        // ── Mode édition ─────────────────────────────────────────────
         final p = widget.existing!;
+
+        // Résoudre l'imageUrl finale
+        String? finalImageUrl = _currentImageUrl;
+        if (_imageChanged && _previewBytes != null) {
+          // Upload nouvelle image vers Firebase Storage
+          finalImageUrl = await svc.uploadPromotionImage(
+            bytes: _previewBytes!,
+            promoId: p.id,
+            mimeType: _pickedMime,
+          );
+        } else if (_imageChanged && _previewBytes == null) {
+          // Image supprimée par l'utilisateur
+          await svc.deletePromotionImage(p.id);
+          finalImageUrl = null;
+        }
+
         p.title       = title;
         p.description = _descCtrl.text.trim();
+        p.imageUrl    = finalImageUrl;
         p.type        = _type;
         p.value       = value;
         p.minOrder    = minOrder;
         p.validFrom   = _validFrom;
         p.validUntil  = _validUntil;
         p.isActive    = _isActive;
-        p.code        = _codeCtrl.text.trim().isNotEmpty ? _codeCtrl.text.trim() : null;
+        p.code        = code;
         await svc.updatePromotion(p);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ Promotion mise à jour'),
-                backgroundColor: AppTheme.success),
+            const SnackBar(
+              content: Text('✅ Promotion mise à jour'),
+              backgroundColor: AppTheme.success,
+            ),
           );
         }
       } else {
+        // ── Mode création ─────────────────────────────────────────────
+        // Générer l'ID en avance pour pouvoir uploader l'image avant Firestore
+        final promoId = const Uuid().v4();
+
+        // Upload image si sélectionnée
+        String? finalImageUrl;
+        if (_previewBytes != null) {
+          finalImageUrl = await svc.uploadPromotionImage(
+            bytes: _previewBytes!,
+            promoId: promoId,
+            mimeType: _pickedMime,
+          );
+        }
+
         final promo = Promotion(
-          id: '',
+          id: promoId,
           title: title,
           description: _descCtrl.text.trim(),
+          imageUrl: finalImageUrl,
           type: _type,
           value: value,
           minOrder: minOrder,
           validFrom: _validFrom,
           validUntil: _validUntil,
           isActive: _isActive,
-          code: _codeCtrl.text.trim().isNotEmpty ? _codeCtrl.text.trim() : null,
+          code: code,
         );
         await svc.addPromotion(promo);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ Promotion créée avec succès'),
-                backgroundColor: AppTheme.success),
+            const SnackBar(
+              content: Text('✅ Promotion créée avec succès'),
+              backgroundColor: AppTheme.success,
+            ),
           );
         }
       }
       if (mounted) Navigator.pop(context);
-    } catch (e) {
+    } on Exception catch (e) {
       if (mounted) {
+        final msg = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur : $e'), backgroundColor: AppTheme.error),
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: AppTheme.error,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+    } catch (e, stack) {
+      if (mounted) {
+        String detail = e.toString();
+        final match = RegExp(r'\[([^\]]+)\]').firstMatch(detail);
+        if (match != null) detail = 'Firebase ${match.group(0)} : $detail';
+        if (detail.length > 300) detail = '${detail.substring(0, 300)}…';
+        debugPrint('[PromoSave] $e\n$stack');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur : $detail'),
+            backgroundColor: AppTheme.error,
+            duration: const Duration(seconds: 8),
+          ),
         );
       }
     } finally {

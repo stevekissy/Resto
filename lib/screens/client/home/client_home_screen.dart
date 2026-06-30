@@ -182,7 +182,10 @@ class ClientHomeScreen extends StatelessWidget {
                     const _SectionTitle(title: 'Offres du moment', icon: Icons.local_offer),
                     const SizedBox(height: 10),
                     SizedBox(
-                      height: 140,
+                      // Hauteur adaptée : 210 si au moins une promo a une image, 140 sinon
+                      height: provider.promotions.any(
+                        (p) => p.imageUrl != null && p.imageUrl!.isNotEmpty,
+                      ) ? 210 : 140,
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
                         itemCount: provider.promotions.length,
@@ -430,9 +433,9 @@ class _PromoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasImage = promo.imageUrl != null && promo.imageUrl!.isNotEmpty;
     return Container(
       width: 200,
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [AppTheme.primary.withValues(alpha: 0.3), AppTheme.cardBg],
@@ -441,21 +444,52 @@ class _PromoCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: AppTheme.primary,
-              borderRadius: BorderRadius.circular(20),
+          // Image promotion (si définie)
+          if (hasImage)
+            Image.network(
+              promo.imageUrl!,
+              height: 90,
+              width: double.infinity,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
             ),
-            child: Text(promo.valueLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    promo.valueLabel,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  promo.title,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  promo.description,
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 10),
-          Text(promo.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13), maxLines: 2),
-          const Spacer(),
-          Text(promo.description, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
         ],
       ),
     );
