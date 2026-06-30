@@ -1,8 +1,11 @@
+import 'dart:typed_data';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../providers/client_provider.dart';
 import '../../providers/app_provider.dart';
 import '../../models/client_models.dart';
@@ -2959,13 +2962,18 @@ class _BannerFormSheet extends StatefulWidget {
 class _BannerFormSheetState extends State<_BannerFormSheet> {
   late final TextEditingController _titleCtrl;
   late final TextEditingController _messageCtrl;
-  late final TextEditingController _imageUrlCtrl;
   late final TextEditingController _btnLabelCtrl;
   late final TextEditingController _btnActionCtrl;
+  late final TextEditingController _orderCtrl;
   late bool _isActive;
   DateTime? _validFrom;
   DateTime? _validUntil;
   bool _isLoading = false;
+
+  // ── Gestion image ──────────────────────────────────────────────────────
+  String? _currentImageUrl;    // URL ou base64 existant
+  Uint8List? _previewBytes;    // bytes sélectionnés (pas encore sauvegardés)
+  bool _imageChanged = false;
 
   bool get _isEdit => widget.existing != null;
 
@@ -2973,26 +2981,171 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
   void initState() {
     super.initState();
     final b = widget.existing;
-    _titleCtrl    = TextEditingController(text: b?.title ?? '');
-    _messageCtrl  = TextEditingController(text: b?.message ?? '');
-    _imageUrlCtrl = TextEditingController(text: b?.imageUrl ?? '');
-    _btnLabelCtrl = TextEditingController(text: b?.buttonLabel ?? '');
+    _titleCtrl     = TextEditingController(text: b?.title ?? '');
+    _messageCtrl   = TextEditingController(text: b?.message ?? '');
+    _btnLabelCtrl  = TextEditingController(text: b?.buttonLabel ?? '');
     _btnActionCtrl = TextEditingController(text: b?.buttonAction ?? '');
-    _isActive  = b?.isActive ?? true;
-    _validFrom = b?.validFrom;
-    _validUntil = b?.validUntil;
+    _orderCtrl     = TextEditingController(text: (b?.displayOrder ?? 0).toString());
+    _isActive      = b?.isActive ?? true;
+    _validFrom     = b?.validFrom;
+    _validUntil    = b?.validUntil;
+    _currentImageUrl = b?.imageUrl;
   }
 
   @override
   void dispose() {
     _titleCtrl.dispose();
     _messageCtrl.dispose();
-    _imageUrlCtrl.dispose();
     _btnLabelCtrl.dispose();
     _btnActionCtrl.dispose();
+    _orderCtrl.dispose();
     super.dispose();
   }
 
+  // ── Picker image ───────────────────────────────────────────────────────
+  Future<void> _pickImage() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        maxHeight: 600,
+        imageQuality: 82,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      setState(() {
+        _previewBytes = bytes;
+        _imageChanged = true;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur sélection image : $e'),
+              backgroundColor: AppTheme.error),
+        );
+      }
+    }
+  }
+
+  void _removeImage() {
+    setState(() {
+      _previewBytes    = null;
+      _currentImageUrl = null;
+      _imageChanged    = true;
+    });
+  }
+
+  // ── Aperçu image ──────────────────────────────────────────────────────
+  Widget _imagePreview() {
+    // Bytes fraîchement sélectionnés
+    if (_previewBytes != null) {
+      return Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.memory(_previewBytes!,
+                height: 160, width: double.infinity, fit: BoxFit.cover),
+          ),
+          _imageOverlayButtons(),
+        ],
+      );
+    }
+    // Image existante (URL ou base64)
+    if (_currentImageUrl != null && _currentImageUrl!.isNotEmpty) {
+      return Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: _currentImageUrl!.startsWith('data:')
+                ? Image.memory(
+                    base64Decode(_currentImageUrl!.split(',').last),
+                    height: 160, width: double.infinity, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _noImagePlaceholder(),
+                  )
+                : Image.network(
+                    _currentImageUrl!,
+                    height: 160, width: double.infinity, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _noImagePlaceholder(),
+                  ),
+          ),
+          _imageOverlayButtons(),
+        ],
+      );
+    }
+    // Aucune image — zone de dépôt
+    return _noImagePlaceholder();
+  }
+
+  Widget _imageOverlayButtons() {
+    return Positioned(
+      top: 8, right: 8,
+      child: Row(children: [
+        GestureDetector(
+          onTap: _pickImage,
+          child: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.edit, color: Colors.white, size: 16),
+          ),
+        ),
+        const SizedBox(width: 6),
+        GestureDetector(
+          onTap: _removeImage,
+          child: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: AppTheme.error.withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.close, color: Colors.white, size: 16),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _noImagePlaceholder() {
+    return GestureDetector(
+      onTap: _pickImage,
+      child: Container(
+        height: 160,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: const Color(0xFF7B1FA2).withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: const Color(0xFF7B1FA2).withValues(alpha: 0.4),
+            style: BorderStyle.solid,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.add_photo_alternate_outlined,
+                color: const Color(0xFFAB47BC).withValues(alpha: 0.7), size: 40),
+            const SizedBox(height: 8),
+            Text('Choisir une image',
+                style: TextStyle(
+                  color: const Color(0xFFAB47BC).withValues(alpha: 0.8),
+                  fontSize: 13, fontWeight: FontWeight.w600,
+                )),
+            const SizedBox(height: 4),
+            Text('Recommandé : 1200×600 px',
+                style: TextStyle(
+                  color: AppTheme.textSecondary.withValues(alpha: 0.7),
+                  fontSize: 11,
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -3002,6 +3155,7 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Handle
             Center(
               child: Container(
                 width: 40, height: 4,
@@ -3015,82 +3169,107 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
             Text(_isEdit ? 'Modifier la bannière' : 'Nouvelle bannière',
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
             const SizedBox(height: 4),
-            const Text('Visible sur l\'accueil de l\'espace client',
+            const Text('Slider automatique sur l\'accueil client (4 s)',
                 style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
             const SizedBox(height: 16),
 
+            // ── Image obligatoire ─────────────────────────────────────────
+            const Text('Image de la bannière',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            _imagePreview(),
+            const SizedBox(height: 14),
+
+            // ── Titre ─────────────────────────────────────────────────────
             TextField(
               controller: _titleCtrl,
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(
-                labelText: 'Titre de la bannière *',
-                prefixIcon: Icon(Icons.campaign_outlined, size: 18),
+                labelText: 'Titre (optionnel)',
+                prefixIcon: Icon(Icons.title, size: 18),
               ),
             ),
             const SizedBox(height: 10),
 
+            // ── Description ───────────────────────────────────────────────
             TextField(
               controller: _messageCtrl,
               style: const TextStyle(color: Colors.white),
-              maxLines: 3,
+              maxLines: 2,
               decoration: const InputDecoration(
-                labelText: 'Message / contenu *',
-                prefixIcon: Icon(Icons.message_outlined, size: 18),
+                labelText: 'Description (optionnel)',
+                prefixIcon: Icon(Icons.description_outlined, size: 18),
                 alignLabelWithHint: true,
               ),
             ),
             const SizedBox(height: 10),
 
-            TextField(
-              controller: _imageUrlCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'URL image (optionnel)',
-                prefixIcon: Icon(Icons.image_outlined, size: 18),
+            // ── Bouton ────────────────────────────────────────────────────
+            Row(children: [
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: _btnLabelCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Texte bouton',
+                    prefixIcon: Icon(Icons.touch_app_outlined, size: 18),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-
-            TextField(
-              controller: _btnLabelCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'Texte du bouton (optionnel)',
-                prefixIcon: Icon(Icons.touch_app_outlined, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 3,
+                child: TextField(
+                  controller: _btnActionCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Action (menu / orders)',
+                    prefixIcon: Icon(Icons.link_outlined, size: 18),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-
-            TextField(
-              controller: _btnActionCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'Action bouton : menu / orders / url:...',
-                prefixIcon: Icon(Icons.link_outlined, size: 18),
-              ),
-            ),
+            ]),
             const SizedBox(height: 12),
 
-            // Dates
+            // ── Dates + Ordre ─────────────────────────────────────────────
             Row(children: [
               Expanded(child: _DateField(
                 label: 'Date début',
                 value: _validFrom,
                 onPicked: (d) => setState(() => _validFrom = d),
               )),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(child: _DateField(
                 label: 'Date fin',
                 value: _validUntil,
                 onPicked: (d) => setState(() => _validUntil = d),
               )),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 60,
+                child: TextField(
+                  controller: _orderCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  decoration: const InputDecoration(
+                    labelText: 'Ordre',
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                  ),
+                ),
+              ),
             ]),
             const SizedBox(height: 12),
 
+            // ── Statut ────────────────────────────────────────────────────
             Row(
               children: [
-                const Text('Bannière active',
-                    style: TextStyle(color: Colors.white, fontSize: 14)),
+                const Icon(Icons.visibility_outlined, color: AppTheme.textSecondary, size: 16),
+                const SizedBox(width: 8),
+                const Text('Afficher dans le carrousel',
+                    style: TextStyle(color: Colors.white, fontSize: 13)),
                 const Spacer(),
                 Switch(
                   value: _isActive,
@@ -3120,30 +3299,35 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
     );
   }
 
+  // ── Sauvegarde ────────────────────────────────────────────────────────
   Future<void> _save() async {
-    final title   = _titleCtrl.text.trim();
-    final message = _messageCtrl.text.trim();
-    if (title.isEmpty || message.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Titre et message obligatoires'),
-            backgroundColor: AppTheme.error),
-      );
-      return;
-    }
     setState(() => _isLoading = true);
     try {
       final svc = context.read<ClientProvider>().svc;
 
+      // Résoudre imageUrl finale
+      String? finalImageUrl = _currentImageUrl;
+      if (_imageChanged) {
+        if (_previewBytes != null) {
+          finalImageUrl = _bytesToDataUri(_previewBytes!);
+        } else {
+          finalImageUrl = null;
+        }
+      }
+
+      final displayOrder = int.tryParse(_orderCtrl.text) ?? 0;
+
       if (_isEdit) {
         final b = widget.existing!;
-        b.title        = title;
-        b.message      = message;
-        b.imageUrl     = _imageUrlCtrl.text.trim().isNotEmpty ? _imageUrlCtrl.text.trim() : null;
+        b.title        = _titleCtrl.text.trim();
+        b.message      = _messageCtrl.text.trim();
+        b.imageUrl     = finalImageUrl;
         b.buttonLabel  = _btnLabelCtrl.text.trim().isNotEmpty ? _btnLabelCtrl.text.trim() : null;
         b.buttonAction = _btnActionCtrl.text.trim().isNotEmpty ? _btnActionCtrl.text.trim() : null;
         b.validFrom    = _validFrom;
         b.validUntil   = _validUntil;
         b.isActive     = _isActive;
+        b.displayOrder = displayOrder;
         await svc.updateBanner(b);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -3154,14 +3338,15 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
       } else {
         final banner = AppBanner(
           id: '',
-          title: title,
-          message: message,
-          imageUrl: _imageUrlCtrl.text.trim().isNotEmpty ? _imageUrlCtrl.text.trim() : null,
+          title: _titleCtrl.text.trim(),
+          message: _messageCtrl.text.trim(),
+          imageUrl: finalImageUrl,
           buttonLabel: _btnLabelCtrl.text.trim().isNotEmpty ? _btnLabelCtrl.text.trim() : null,
           buttonAction: _btnActionCtrl.text.trim().isNotEmpty ? _btnActionCtrl.text.trim() : null,
           validFrom: _validFrom,
           validUntil: _validUntil,
           isActive: _isActive,
+          displayOrder: displayOrder,
         );
         await svc.addBanner(banner);
         if (mounted) {
@@ -3181,6 +3366,19 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // ── Helpers base64 (sans dépendance externe) ─────────────────────────
+  static String _bytesToDataUri(Uint8List bytes) {
+    String mime = 'image/jpeg';
+    if (bytes.length >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50) {
+      mime = 'image/png';
+    } else if (bytes.length >= 4 && bytes[0] == 0x47 && bytes[1] == 0x49) {
+      mime = 'image/gif';
+    } else if (bytes.length >= 4 && bytes[0] == 0x52 && bytes[1] == 0x49) {
+      mime = 'image/webp';
+    }
+    return 'data:$mime;base64,${base64Encode(bytes)}';
   }
 }
 

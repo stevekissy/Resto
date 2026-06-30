@@ -1,7 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import '../../../providers/client_provider.dart';
 import '../../../sandbox/client_provider_proxy.dart';
 import '../../../models/client_models.dart';
 import '../../../utils/app_theme.dart';
@@ -139,10 +140,10 @@ class ClientHomeScreen extends StatelessWidget {
                     ],
                   ),
 
-                  // ── Bannières actives ─────────────────────────────────────
+                  // ── Bannières actives (carrousel) ─────────────────────────
                   if (provider.visibleBanners.isNotEmpty) ...[
                     const SizedBox(height: 18),
-                    ...provider.visibleBanners.map((b) => _BannerCard(banner: b)),
+                    _BannerCarousel(banners: provider.visibleBanners),
                   ],
 
                   // ── Commandes actives ─────────────────────────────────────
@@ -367,7 +368,7 @@ class _OrderProgressBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final step = status.step;
     if (step < 0) return const SizedBox.shrink();
-    final maxStep = 5;
+    const maxStep = 5;
     final progress = step / maxStep;
     return SizedBox(
       width: 60,
@@ -567,8 +568,324 @@ class _LoyaltyCard extends StatelessWidget {
   }
 }
 
-// ── Bannière client ───────────────────────────────────────────────────────
+// ── Carrousel de bannières ───────────────────────────────────────────────
 
+/// Affiche les bannières en slider auto-défilant (4 s) avec swipe manuel
+/// et indicateurs dots. Si la liste est vide, rien n'est rendu.
+class _BannerCarousel extends StatefulWidget {
+  final List<AppBanner> banners;
+  const _BannerCarousel({required this.banners});
+
+  @override
+  State<_BannerCarousel> createState() => _BannerCarouselState();
+}
+
+class _BannerCarouselState extends State<_BannerCarousel> {
+  late PageController _pageCtrl;
+  Timer? _timer;
+  int _current = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageCtrl = PageController();
+    _startTimer();
+  }
+
+  @override
+  void didUpdateWidget(_BannerCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Si la liste change (ajout/suppression), s'assurer que _current est valide.
+    if (_current >= widget.banners.length && widget.banners.isNotEmpty) {
+      _current = widget.banners.length - 1;
+    }
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    if (widget.banners.length <= 1) return; // Pas besoin de timer pour 0 ou 1 bannière
+    _timer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!mounted || widget.banners.isEmpty) return;
+      final next = (_current + 1) % widget.banners.length;
+      _pageCtrl.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeInOut,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.banners.isEmpty) return const SizedBox.shrink();
+
+    // Hauteur adaptative : image seule → 180, avec texte → 220
+    final hasImage = widget.banners.any(
+      (b) => b.imageUrl != null && b.imageUrl!.isNotEmpty,
+    );
+    final carouselHeight = hasImage ? 210.0 : 130.0;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: carouselHeight,
+          child: PageView.builder(
+            controller: _pageCtrl,
+            itemCount: widget.banners.length,
+            onPageChanged: (i) => setState(() => _current = i),
+            itemBuilder: (context, i) =>
+                _BannerSlide(banner: widget.banners[i]),
+          ),
+        ),
+        // Dots indicateurs (cachés si une seule bannière)
+        if (widget.banners.length > 1) ...[
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(widget.banners.length, (i) {
+              final active = i == _current;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: active ? 20 : 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: active
+                      ? AppTheme.primary
+                      : Colors.white.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              );
+            }),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Une seule diapositive du carrousel
+class _BannerSlide extends StatelessWidget {
+  final AppBanner banner;
+  const _BannerSlide({required this.banner});
+
+  /// Décode une data URI base64 en Uint8List, ou null si ce n'est pas une data URI.
+  static Uint8List? _decodeDataUri(String uri) {
+    if (!uri.startsWith('data:')) return null;
+    try {
+      final commaIdx = uri.indexOf(',');
+      if (commaIdx < 0) return null;
+      return base64Decode(uri.substring(commaIdx + 1));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _buildImage(String imageUrl) {
+    final bytes = _decodeDataUri(imageUrl);
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        errorBuilder: (_, __, ___) => _imageFallback(),
+      );
+    }
+    return Image.network(
+      imageUrl,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      errorBuilder: (_, __, ___) => _imageFallback(),
+    );
+  }
+
+  Widget _imageFallback() => Container(
+        color: const Color(0xFF1A237E),
+        child: const Center(
+          child: Icon(Icons.campaign_outlined, color: Colors.white24, size: 48),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final hasImage = banner.imageUrl != null && banner.imageUrl!.isNotEmpty;
+    final hasText  = banner.title.isNotEmpty || banner.message.isNotEmpty;
+    final hasBtn   = banner.buttonLabel != null && banner.buttonLabel!.isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1A237E), Color(0xFF283593)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFF3949AB).withValues(alpha: 0.6)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF1A237E).withValues(alpha: 0.35),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // ── Image de fond
+              if (hasImage) _buildImage(banner.imageUrl!),
+
+              // ── Dégradé sombre en bas pour lisibilité du texte
+              if (hasImage && hasText)
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.55),
+                        ],
+                        stops: const [0.45, 1.0],
+                      ),
+                    ),
+                  ),
+                ),
+
+              // ── Contenu texte / bouton (en bas)
+              if (hasText || hasBtn)
+                Positioned(
+                  left: 0, right: 0, bottom: 0,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (banner.title.isNotEmpty)
+                          Text(
+                            banner.title,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: hasImage ? 14 : 16,
+                              fontWeight: FontWeight.w800,
+                              shadows: hasImage
+                                  ? [const Shadow(color: Colors.black54, blurRadius: 4)]
+                                  : null,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        if (banner.message.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            banner.message,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: hasImage ? 0.9 : 0.8),
+                              fontSize: 12,
+                              shadows: hasImage
+                                  ? [const Shadow(color: Colors.black45, blurRadius: 3)]
+                                  : null,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        if (hasBtn) ...[
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            height: 34,
+                            child: ElevatedButton(
+                              onPressed: () => _handleAction(context),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: const Color(0xFF1A237E),
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                textStyle: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              child: Text(banner.buttonLabel!),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+
+              // ── Badge "Annonce" (coin haut gauche) si pas de texte superposé
+              if (!hasImage)
+                Positioned(
+                  top: 12, left: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.campaign_outlined, size: 11, color: Colors.white70),
+                        SizedBox(width: 4),
+                        Text('Annonce',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            )),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _handleAction(BuildContext ctx) {
+    final action = banner.buttonAction ?? '';
+    if (action == 'menu') {
+      Navigator.push(
+        ctx,
+        MaterialPageRoute(
+          builder: (_) => ClientMenuScreen(onGoHome: () => Navigator.pop(ctx)),
+        ),
+      );
+    } else if (action == 'orders') {
+      Navigator.push(
+        ctx,
+        MaterialPageRoute(
+          builder: (_) => ClientOrdersScreen(onGoHome: () => Navigator.pop(ctx)),
+        ),
+      );
+    }
+    // url:https://... → url_launcher si ajouté plus tard
+  }
+}
+
+// ── Bannière client (ancienne carte empilée — non utilisée, conservée) ──────
+// ignore: unused_element
 class _BannerCard extends StatelessWidget {
   final AppBanner banner;
   const _BannerCard({required this.banner});
