@@ -3024,14 +3024,36 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
   Future<void> _pickImage() async {
     try {
       final picker = ImagePicker();
+      // Résolution réduite pour rester sous la limite Firestore 1 MiB
+      // 800×400 @ quality 70 ≈ 50-150 KB bytes → ~67-200 KB base64 → OK
       final picked = await picker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: 1200,
-        maxHeight: 600,
-        imageQuality: 82,
+        maxWidth: 800,
+        maxHeight: 400,
+        imageQuality: 70,
       );
       if (picked == null) return;
       final bytes = await picked.readAsBytes();
+
+      // Vérification taille immédiate avant même d'encoder en base64
+      // base64 ajoute ~33% → bytes * 1.37 ≈ taille base64
+      final approxBase64Size = (bytes.length * 1.37).round();
+      if (approxBase64Size > 900000) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Image trop grande (${(bytes.length / 1024).round()} Ko compressés). '
+                'Utilisez une image plus petite (max ~650 Ko).',
+              ),
+              backgroundColor: AppTheme.error,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
+      }
+
       setState(() {
         _previewBytes = bytes;
         _imageChanged = true;
@@ -3319,15 +3341,38 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
 
   // ── Sauvegarde ────────────────────────────────────────────────────────
   Future<void> _save() async {
+    // ── Validation : seule l'image est obligatoire ──────────────────────
+    final hasImage = _previewBytes != null ||
+        (_currentImageUrl != null && _currentImageUrl!.isNotEmpty);
+    if (!hasImage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Veuillez sélectionner une image pour la bannière.'),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       final svc = context.read<ClientProvider>().svc;
 
-      // Résoudre imageUrl finale
+      // ── Résoudre imageUrl finale ────────────────────────────────────
       String? finalImageUrl = _currentImageUrl;
       if (_imageChanged) {
         if (_previewBytes != null) {
           finalImageUrl = _bytesToDataUri(_previewBytes!);
+          // Vérification taille avant envoi Firestore (limite 1 MiB)
+          final approxSize = finalImageUrl.length + 2048;
+          if (approxSize > 900000) {
+            throw Exception(
+              'Image trop volumineuse après encodage : '
+              '${(finalImageUrl.length / 1024).round()} Ko. '
+              'Limite Firestore ~900 Ko. '
+              'Choisissez une image plus petite.',
+            );
+          }
         } else {
           finalImageUrl = null;
         }
@@ -3336,6 +3381,7 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
       final displayOrder = int.tryParse(_orderCtrl.text) ?? 0;
 
       if (_isEdit) {
+        // ── Mode édition ─────────────────────────────────────────────
         final b = widget.existing!;
         b.title        = _titleCtrl.text.trim();
         b.message      = _messageCtrl.text.trim();
@@ -3349,18 +3395,23 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
         await svc.updateBanner(b);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ Bannière mise à jour'),
-                backgroundColor: AppTheme.success),
+            const SnackBar(
+              content: Text('✅ Bannière mise à jour'),
+              backgroundColor: AppTheme.success,
+            ),
           );
         }
       } else {
+        // ── Mode création ────────────────────────────────────────────
         final banner = AppBanner(
           id: '',
           title: _titleCtrl.text.trim(),
           message: _messageCtrl.text.trim(),
           imageUrl: finalImageUrl,
-          buttonLabel: _btnLabelCtrl.text.trim().isNotEmpty ? _btnLabelCtrl.text.trim() : null,
-          buttonAction: _btnActionCtrl.text.trim().isNotEmpty ? _btnActionCtrl.text.trim() : null,
+          buttonLabel: _btnLabelCtrl.text.trim().isNotEmpty
+              ? _btnLabelCtrl.text.trim() : null,
+          buttonAction: _btnActionCtrl.text.trim().isNotEmpty
+              ? _btnActionCtrl.text.trim() : null,
           validFrom: _validFrom,
           validUntil: _validUntil,
           isActive: _isActive,
@@ -3369,16 +3420,45 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
         await svc.addBanner(banner);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ Bannière créée avec succès'),
-                backgroundColor: AppTheme.success),
+            const SnackBar(
+              content: Text('✅ Bannière créée avec succès'),
+              backgroundColor: AppTheme.success,
+            ),
           );
         }
       }
+      // Fermer le formulaire après succès
       if (mounted) Navigator.pop(context);
-    } catch (e) {
+
+    } on Exception catch (e) {
+      // Erreur levée explicitement (taille, etc.) — message lisible
       if (mounted) {
+        final msg = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur : $e'), backgroundColor: AppTheme.error),
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: AppTheme.error,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+    } catch (e, stack) {
+      // Erreur Firebase ou inattendue — afficher le détail complet
+      if (mounted) {
+        String detail = e.toString();
+        // Extraire le code d'erreur Firebase si présent
+        final match = RegExp(r'\[([^\]]+)\]').firstMatch(detail);
+        if (match != null) {
+          detail = 'Code Firebase : ${match.group(1)}\n$detail';
+        }
+        if (detail.length > 300) detail = '${detail.substring(0, 300)}…';
+        debugPrint('[BannerSave] $e\n$stack');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur Firestore : $detail'),
+            backgroundColor: AppTheme.error,
+            duration: const Duration(seconds: 8),
+          ),
         );
       }
     } finally {

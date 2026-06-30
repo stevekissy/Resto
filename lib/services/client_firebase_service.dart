@@ -1030,12 +1030,51 @@ class ClientFirebaseService {
     final id = _uuid.v4();
     final data = banner.toMap();
     data['id'] = id;
+    // Timestamps audit
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    data['createdAt'] = nowMs;
+    data['updatedAt'] = nowMs;
+
+    // Vérification taille : Firestore limite à 1 048 576 bytes par document.
+    // L'image base64 est le seul champ potentiellement volumineux.
+    final imageUrl = data['imageUrl'] as String?;
+    if (imageUrl != null && imageUrl.startsWith('data:')) {
+      // Taille approximative du document = taille base64 en chars (≈ bytes UTF-8)
+      final approxDocSize = imageUrl.length + 2048; // 2 Ko pour les autres champs
+      if (approxDocSize > 900000) {
+        // > 900 Ko → refus avant même d'appeler Firestore
+        throw Exception(
+          'Image trop volumineuse (${(approxDocSize / 1024).round()} Ko). '
+          'Limite Firestore : 900 Ko. '
+          'Réduisez la résolution ou utilisez une image plus petite.',
+        );
+      }
+    }
+
     await _db.collection('banners').doc(id).set(data);
     return id;
   }
 
   Future<void> updateBanner(AppBanner banner) async {
-    await _db.collection('banners').doc(banner.id).update(banner.toMap());
+    final data = banner.toMap();
+    // S'assurer que createdAt n'est pas écrasé lors d'une mise à jour
+    data.remove('createdAt');
+    data['updatedAt'] = DateTime.now().millisecondsSinceEpoch;
+
+    // Même vérification taille pour la mise à jour
+    final imageUrl = data['imageUrl'] as String?;
+    if (imageUrl != null && imageUrl.startsWith('data:')) {
+      final approxDocSize = imageUrl.length + 2048;
+      if (approxDocSize > 900000) {
+        throw Exception(
+          'Image trop volumineuse (${(approxDocSize / 1024).round()} Ko). '
+          'Limite Firestore : 900 Ko. '
+          'Réduisez la résolution ou utilisez une image plus petite.',
+        );
+      }
+    }
+
+    await _db.collection('banners').doc(banner.id).update(data);
   }
 
   Future<void> deleteBanner(String bannerId) async {

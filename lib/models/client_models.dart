@@ -893,28 +893,45 @@ class AppBanner {
     'imageUrl': imageUrl,
     'buttonLabel': buttonLabel,
     'buttonAction': buttonAction,
+    // Champs dates : stocker en millisecondes (int) pour compatibilité fromMap
     'validFrom': validFrom?.millisecondsSinceEpoch,
     'validUntil': validUntil?.millisecondsSinceEpoch,
+    // Alias Firestore : 'active' + 'startDate'/'endDate' pour cohérence avec
+    // les exigences admin (les deux formes sont stockées)
+    'active': isActive,
     'isActive': isActive,
+    'startDate': validFrom?.millisecondsSinceEpoch,
+    'endDate': validUntil?.millisecondsSinceEpoch,
     'displayOrder': displayOrder,
+    // Timestamps audit
+    'updatedAt': DateTime.now().millisecondsSinceEpoch,
   };
 
-  factory AppBanner.fromMap(Map<String, dynamic> m) => AppBanner(
-    id: m['id'] as String? ?? '',
-    title: m['title'] as String? ?? '',
-    message: m['message'] as String? ?? '',
-    imageUrl: m['imageUrl'] as String?,
-    buttonLabel: m['buttonLabel'] as String?,
-    buttonAction: m['buttonAction'] as String?,
-    validFrom: m['validFrom'] is int
-        ? DateTime.fromMillisecondsSinceEpoch(m['validFrom'] as int)
-        : null,
-    validUntil: m['validUntil'] is int
-        ? DateTime.fromMillisecondsSinceEpoch(m['validUntil'] as int)
-        : null,
-    isActive: m['isActive'] as bool? ?? true,
-    displayOrder: (m['displayOrder'] as num?)?.toInt() ?? 0,
-  );
+  /// Construit un [AppBanner] depuis Firestore.
+  /// Accepte les deux noms de champs : 'isActive'/'active', 'validFrom'/'startDate', etc.
+  factory AppBanner.fromMap(Map<String, dynamic> m) {
+    // Support des deux noms de champs bool actif
+    final active = m['isActive'] as bool? ?? m['active'] as bool? ?? true;
+    // Support des deux noms de champs date début
+    final rawFrom = m['validFrom'] ?? m['startDate'];
+    final rawUntil = m['validUntil'] ?? m['endDate'];
+    return AppBanner(
+      id: m['id'] as String? ?? '',
+      title: m['title'] as String? ?? '',
+      message: m['message'] as String? ?? '',
+      imageUrl: m['imageUrl'] as String?,
+      buttonLabel: m['buttonLabel'] as String?,
+      buttonAction: m['buttonAction'] as String?,
+      validFrom: rawFrom is int
+          ? DateTime.fromMillisecondsSinceEpoch(rawFrom)
+          : null,
+      validUntil: rawUntil is int
+          ? DateTime.fromMillisecondsSinceEpoch(rawUntil)
+          : null,
+      isActive: active,
+      displayOrder: (m['displayOrder'] as num?)?.toInt() ?? 0,
+    );
+  }
 }
 
 // ── OnlineOrderSettings ────────────────────────────────────────────────────
