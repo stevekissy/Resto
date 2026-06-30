@@ -2117,55 +2117,150 @@ class _ConfigCard extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ONGLET PROMOTIONS — inchangé
+// ONGLET PROMOTIONS — Promotions + Bannières
 // ══════════════════════════════════════════════════════════════════════════════
 
-class _PromotionsTab extends StatelessWidget {
+class _PromotionsTab extends StatefulWidget {
   final ClientProvider provider;
   const _PromotionsTab({required this.provider});
+  @override
+  State<_PromotionsTab> createState() => _PromotionsTabState();
+}
+
+class _PromotionsTabState extends State<_PromotionsTab>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final promos = provider.promotions;
+    return Column(
+      children: [
+        Container(
+          color: AppTheme.surface,
+          child: TabBar(
+            controller: _tabs,
+            indicatorColor: AppTheme.primary,
+            labelColor: AppTheme.primary,
+            unselectedLabelColor: AppTheme.textSecondary,
+            tabs: const [
+              Tab(icon: Icon(Icons.local_offer_outlined, size: 16), text: 'Promotions'),
+              Tab(icon: Icon(Icons.campaign_outlined, size: 16), text: 'Bannières'),
+            ],
+          ),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabs,
+            children: [
+              _PromoListTab(provider: widget.provider),
+              _BannerListTab(provider: widget.provider),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
 
+// ── Liste des promotions ───────────────────────────────────────────────────
+
+class _PromoListTab extends StatelessWidget {
+  final ClientProvider provider;
+  const _PromoListTab({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.background,
-      body: promos.isEmpty
-          ? const Center(
-              child: Text('Aucune promotion active', style: TextStyle(color: AppTheme.textSecondary, fontSize: 15)),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-              itemCount: promos.length,
-              itemBuilder: (ctx, i) => _PromoAdminCard(promo: promos[i]),
-            ),
+      body: _PromoStreamList(svc: provider.svc),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddPromoDialog(context),
+        onPressed: () => _showPromoSheet(context),
         icon: const Icon(Icons.add),
-        label: const Text('Ajouter une promo'),
+        label: const Text('Ajouter promotion'),
         backgroundColor: AppTheme.primary,
       ),
     );
   }
 
-  void _showAddPromoDialog(BuildContext context) {
+  void _showPromoSheet(BuildContext context, {Promotion? promo}) {
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.cardBg,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (_) => const _AddPromoSheet(),
+      builder: (_) => _PromoFormSheet(existing: promo),
+    );
+  }
+}
+
+class _PromoStreamList extends StatelessWidget {
+  final dynamic svc;
+  const _PromoStreamList({required this.svc});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Promotion>>(
+      stream: svc.streamAllPromotions(),
+      builder: (ctx, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final promos = snap.data ?? [];
+        if (promos.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.local_offer_outlined, color: AppTheme.textSecondary, size: 48),
+                SizedBox(height: 12),
+                Text('Aucune promotion', style: TextStyle(color: AppTheme.textSecondary, fontSize: 15)),
+                SizedBox(height: 6),
+                Text('Appuyez sur + pour créer votre première promo',
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+              ],
+            ),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+          itemCount: promos.length,
+          itemBuilder: (ctx, i) => _PromoAdminCard(
+            promo: promos[i],
+            svc: svc,
+          ),
+        );
+      },
     );
   }
 }
 
 class _PromoAdminCard extends StatelessWidget {
   final Promotion promo;
-  const _PromoAdminCard({required this.promo});
+  final dynamic svc;
+  const _PromoAdminCard({required this.promo, required this.svc});
 
   @override
   Widget build(BuildContext context) {
+    final statusColor = promo.isValid
+        ? AppTheme.success
+        : (promo.isExpired ? AppTheme.error : AppTheme.textSecondary);
+    final statusLabel = promo.isValid
+        ? 'Active'
+        : (promo.isExpired ? 'Expirée' : (!promo.isActive ? 'Désactivée' : 'À venir'));
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
@@ -2173,71 +2268,203 @@ class _PromoAdminCard extends StatelessWidget {
         color: AppTheme.cardBg,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: promo.isValid ? AppTheme.primary.withValues(alpha: 0.4) : const Color(0xFF2A2A5A),
+          color: promo.isValid
+              ? AppTheme.primary.withValues(alpha: 0.4)
+              : const Color(0xFF2A2A5A),
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.local_offer_outlined, color: AppTheme.primary, size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.local_offer_outlined, color: AppTheme.primary, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(promo.title,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primary,
-                        borderRadius: BorderRadius.circular(8),
+                    Row(children: [
+                      Expanded(
+                        child: Text(promo.title,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
                       ),
-                      child: Text(promo.valueLabel,
-                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
-                    ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primary,
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Text(promo.valueLabel,
+                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                      ),
+                    ]),
+                    const SizedBox(height: 3),
+                    Row(children: [
+                      Container(
+                        width: 6, height: 6,
+                        decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(statusLabel,
+                          style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.w600)),
+                      const SizedBox(width: 8),
+                      Text(promo.typeLabel,
+                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                    ]),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(promo.description, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                if (promo.code != null) ...[
-                  const SizedBox(height: 4),
-                  Text('Code : ${promo.code}',
-                      style: const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.w600)),
-                ],
-              ],
-            ),
+              ),
+            ],
           ),
-          Switch(value: promo.isActive, onChanged: (v) {}, activeColor: AppTheme.success),
+          if (promo.description.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(promo.description,
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+          ],
+          if (promo.code != null && promo.code!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(children: [
+              const Icon(Icons.confirmation_number_outlined, color: Colors.amber, size: 13),
+              const SizedBox(width: 5),
+              Text('Code : ${promo.code}',
+                  style: const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.w600)),
+            ]),
+          ],
+          if (promo.minOrder != null) ...[
+            const SizedBox(height: 4),
+            Text('Commande min. : ${promo.minOrder!.toStringAsFixed(0)} FCFA',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+          ],
+          if (promo.validFrom != null || promo.validUntil != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              [
+                if (promo.validFrom != null) 'Du ${_fmtDate(promo.validFrom!)}',
+                if (promo.validUntil != null) 'au ${_fmtDate(promo.validUntil!)}',
+              ].join(' '),
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              // Activer / désactiver
+              Switch(
+                value: promo.isActive,
+                onChanged: (v) async {
+                  promo.isActive = v;
+                  await svc.updatePromotion(promo);
+                },
+                activeThumbColor: AppTheme.success,
+                activeTrackColor: AppTheme.success.withValues(alpha: 0.3),
+              ),
+              // Modifier
+              IconButton(
+                onPressed: () => _showEditSheet(context),
+                icon: const Icon(Icons.edit_outlined, color: AppTheme.primary, size: 18),
+                tooltip: 'Modifier',
+              ),
+              // Supprimer
+              IconButton(
+                onPressed: () => _confirmDelete(context),
+                icon: const Icon(Icons.delete_outline, color: AppTheme.error, size: 18),
+                tooltip: 'Supprimer',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  void _showEditSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.cardBg,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => _PromoFormSheet(existing: promo),
+    );
+  }
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardBg,
+        title: const Text('Supprimer la promotion',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+        content: Text('Supprimer "${promo.title}" ?',
+            style: const TextStyle(color: AppTheme.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await svc.deletePromotion(promo.id);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            child: const Text('Supprimer'),
+          ),
         ],
       ),
     );
   }
 }
 
-class _AddPromoSheet extends StatefulWidget {
-  const _AddPromoSheet();
+// ── Formulaire Promotion (création + édition) ─────────────────────────────
 
+class _PromoFormSheet extends StatefulWidget {
+  final Promotion? existing;
+  const _PromoFormSheet({this.existing});
   @override
-  State<_AddPromoSheet> createState() => _AddPromoSheetState();
+  State<_PromoFormSheet> createState() => _PromoFormSheetState();
 }
 
-class _AddPromoSheetState extends State<_AddPromoSheet> {
-  final _titleCtrl = TextEditingController();
-  final _descCtrl = TextEditingController();
-  final _valueCtrl = TextEditingController(text: '10');
-  final _codeCtrl = TextEditingController();
-  PromotionType _type = PromotionType.percentage;
+class _PromoFormSheetState extends State<_PromoFormSheet> {
+  late final TextEditingController _titleCtrl;
+  late final TextEditingController _descCtrl;
+  late final TextEditingController _valueCtrl;
+  late final TextEditingController _codeCtrl;
+  late final TextEditingController _minOrderCtrl;
+  late PromotionType _type;
+  late bool _isActive;
+  DateTime? _validFrom;
+  DateTime? _validUntil;
   bool _isLoading = false;
+
+  bool get _isEdit => widget.existing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final p = widget.existing;
+    _titleCtrl   = TextEditingController(text: p?.title ?? '');
+    _descCtrl    = TextEditingController(text: p?.description ?? '');
+    _valueCtrl   = TextEditingController(text: p?.value.toStringAsFixed(0) ?? '10');
+    _codeCtrl    = TextEditingController(text: p?.code ?? '');
+    _minOrderCtrl = TextEditingController(text: p?.minOrder?.toStringAsFixed(0) ?? '');
+    _type        = p?.type ?? PromotionType.percentage;
+    _isActive    = p?.isActive ?? true;
+    _validFrom   = p?.validFrom;
+    _validUntil  = p?.validUntil;
+  }
 
   @override
   void dispose() {
@@ -2245,108 +2472,780 @@ class _AddPromoSheetState extends State<_AddPromoSheet> {
     _descCtrl.dispose();
     _valueCtrl.dispose();
     _codeCtrl.dispose();
+    _minOrderCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 40, height: 4,
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: AppTheme.textSecondary.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(2),
+      padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: AppTheme.textSecondary.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-          ),
-          const Text('Nouvelle promotion',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _titleCtrl,
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(labelText: 'Titre de la promotion'),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _descCtrl,
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(labelText: 'Description'),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: PromotionType.values.map((t) {
-              final label = t == PromotionType.percentage ? '% Réduction'
-                  : t == PromotionType.fixedAmount ? 'Montant fixe' : 'Livraison offerte';
-              final isSelected = _type == t;
-              return Expanded(
-                child: GestureDetector(
+            Text(_isEdit ? 'Modifier la promotion' : 'Nouvelle promotion',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
+            const SizedBox(height: 16),
+
+            // Titre
+            TextField(
+              controller: _titleCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Titre de la promotion *',
+                prefixIcon: Icon(Icons.local_offer_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Description
+            TextField(
+              controller: _descCtrl,
+              style: const TextStyle(color: Colors.white),
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Description',
+                prefixIcon: Icon(Icons.description_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Type
+            const Text('Type de promotion',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: PromotionType.values.map((t) {
+                final labels = {
+                  PromotionType.percentage:   '% Réduction',
+                  PromotionType.fixedAmount:  'Montant fixe',
+                  PromotionType.freeDelivery: 'Livraison offerte',
+                  PromotionType.specialOffer: 'Offre spéciale',
+                };
+                final isSelected = _type == t;
+                return GestureDetector(
                   onTap: () => setState(() => _type = t),
                   child: Container(
-                    margin: EdgeInsets.only(right: t != PromotionType.freeDelivery ? 6 : 0),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                       color: isSelected ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.surfaceLight,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: isSelected ? AppTheme.primary : const Color(0xFF2A2A5A)),
+                      border: Border.all(
+                          color: isSelected ? AppTheme.primary : const Color(0xFF2A2A5A)),
                     ),
-                    child: Text(label,
-                        textAlign: TextAlign.center,
+                    child: Text(labels[t]!,
                         style: TextStyle(
                           color: isSelected ? AppTheme.primary : AppTheme.textSecondary,
-                          fontSize: 11, fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
+                          fontSize: 12,
+                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
                         )),
                   ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 12),
+
+            // Valeur réduction
+            if (_type != PromotionType.freeDelivery) ...[
+              TextField(
+                controller: _valueCtrl,
+                style: const TextStyle(color: Colors.white),
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: _type == PromotionType.percentage
+                      ? 'Valeur de la réduction (%)'
+                      : 'Montant de la réduction (FCFA)',
+                  prefixIcon: Icon(
+                    _type == PromotionType.percentage ? Icons.percent : Icons.money,
+                    size: 18,
+                  ),
                 ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 10),
-          if (_type != PromotionType.freeDelivery)
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            // Montant minimum
             TextField(
-              controller: _valueCtrl,
+              controller: _minOrderCtrl,
               style: const TextStyle(color: Colors.white),
               keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                  labelText: _type == PromotionType.percentage ? 'Valeur (%)' : 'Montant (FCFA)'),
+              decoration: const InputDecoration(
+                labelText: 'Montant minimum commande (optionnel, FCFA)',
+                prefixIcon: Icon(Icons.shopping_cart_outlined, size: 18),
+              ),
             ),
+            const SizedBox(height: 10),
+
+            // Code promo
+            TextField(
+              controller: _codeCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Code promo (optionnel)',
+                prefixIcon: Icon(Icons.confirmation_number_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Dates
+            Row(children: [
+              Expanded(child: _DateField(
+                label: 'Date début',
+                value: _validFrom,
+                onPicked: (d) => setState(() => _validFrom = d),
+              )),
+              const SizedBox(width: 10),
+              Expanded(child: _DateField(
+                label: 'Date fin',
+                value: _validUntil,
+                onPicked: (d) => setState(() => _validUntil = d),
+              )),
+            ]),
+            const SizedBox(height: 12),
+
+            // Statut
+            Row(
+              children: [
+                const Text('Promotion active',
+                    style: TextStyle(color: Colors.white, fontSize: 14)),
+                const Spacer(),
+                Switch(
+                  value: _isActive,
+                  onChanged: (v) => setState(() => _isActive = v),
+                  activeThumbColor: AppTheme.success,
+                  activeTrackColor: AppTheme.success.withValues(alpha: 0.3),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Bouton enregistrer
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isLoading ? null : _save,
+                icon: _isLoading
+                    ? const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : Icon(_isEdit ? Icons.save_outlined : Icons.add),
+                label: Text(_isEdit ? 'Enregistrer les modifications' : 'Créer la promotion'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _save() async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Le titre est obligatoire'),
+            backgroundColor: AppTheme.error),
+      );
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      final svc = context.read<ClientProvider>().svc;
+      final value = double.tryParse(_valueCtrl.text) ?? 0;
+      final minOrder = _minOrderCtrl.text.trim().isNotEmpty
+          ? double.tryParse(_minOrderCtrl.text)
+          : null;
+
+      if (_isEdit) {
+        final p = widget.existing!;
+        p.title       = title;
+        p.description = _descCtrl.text.trim();
+        p.type        = _type;
+        p.value       = value;
+        p.minOrder    = minOrder;
+        p.validFrom   = _validFrom;
+        p.validUntil  = _validUntil;
+        p.isActive    = _isActive;
+        p.code        = _codeCtrl.text.trim().isNotEmpty ? _codeCtrl.text.trim() : null;
+        await svc.updatePromotion(p);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('✅ Promotion mise à jour'),
+                backgroundColor: AppTheme.success),
+          );
+        }
+      } else {
+        final promo = Promotion(
+          id: '',
+          title: title,
+          description: _descCtrl.text.trim(),
+          type: _type,
+          value: value,
+          minOrder: minOrder,
+          validFrom: _validFrom,
+          validUntil: _validUntil,
+          isActive: _isActive,
+          code: _codeCtrl.text.trim().isNotEmpty ? _codeCtrl.text.trim() : null,
+        );
+        await svc.addPromotion(promo);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('✅ Promotion créée avec succès'),
+                backgroundColor: AppTheme.success),
+          );
+        }
+      }
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e'), backgroundColor: AppTheme.error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+}
+
+// ── Liste des bannières ────────────────────────────────────────────────────
+
+class _BannerListTab extends StatelessWidget {
+  final ClientProvider provider;
+  const _BannerListTab({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      body: _BannerStreamList(svc: provider.svc),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showBannerSheet(context),
+        icon: const Icon(Icons.add),
+        label: const Text('Ajouter bannière'),
+        backgroundColor: const Color(0xFF7B1FA2),
+      ),
+    );
+  }
+
+  void _showBannerSheet(BuildContext context, {AppBanner? banner}) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.cardBg,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => _BannerFormSheet(existing: banner),
+    );
+  }
+}
+
+class _BannerStreamList extends StatelessWidget {
+  final dynamic svc;
+  const _BannerStreamList({required this.svc});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<AppBanner>>(
+      stream: svc.streamAllBanners(),
+      builder: (ctx, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final banners = snap.data ?? [];
+        if (banners.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.campaign_outlined, color: AppTheme.textSecondary, size: 48),
+                SizedBox(height: 12),
+                Text('Aucune bannière', style: TextStyle(color: AppTheme.textSecondary, fontSize: 15)),
+                SizedBox(height: 6),
+                Text('Les bannières s\'affichent sur l\'accueil client',
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+              ],
+            ),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+          itemCount: banners.length,
+          itemBuilder: (ctx, i) => _BannerAdminCard(banner: banners[i], svc: svc),
+        );
+      },
+    );
+  }
+}
+
+class _BannerAdminCard extends StatelessWidget {
+  final AppBanner banner;
+  final dynamic svc;
+  const _BannerAdminCard({required this.banner, required this.svc});
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor = banner.isVisible
+        ? AppTheme.success
+        : (banner.isExpired ? AppTheme.error : AppTheme.textSecondary);
+    final statusLabel = banner.isVisible
+        ? 'Visible'
+        : (banner.isExpired ? 'Expirée' : (!banner.isActive ? 'Désactivée' : 'À venir'));
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.cardBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: banner.isVisible
+              ? const Color(0xFF7B1FA2).withValues(alpha: 0.5)
+              : const Color(0xFF2A2A5A),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: const Color(0xFF7B1FA2).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.campaign_outlined, color: Color(0xFFAB47BC), size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(banner.title,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+                  const SizedBox(height: 3),
+                  Row(children: [
+                    Container(
+                      width: 6, height: 6,
+                      decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(statusLabel,
+                        style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.w600)),
+                  ]),
+                ],
+              ),
+            ),
+          ]),
+          if (banner.message.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(banner.message,
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+          ],
+          if (banner.buttonLabel != null && banner.buttonLabel!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(children: [
+              const Icon(Icons.touch_app_outlined, color: Colors.amber, size: 13),
+              const SizedBox(width: 5),
+              Text('Bouton : ${banner.buttonLabel}',
+                  style: const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.w600)),
+            ]),
+          ],
+          if (banner.validFrom != null || banner.validUntil != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              [
+                if (banner.validFrom != null) 'Du ${_fmtDate(banner.validFrom!)}',
+                if (banner.validUntil != null) 'au ${_fmtDate(banner.validUntil!)}',
+              ].join(' '),
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+            ),
+          ],
           const SizedBox(height: 10),
-          TextField(
-            controller: _codeCtrl,
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(labelText: 'Code promo (optionnel)'),
-          ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _isLoading ? null : _save,
-              child: _isLoading
-                  ? const SizedBox(width: 20, height: 20,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : const Text('Créer la promotion'),
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Switch(
+                value: banner.isActive,
+                onChanged: (v) async {
+                  banner.isActive = v;
+                  await svc.updateBanner(banner);
+                },
+                activeThumbColor: const Color(0xFFAB47BC),
+                activeTrackColor: const Color(0xFF7B1FA2).withValues(alpha: 0.3),
+              ),
+              IconButton(
+                onPressed: () => _showEditSheet(context),
+                icon: const Icon(Icons.edit_outlined, color: AppTheme.primary, size: 18),
+                tooltip: 'Modifier',
+              ),
+              IconButton(
+                onPressed: () => _confirmDelete(context),
+                icon: const Icon(Icons.delete_outline, color: AppTheme.error, size: 18),
+                tooltip: 'Supprimer',
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
+  String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  void _showEditSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.cardBg,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => _BannerFormSheet(existing: banner),
+    );
+  }
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardBg,
+        title: const Text('Supprimer la bannière',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+        content: Text('Supprimer "${banner.title}" ?',
+            style: const TextStyle(color: AppTheme.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await svc.deleteBanner(banner.id);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Formulaire Bannière (création + édition) ──────────────────────────────
+
+class _BannerFormSheet extends StatefulWidget {
+  final AppBanner? existing;
+  const _BannerFormSheet({this.existing});
+  @override
+  State<_BannerFormSheet> createState() => _BannerFormSheetState();
+}
+
+class _BannerFormSheetState extends State<_BannerFormSheet> {
+  late final TextEditingController _titleCtrl;
+  late final TextEditingController _messageCtrl;
+  late final TextEditingController _imageUrlCtrl;
+  late final TextEditingController _btnLabelCtrl;
+  late final TextEditingController _btnActionCtrl;
+  late bool _isActive;
+  DateTime? _validFrom;
+  DateTime? _validUntil;
+  bool _isLoading = false;
+
+  bool get _isEdit => widget.existing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final b = widget.existing;
+    _titleCtrl    = TextEditingController(text: b?.title ?? '');
+    _messageCtrl  = TextEditingController(text: b?.message ?? '');
+    _imageUrlCtrl = TextEditingController(text: b?.imageUrl ?? '');
+    _btnLabelCtrl = TextEditingController(text: b?.buttonLabel ?? '');
+    _btnActionCtrl = TextEditingController(text: b?.buttonAction ?? '');
+    _isActive  = b?.isActive ?? true;
+    _validFrom = b?.validFrom;
+    _validUntil = b?.validUntil;
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _messageCtrl.dispose();
+    _imageUrlCtrl.dispose();
+    _btnLabelCtrl.dispose();
+    _btnActionCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: AppTheme.textSecondary.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Text(_isEdit ? 'Modifier la bannière' : 'Nouvelle bannière',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
+            const SizedBox(height: 4),
+            const Text('Visible sur l\'accueil de l\'espace client',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+            const SizedBox(height: 16),
+
+            TextField(
+              controller: _titleCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Titre de la bannière *',
+                prefixIcon: Icon(Icons.campaign_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            TextField(
+              controller: _messageCtrl,
+              style: const TextStyle(color: Colors.white),
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Message / contenu *',
+                prefixIcon: Icon(Icons.message_outlined, size: 18),
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            TextField(
+              controller: _imageUrlCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'URL image (optionnel)',
+                prefixIcon: Icon(Icons.image_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            TextField(
+              controller: _btnLabelCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Texte du bouton (optionnel)',
+                prefixIcon: Icon(Icons.touch_app_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            TextField(
+              controller: _btnActionCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Action bouton : menu / orders / url:...',
+                prefixIcon: Icon(Icons.link_outlined, size: 18),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Dates
+            Row(children: [
+              Expanded(child: _DateField(
+                label: 'Date début',
+                value: _validFrom,
+                onPicked: (d) => setState(() => _validFrom = d),
+              )),
+              const SizedBox(width: 10),
+              Expanded(child: _DateField(
+                label: 'Date fin',
+                value: _validUntil,
+                onPicked: (d) => setState(() => _validUntil = d),
+              )),
+            ]),
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                const Text('Bannière active',
+                    style: TextStyle(color: Colors.white, fontSize: 14)),
+                const Spacer(),
+                Switch(
+                  value: _isActive,
+                  onChanged: (v) => setState(() => _isActive = v),
+                  activeThumbColor: const Color(0xFFAB47BC),
+                  activeTrackColor: const Color(0xFF7B1FA2).withValues(alpha: 0.3),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isLoading ? null : _save,
+                icon: _isLoading
+                    ? const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : Icon(_isEdit ? Icons.save_outlined : Icons.add),
+                label: Text(_isEdit ? 'Enregistrer les modifications' : 'Créer la bannière'),
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7B1FA2)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _save() async {
-    if (_titleCtrl.text.isEmpty) return;
+    final title   = _titleCtrl.text.trim();
+    final message = _messageCtrl.text.trim();
+    if (title.isEmpty || message.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Titre et message obligatoires'),
+            backgroundColor: AppTheme.error),
+      );
+      return;
+    }
     setState(() => _isLoading = true);
     try {
+      final svc = context.read<ClientProvider>().svc;
+
+      if (_isEdit) {
+        final b = widget.existing!;
+        b.title        = title;
+        b.message      = message;
+        b.imageUrl     = _imageUrlCtrl.text.trim().isNotEmpty ? _imageUrlCtrl.text.trim() : null;
+        b.buttonLabel  = _btnLabelCtrl.text.trim().isNotEmpty ? _btnLabelCtrl.text.trim() : null;
+        b.buttonAction = _btnActionCtrl.text.trim().isNotEmpty ? _btnActionCtrl.text.trim() : null;
+        b.validFrom    = _validFrom;
+        b.validUntil   = _validUntil;
+        b.isActive     = _isActive;
+        await svc.updateBanner(b);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('✅ Bannière mise à jour'),
+                backgroundColor: AppTheme.success),
+          );
+        }
+      } else {
+        final banner = AppBanner(
+          id: '',
+          title: title,
+          message: message,
+          imageUrl: _imageUrlCtrl.text.trim().isNotEmpty ? _imageUrlCtrl.text.trim() : null,
+          buttonLabel: _btnLabelCtrl.text.trim().isNotEmpty ? _btnLabelCtrl.text.trim() : null,
+          buttonAction: _btnActionCtrl.text.trim().isNotEmpty ? _btnActionCtrl.text.trim() : null,
+          validFrom: _validFrom,
+          validUntil: _validUntil,
+          isActive: _isActive,
+        );
+        await svc.addBanner(banner);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('✅ Bannière créée avec succès'),
+                backgroundColor: AppTheme.success),
+          );
+        }
+      }
       if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e'), backgroundColor: AppTheme.error),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+}
+
+// ── Widget réutilisable : sélecteur de date ────────────────────────────────
+
+class _DateField extends StatelessWidget {
+  final String label;
+  final DateTime? value;
+  final ValueChanged<DateTime?> onPicked;
+  const _DateField({required this.label, this.value, required this.onPicked});
+
+  @override
+  Widget build(BuildContext context) {
+    final fmt = value != null
+        ? '${value!.day.toString().padLeft(2, '0')}/${value!.month.toString().padLeft(2, '0')}/${value!.year}'
+        : 'Non défini';
+    return GestureDetector(
+      onTap: () async {
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: value ?? DateTime.now(),
+          firstDate: DateTime(2020),
+          lastDate: DateTime(2030),
+          builder: (ctx, child) => Theme(
+            data: Theme.of(ctx).copyWith(
+              colorScheme: ColorScheme.dark(
+                primary: AppTheme.primary,
+                surface: AppTheme.cardBg,
+              ),
+            ),
+            child: child!,
+          ),
+        );
+        if (picked != null) onPicked(picked);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceLight,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFF2A2A5A)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label,
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+            const SizedBox(height: 4),
+            Row(children: [
+              Icon(Icons.calendar_today_outlined,
+                  size: 13, color: value != null ? AppTheme.primary : AppTheme.textSecondary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(fmt,
+                    style: TextStyle(
+                      color: value != null ? Colors.white : AppTheme.textSecondary,
+                      fontSize: 13,
+                      fontWeight: value != null ? FontWeight.w600 : FontWeight.w400,
+                    )),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
   }
 }
 

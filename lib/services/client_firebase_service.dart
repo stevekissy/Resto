@@ -971,6 +971,57 @@ class ClientFirebaseService {
     await _db.collection('promotions').doc(promoId).delete();
   }
 
+  // ── Bannières espace client ────────────────────────────────────────────
+
+  Stream<List<AppBanner>> streamAllBanners() {
+    return _db
+        .collection('banners')
+        .snapshots()
+        .map((snap) {
+      final banners = snap.docs
+          .map((d) => AppBanner.fromMap(d.data()))
+          .toList();
+      banners.sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+      return banners;
+    });
+  }
+
+  Stream<List<AppBanner>> streamVisibleBanners() {
+    return _db
+        .collection('banners')
+        .where('isActive', isEqualTo: true)
+        .snapshots()
+        .map((snap) {
+      final now = DateTime.now();
+      final banners = snap.docs
+          .map((d) => AppBanner.fromMap(d.data()))
+          .where((b) {
+            final started = b.validFrom == null || now.isAfter(b.validFrom!);
+            final notExpired = b.validUntil == null || now.isBefore(b.validUntil!);
+            return started && notExpired;
+          })
+          .toList();
+      banners.sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+      return banners;
+    });
+  }
+
+  Future<String> addBanner(AppBanner banner) async {
+    final id = _uuid.v4();
+    final data = banner.toMap();
+    data['id'] = id;
+    await _db.collection('banners').doc(id).set(data);
+    return id;
+  }
+
+  Future<void> updateBanner(AppBanner banner) async {
+    await _db.collection('banners').doc(banner.id).update(banner.toMap());
+  }
+
+  Future<void> deleteBanner(String bannerId) async {
+    await _db.collection('banners').doc(bannerId).delete();
+  }
+
   // ── Programme fidélité ─────────────────────────────────────────────────
 
   Stream<List<LoyaltyTransaction>> streamLoyaltyHistory(String clientId) {

@@ -11,6 +11,8 @@ import '../services/client_firebase_service.dart';
 
 class ClientProvider extends ChangeNotifier {
   final ClientFirebaseService _svc = ClientFirebaseService();
+  /// Exposé pour permettre aux formulaires admin d'appeler addPromotion/addBanner etc.
+  ClientFirebaseService get svc => _svc;
   final _uuid = const Uuid();
 
   // ── État utilisateur ───────────────────────────────────────────────────
@@ -51,6 +53,11 @@ class ClientProvider extends ChangeNotifier {
   List<Promotion> _promotions = [];
   List<Promotion> get promotions => _promotions;
 
+  // ── Bannières espace client ────────────────────────────────────────────
+  List<AppBanner> _banners = [];
+  List<AppBanner> get banners => _banners;
+  List<AppBanner> get visibleBanners => _banners.where((b) => b.isVisible).toList();
+
   // ── Fidélité ───────────────────────────────────────────────────────────
   List<LoyaltyTransaction> _loyaltyHistory = [];
   List<LoyaltyTransaction> get loyaltyHistory => _loyaltyHistory;
@@ -79,6 +86,7 @@ class ClientProvider extends ChangeNotifier {
   StreamSubscription? _ordersSubscription;
   StreamSubscription? _addressesSubscription;
   StreamSubscription? _promotionsSubscription;
+  StreamSubscription? _bannersSubscription;
   StreamSubscription? _productsSubscription;
   StreamSubscription? _loyaltySubscription;
   StreamSubscription? _settingsSubscription;
@@ -142,6 +150,13 @@ class ClientProvider extends ChangeNotifier {
       notifyListeners();
     });
 
+    // Bannières visibles (espace client)
+    _bannersSubscription?.cancel();
+    _bannersSubscription = _svc.streamVisibleBanners().listen((bans) {
+      _banners = bans;
+      notifyListeners();
+    });
+
     // Produits menu
     _productsSubscription?.cancel();
     _productsSubscription = _svc.streamAvailableProducts().listen((prods) {
@@ -174,6 +189,7 @@ class ClientProvider extends ChangeNotifier {
     _orders = [];
     _addresses = [];
     _promotions = [];
+    _banners = [];
     _products = [];
     _categories = [];
     _loyaltyHistory = [];
@@ -188,6 +204,7 @@ class ClientProvider extends ChangeNotifier {
     _ordersSubscription?.cancel();
     _addressesSubscription?.cancel();
     _promotionsSubscription?.cancel();
+    _bannersSubscription?.cancel();
     _productsSubscription?.cancel();
     _loyaltySubscription?.cancel();
     _settingsSubscription?.cancel();
@@ -464,6 +481,13 @@ class ClientProvider extends ChangeNotifier {
       notifyListeners();
     });
 
+    // Bannières (admin : toutes les bannières via streamAllBanners)
+    _bannersSubscription?.cancel();
+    _bannersSubscription = _svc.streamAllBanners().listen((bans) {
+      _banners = bans;
+      notifyListeners();
+    });
+
     // ── CORRECTION CRITIQUE ───────────────────────────────────────────────
     // Sans ce stream, provider.orders reste [] et l'admin ne voit rien.
     // streamAdminOnlineOrders() lit la collection 'orders' (orderSource==online)
@@ -599,6 +623,7 @@ class ClientProvider extends ChangeNotifier {
     _orders = [];
     _addresses = [];
     _promotions = [];
+    _banners = [];
     _products = [];
     _categories = [];
     _loyaltyHistory = [];
@@ -651,6 +676,7 @@ class ClientProvider extends ChangeNotifier {
     _orders = [];
     _addresses = [];
     _promotions = [];
+    _banners = [];
     _products = [];
     _categories = [];
     _loyaltyHistory = [];

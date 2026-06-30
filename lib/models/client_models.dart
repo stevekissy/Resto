@@ -758,7 +758,7 @@ class LoyaltyTransaction {
 
 // ── Promotion ──────────────────────────────────────────────────────────────
 
-enum PromotionType { percentage, fixedAmount, freeDelivery }
+enum PromotionType { percentage, fixedAmount, freeDelivery, specialOffer }
 
 class Promotion {
   final String id;
@@ -766,11 +766,12 @@ class Promotion {
   String description;
   String? imageUrl;
   PromotionType type;
-  double value;        // % ou montant fixe
-  double? minOrder;    // commande minimum
-  DateTime? validUntil;
+  double value;           // % ou montant fixe
+  double? minOrder;       // commande minimum
+  DateTime? validFrom;    // date début
+  DateTime? validUntil;   // date fin
   bool isActive;
-  String? code;        // code promo optionnel
+  String? code;           // code promo optionnel
   List<String> applicableProductIds; // vide = applicable à tout
 
   Promotion({
@@ -781,6 +782,7 @@ class Promotion {
     required this.type,
     required this.value,
     this.minOrder,
+    this.validFrom,
     this.validUntil,
     this.isActive = true,
     this.code,
@@ -788,13 +790,24 @@ class Promotion {
   });
 
   bool get isExpired => validUntil != null && DateTime.now().isAfter(validUntil!);
-  bool get isValid => isActive && !isExpired;
+  bool get isNotStarted => validFrom != null && DateTime.now().isBefore(validFrom!);
+  bool get isValid => isActive && !isExpired && !isNotStarted;
 
   String get valueLabel {
     switch (type) {
-      case PromotionType.percentage:  return '-${value.toStringAsFixed(0)}%';
-      case PromotionType.fixedAmount: return '-${value.toStringAsFixed(0)} F';
+      case PromotionType.percentage:    return '-${value.toStringAsFixed(0)}%';
+      case PromotionType.fixedAmount:   return '-${value.toStringAsFixed(0)} F';
+      case PromotionType.freeDelivery:  return 'Livraison offerte';
+      case PromotionType.specialOffer:  return 'Offre spéciale';
+    }
+  }
+
+  String get typeLabel {
+    switch (type) {
+      case PromotionType.percentage:   return 'Pourcentage';
+      case PromotionType.fixedAmount:  return 'Montant fixe';
       case PromotionType.freeDelivery: return 'Livraison offerte';
+      case PromotionType.specialOffer: return 'Offre spéciale';
     }
   }
 
@@ -802,7 +815,8 @@ class Promotion {
     switch (type) {
       case PromotionType.percentage:   return orderTotal * value / 100;
       case PromotionType.fixedAmount:  return value;
-      case PromotionType.freeDelivery: return 0; // géré séparément
+      case PromotionType.freeDelivery: return 0;
+      case PromotionType.specialOffer: return value;
     }
   }
 
@@ -814,6 +828,7 @@ class Promotion {
     'type': type.index,
     'value': value,
     'minOrder': minOrder,
+    'validFrom': validFrom?.millisecondsSinceEpoch,
     'validUntil': validUntil?.millisecondsSinceEpoch,
     'isActive': isActive,
     'code': code,
@@ -828,12 +843,77 @@ class Promotion {
     type: PromotionType.values[(m['type'] as num?)?.toInt() ?? 0],
     value: (m['value'] as num?)?.toDouble() ?? 0,
     minOrder: (m['minOrder'] as num?)?.toDouble(),
+    validFrom: m['validFrom'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['validFrom'] as int)
+        : null,
     validUntil: m['validUntil'] is int
         ? DateTime.fromMillisecondsSinceEpoch(m['validUntil'] as int)
         : null,
     isActive: m['isActive'] as bool? ?? true,
     code: m['code'] as String?,
     applicableProductIds: (m['applicableProductIds'] as List?)?.cast<String>() ?? [],
+  );
+}
+
+// ── AppBanner (bannières espace client) ────────────────────────────────────
+
+class AppBanner {
+  final String id;
+  String title;
+  String message;
+  String? imageUrl;
+  String? buttonLabel;
+  String? buttonAction;   // 'menu' | 'orders' | 'url:...' | ''
+  DateTime? validFrom;
+  DateTime? validUntil;
+  bool isActive;
+  int displayOrder;       // ordre d'affichage (0 = premier)
+
+  AppBanner({
+    required this.id,
+    required this.title,
+    required this.message,
+    this.imageUrl,
+    this.buttonLabel,
+    this.buttonAction,
+    this.validFrom,
+    this.validUntil,
+    this.isActive = true,
+    this.displayOrder = 0,
+  });
+
+  bool get isExpired => validUntil != null && DateTime.now().isAfter(validUntil!);
+  bool get isNotStarted => validFrom != null && DateTime.now().isBefore(validFrom!);
+  bool get isVisible => isActive && !isExpired && !isNotStarted;
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'title': title,
+    'message': message,
+    'imageUrl': imageUrl,
+    'buttonLabel': buttonLabel,
+    'buttonAction': buttonAction,
+    'validFrom': validFrom?.millisecondsSinceEpoch,
+    'validUntil': validUntil?.millisecondsSinceEpoch,
+    'isActive': isActive,
+    'displayOrder': displayOrder,
+  };
+
+  factory AppBanner.fromMap(Map<String, dynamic> m) => AppBanner(
+    id: m['id'] as String? ?? '',
+    title: m['title'] as String? ?? '',
+    message: m['message'] as String? ?? '',
+    imageUrl: m['imageUrl'] as String?,
+    buttonLabel: m['buttonLabel'] as String?,
+    buttonAction: m['buttonAction'] as String?,
+    validFrom: m['validFrom'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['validFrom'] as int)
+        : null,
+    validUntil: m['validUntil'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(m['validUntil'] as int)
+        : null,
+    isActive: m['isActive'] as bool? ?? true,
+    displayOrder: (m['displayOrder'] as num?)?.toInt() ?? 0,
   );
 }
 

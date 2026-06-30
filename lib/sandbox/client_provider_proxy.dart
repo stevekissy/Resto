@@ -70,6 +70,10 @@ class ClientProviderProxy {
 
   List<Promotion> get promotions =>
       _isSandbox ? _sandbox!.promotions : _real!.promotions;
+  List<AppBanner> get banners =>
+      _isSandbox ? [] : _real!.banners;
+  List<AppBanner> get visibleBanners =>
+      _isSandbox ? [] : _real!.visibleBanners;
   List<LoyaltyTransaction> get loyaltyHistory =>
       _isSandbox ? _sandbox!.loyaltyHistory : _real!.loyaltyHistory;
   List<Product> get products =>

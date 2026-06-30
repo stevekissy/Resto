@@ -139,6 +139,12 @@ class ClientHomeScreen extends StatelessWidget {
                     ],
                   ),
 
+                  // ── Bannières actives ─────────────────────────────────────
+                  if (provider.visibleBanners.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    ...provider.visibleBanners.map((b) => _BannerCard(banner: b)),
+                  ],
+
                   // ── Commandes actives ─────────────────────────────────────
                   if (provider.activeOrders.isNotEmpty) ...[
                     const SizedBox(height: 20),
@@ -558,5 +564,134 @@ class _LoyaltyCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ── Bannière client ───────────────────────────────────────────────────────
+
+class _BannerCard extends StatelessWidget {
+  final AppBanner banner;
+  const _BannerCard({required this.banner});
+
+  @override
+  Widget build(BuildContext buildContext) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1A237E), Color(0xFF283593)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF3949AB).withValues(alpha: 0.6)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF1A237E).withValues(alpha: 0.4),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Image si disponible
+            if (banner.imageUrl != null && banner.imageUrl!.isNotEmpty)
+              SizedBox(
+                height: 140,
+                child: Image.network(
+                  banner.imageUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    height: 140,
+                    color: const Color(0xFF1A237E),
+                    child: const Icon(Icons.campaign_outlined, color: Colors.white38, size: 48),
+                  ),
+                ),
+              ),
+
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Badge + Titre
+                  Row(children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.campaign_outlined, size: 11, color: Colors.white70),
+                        SizedBox(width: 4),
+                        Text('Annonce',
+                            style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w600)),
+                      ]),
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+                  Text(
+                    banner.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    banner.message,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.8),
+                      fontSize: 13,
+                    ),
+                  ),
+                  // Bouton optionnel
+                  if (banner.buttonLabel != null && banner.buttonLabel!.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () => _handleAction(buildContext),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: const Color(0xFF1A237E),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
+                        ),
+                        child: Text(
+                          banner.buttonLabel!,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _handleAction(BuildContext ctx) {
+    final action = banner.buttonAction ?? '';
+    if (action == 'menu') {
+      Navigator.push(ctx, MaterialPageRoute(
+        builder: (_) => ClientMenuScreen(onGoHome: () => Navigator.pop(ctx)),
+      ));
+    } else if (action == 'orders') {
+      Navigator.push(ctx, MaterialPageRoute(
+        builder: (_) => ClientOrdersScreen(onGoHome: () => Navigator.pop(ctx)),
+      ));
+    }
+    // Pour url:... on pourrait ajouter url_launcher ici
   }
 }
