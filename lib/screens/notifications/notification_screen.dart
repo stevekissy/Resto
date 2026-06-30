@@ -66,13 +66,15 @@ class _NotificationScreenState extends State<NotificationScreen>
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: TextButton.icon(
-                onPressed: () {
-                  _svc.markAllRead();
+                onPressed: () async {
+                  final count = unread;
+                  await _svc.markAllRead();
+                  if (!context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                     content: Row(children: [
                       const Icon(Icons.done_all, color: Colors.white, size: 16),
                       const SizedBox(width: 8),
-                      Text('$unread notification${unread > 1 ? 's' : ''} marquée${unread > 1 ? 's' : ''} comme lue${unread > 1 ? 's' : ''}'),
+                      Text('$count notification${count > 1 ? 's' : ''} marquée${count > 1 ? 's' : ''} comme lue${count > 1 ? 's' : ''}'),
                     ]),
                     backgroundColor: AppTheme.success,
                     behavior: SnackBarBehavior.floating,
@@ -162,7 +164,7 @@ class _UnreadTab extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: _MarkAllReadButton(
               count: unread.length,
-              onTap: () => svc.markAllRead(),
+              onTap: () async => svc.markAllRead(),
             ),
           ),
 
@@ -890,7 +892,7 @@ class _NotifCard extends StatelessWidget {
 
 class _MarkAllReadButton extends StatelessWidget {
   final int count;
-  final VoidCallback onTap;
+  final Future<void> Function() onTap;
   const _MarkAllReadButton({required this.count, required this.onTap});
 
   @override

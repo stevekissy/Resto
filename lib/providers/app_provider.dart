@@ -723,20 +723,24 @@ class AppProvider extends ChangeNotifier {
             // Commande en ligne : notification spéciale prioritaire
             final isOnline = (o.source == 'online' || o.tableNumber == 'Livraison Yango'
                 || o.tableNumber == 'À Emporter');
+            // ID stable = type + orderId → déduplication Firestore garantie
             if (o.isUrgent) {
               NotificationService().trigger(
                 NotifEvent.commandeUrgente,
                 message: '🚨 Commande urgente #${o.orderNumber} — Table ${o.tableNumber}',
+                stableId: 'urgent_${o.id}',
               );
             } else if (isOnline) {
               NotificationService().trigger(
                 NotifEvent.nouvelleCommandeEnLigne,
                 message: '📱 NOUVELLE COMMANDE EN LIGNE #${o.orderNumber} — ${o.serverName ?? o.tableNumber}',
+                stableId: 'online_order_${o.id}',
               );
             } else {
               NotificationService().trigger(
                 NotifEvent.nouvelleCommande,
                 message: '🍽️ Nouvelle commande #${o.orderNumber} — Table ${o.tableNumber}',
+                stableId: 'new_order_${o.id}',
               );
             }
           }
@@ -748,6 +752,7 @@ class AppProvider extends ChangeNotifier {
             NotificationService().trigger(
               NotifEvent.commandePrete,
               message: '✅ Commande #${o.orderNumber} prête à servir — Table ${o.tableNumber}',
+              stableId: 'order_ready_${o.id}',
             );
           }
         }
@@ -766,11 +771,13 @@ class AppProvider extends ChangeNotifier {
             NotificationService().trigger(
               NotifEvent.ruptureStock,
               message: '🚫 Rupture de stock : ${item.name}',
+              stableId: 'stock_out_${item.id}',
             );
           } else if (!prev.isLow && item.isLow && !item.isOut) {
             NotificationService().trigger(
               NotifEvent.stockFaible,
               message: '⚠️ Stock faible : ${item.name} (${item.currentQuantity.toStringAsFixed(0)} ${item.unit})',
+              stableId: 'stock_low_${item.id}',
             );
           }
         }
@@ -863,6 +870,7 @@ class AppProvider extends ChangeNotifier {
             NotificationService().trigger(
               NotifEvent.contratExpiration,
               message: '📋 Contrat proche expiration : ${c.employeeName}',
+              stableId: 'contract_expiry_${c.id}',
             );
           }
         }
@@ -887,6 +895,7 @@ class AppProvider extends ChangeNotifier {
             NotificationService().trigger(
               NotifEvent.salaireAPayer,
               message: '👥 Salaire à payer : ${sal.employeeName} — ${sal.netAPayer.toStringAsFixed(0)} F CFA',
+              stableId: 'salary_due_${sal.id}',
             );
           }
         }
@@ -915,6 +924,7 @@ class AppProvider extends ChangeNotifier {
               NotificationService().trigger(
                 NotifEvent.reservationAujourdhui,
                 message: '📆 Réservation aujourd\'hui : ${r.nomClient} — ${r.heureDebut}',
+                stableId: 'reservation_today_${r.id}',
               );
             } else {
               final tomorrow = today.add(const Duration(days: 1));
@@ -922,6 +932,7 @@ class AppProvider extends ChangeNotifier {
                 NotificationService().trigger(
                   NotifEvent.reservationDemain,
                   message: '🗓️ Réservation demain : ${r.nomClient} — ${r.typeEvenement.label}',
+                  stableId: 'reservation_tomorrow_${r.id}',
                 );
               }
             }
@@ -966,11 +977,13 @@ class AppProvider extends ChangeNotifier {
             NotificationService().trigger(
               NotifEvent.ruptureStock,
               message: '🍺 Cambuse RUPTURE : ${item.name}',
+              stableId: 'cambuse_out_${item.id}',
             );
           } else if (!prev.isLowStock && item.isLowStock) {
             NotificationService().trigger(
               NotifEvent.stockFaible,
               message: '⚠️ Cambuse stock faible : ${item.name} (${item.quantity} restants)',
+              stableId: 'cambuse_low_${item.id}',
             );
           }
         }
@@ -1595,6 +1608,7 @@ class AppProvider extends ChangeNotifier {
     NotificationService().trigger(
       NotifEvent.paiementEnregistre,
       message: '💰 Paiement enregistré : ${amountDue.toStringAsFixed(0)} F CFA — Commande #${order.orderNumber} ($paymentMethod)',
+      stableId: 'payment_${order.id}',
     );
     // Le stream Firestore met _orders à jour automatiquement
   }
@@ -2588,6 +2602,7 @@ class AppProvider extends ChangeNotifier {
       NotificationService().trigger(
         NotifEvent.nouvelleReservation,
         message: '📅 Nouvelle réservation : ${r.nomClient} — ${r.typeEvenement.label} le ${r.dateEvenement.day}/${r.dateEvenement.month}/${r.dateEvenement.year}',
+        stableId: 'reservation_new_${r.id}',
       );
     } catch (e) { debugPrint('[addReservation] $e'); rethrow; }
   }
@@ -2610,6 +2625,7 @@ class AppProvider extends ChangeNotifier {
       NotificationService().trigger(
         NotifEvent.paiementEnregistre,
         message: '💰 Paiement réservation : ${p.montant.toStringAsFixed(0)} F CFA — ${p.nomClient}',
+        stableId: 'payment_reservation_${p.id}',
       );
     } catch (e) { debugPrint('[addReservationPayment] $e'); rethrow; }
   }

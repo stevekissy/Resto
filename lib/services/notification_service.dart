@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 // Import conditionnel : Web Audio API uniquement sur web
 // ignore: uri_does_not_exist
@@ -177,6 +178,9 @@ class NotificationService extends ChangeNotifier {
   factory NotificationService() => _instance;
   NotificationService._();
 
+  // ── UUID generator ────────────────────────────────────────────────────
+  final Uuid _uuid = const Uuid();
+
   // ── Historique des notifications ──────────────────────────────────────
   final List<AppNotification> _history = [];
   List<AppNotification> get history => List.unmodifiable(_history);
@@ -333,39 +337,74 @@ class NotificationService extends ChangeNotifier {
   }
 
   void _onFirestoreSnapshot(QuerySnapshot snapshot) {
+    bool changed = false;
+
     for (final change in snapshot.docChanges) {
+      final docId = change.doc.id;
+
+      // ── Doc SUPPRIMÉ du filtre read==false ─────────────────────────
+      // Firestore émet un "removed" quand read passe de false à true.
+      // On met à jour la RAM pour que le badge disparaisse en temps réel
+      // (ex: markAllRead() depuis un autre appareil ou onglet).
+      if (change.type == DocumentChangeType.removed) {
+        final idx = _history.indexWhere((n) => n.id == docId);
+        if (idx >= 0 && !_history[idx].isRead) {
+          _history[idx].isRead = true;
+          _history[idx].readAt ??= DateTime.now();
+          changed = true;
+          if (kDebugMode) debugPrint('[NotifSvc] ✅ Lu via stream removed: $docId');
+        }
+        continue;
+      }
+
+      // ── Doc MODIFIÉ dans le stream (playedAt mis à jour, etc.) ─────
+      if (change.type == DocumentChangeType.modified) {
+        final data = change.doc.data() as Map<String, dynamic>?;
+        if (data == null) continue;
+        final nowRead = (data['read'] as bool? ?? false) ||
+            (data['isRead'] as bool? ?? false);
+        if (nowRead) {
+          final idx = _history.indexWhere((n) => n.id == docId);
+          if (idx >= 0 && !_history[idx].isRead) {
+            _history[idx].isRead = true;
+            _history[idx].readAt ??= DateTime.now();
+            changed = true;
+          }
+        }
+        continue;
+      }
+
+      // ── Doc AJOUTÉ (read==false) → nouvelle notification ───────────
       if (change.type == DocumentChangeType.added) {
-        final docId = change.doc.id;
-        // Éviter les doublons
+        // Éviter les doublons — déjà chargé par _loadHistoryFromFirestore
         if (_knownFirestoreIds.contains(docId)) continue;
         _knownFirestoreIds.add(docId);
 
         final data = change.doc.data() as Map<String, dynamic>?;
         if (data == null) continue;
 
-        // ── Timestamp de la notification ──────────────────────────────
+        // ── Timestamp de la notification ────────────────────────────
         // Firestore peut stocker 'createdAt' (nouveau) ou 'created_at' (ancien)
         final notifCreatedAt = _parseFirestoreDate(
           data['createdAt'] ?? data['created_at'],
         );
 
-        // ── Mapper le type Firestore vers NotifEvent ──────────────────
+        // ── Mapper le type Firestore vers NotifEvent ────────────────
         final eventType = data['type'] as String? ?? 'systeme';
         final message   = data['message'] as String? ?? '';
         final event     = _firestoreTypeToEvent(eventType);
 
-        // ── Lire l'état lu/non lu depuis Firestore ────────────────────
-        // 'read' peut valoir true (déjà lu avant ce login) ou false/absent
-        // ── Lire read + playedAt depuis Firestore ────────────────────
-        // Ces deux champs sont PERSISTANTS entre sessions.
-        // read==true    → jamais de son (déjà lue)
-        // playedAt!=null → son déjà joué une fois → jamais rejoué
-        final alreadyRead   = data['read'] as bool? ?? false;
+        // ── Lire read + isRead + playedAt depuis Firestore ──────────
+        // Deux champs pour compatibilité : 'read' (nouveau) + 'isRead' (alias).
+        // read==true OU isRead==true → notification considérée comme lue.
+        // playedAt!=null → son déjà joué → jamais rejoué.
+        final alreadyRead   = (data['read'] as bool? ?? false) ||
+            (data['isRead'] as bool? ?? false);
         final playedAtRaw   = data['playedAt'];
         final alreadyPlayed = playedAtRaw != null;
         final readAtRaw     = data['readAt'];
 
-        // ── Créer la notification locale (toujours, pour l'historique) ─
+        // ── Créer la notification locale (toujours, pour l'historique)
         final notif = AppNotification(
           id:       docId,
           event:    event,
@@ -377,10 +416,10 @@ class NotificationService extends ChangeNotifier {
         );
         _history.insert(0, notif);
         if (_history.length > 200) _history.removeRange(200, _history.length);
+        changed = true;
 
-        // ── Son : UNIQUEMENT si read==false ET playedAt==null ─────────
+        // ── Son : UNIQUEMENT si read==false ET isRead==false ET playedAt==null
         // Règle absolue — indépendante du login / refresh / reconnexion.
-        // Une notification lue OU dont le son a déjà été joué → silence total.
         if (!alreadyRead && !alreadyPlayed) {
           _playForEvent(event);
           // Marquer playedAt dans Firestore immédiatement (non-bloquant)
@@ -396,10 +435,10 @@ class NotificationService extends ChangeNotifier {
             );
           }
         }
-
-        notifyListeners();
       }
     }
+
+    if (changed) notifyListeners();
   }
 
   NotifEvent _firestoreTypeToEvent(String type) {
@@ -709,7 +748,9 @@ class NotificationService extends ChangeNotifier {
         _knownFirestoreIds.add(docId);
 
         final data = doc.data();
-        final alreadyRead   = data['read']     as bool? ?? false;
+        // Lire read + isRead (les deux champs pour compatibilité maximale)
+        final alreadyRead   = (data['read'] as bool? ?? false) ||
+            (data['isRead'] as bool? ?? false);
         final playedAtRaw   = data['playedAt'];
         final readAtRaw     = data['readAt'];
 
@@ -1029,18 +1070,107 @@ class NotificationService extends ChangeNotifier {
 
   // ── Déclencheur principal ─────────────────────────────────────────────
 
-  void trigger(NotifEvent event, {required String message}) {
+  /// Déclenche une notification locale ET la persiste dans Firestore.
+  /// [stableId] — ID stable pour déduplication (ex: 'new_online_order_{orderId}').
+  ///   Si null, un UUID est généré (notification one-shot sans dédup).
+  void trigger(
+    NotifEvent event, {
+    required String message,
+    String? stableId,
+  }) {
+    final now = DateTime.now();
+    // Générer un ID stable ou UUID
+    final docId = stableId ?? _uuid.v4();
+
+    // Déduplication en RAM — ne pas rejouer si déjà connu
+    if (_knownFirestoreIds.contains(docId)) return;
+    _knownFirestoreIds.add(docId);
+
     final notif = AppNotification(
-      id:       '${event.name}_${DateTime.now().millisecondsSinceEpoch}',
+      id:       docId,
       event:    event,
       message:  message,
-      dateTime: DateTime.now(),
+      dateTime: now,
     );
     _history.insert(0, notif);
     if (_history.length > 200) _history.removeRange(200, _history.length);
     notifyListeners();
 
+    // Persister dans Firestore (non-bloquant)
+    // Utilise set() avec SetOptions(merge: false) — si le doc existe déjà
+    // (même stableId), on ne l'écrase pas pour préserver read/isRead/playedAt.
+    unawaited(_persistNotifToFirestore(
+      docId:   docId,
+      event:   event,
+      message: message,
+      now:     now,
+    ));
+
     _playForEvent(event);
+  }
+
+  /// Ecrit la notification dans Firestore seulement si elle n'existe pas déjà.
+  /// Cela évite d'écraser read/isRead/playedAt d'une notif déjà lue.
+  Future<void> _persistNotifToFirestore({
+    required String docId,
+    required NotifEvent event,
+    required String message,
+    required DateTime now,
+  }) async {
+    try {
+      final ref = FirebaseFirestore.instance
+          .collection('notifications')
+          .doc(docId);
+      // Vérifier l'existence avant d'écrire (déduplication Firestore)
+      final existing = await ref.get();
+      if (existing.exists) {
+        // La notification existe déjà — récupérer son statut lu
+        final d = existing.data()!;
+        final alreadyRead = (d['read'] as bool? ?? false) ||
+            (d['isRead'] as bool? ?? false);
+        if (alreadyRead) {
+          // Déjà lue dans Firestore → mettre à jour en RAM aussi
+          final idx = _history.indexWhere((n) => n.id == docId);
+          if (idx >= 0) {
+            _history[idx].isRead = true;
+            notifyListeners();
+          }
+        }
+        return; // Ne pas réécrire
+      }
+      // Document inexistant → créer
+      await ref.set({
+        'id':          docId,
+        'type':        _eventToFirestoreType(event),
+        'title':       event.label,
+        'message':     message,
+        'createdAt':   FieldValue.serverTimestamp(),
+        'read':        false,
+        'isRead':      false,
+        'playedAt':    null,
+        'targetRoles': ['admin', 'manager', 'kitchen', 'cashier'],
+      });
+    } catch (e) {
+      if (kDebugMode) debugPrint('[NotifSvc] _persistNotifToFirestore erreur: $e');
+    }
+  }
+
+  /// Convertit un NotifEvent en type string Firestore.
+  String _eventToFirestoreType(NotifEvent event) {
+    switch (event) {
+      case NotifEvent.nouvelleCommandeEnLigne: return 'new_online_order';
+      case NotifEvent.commandeUrgente:         return 'urgent';
+      case NotifEvent.commandePrete:           return 'order_ready';
+      case NotifEvent.paiementEnregistre:      return 'payment';
+      case NotifEvent.nouvelleReservation:     return 'reservation';
+      case NotifEvent.reservationAujourdhui:   return 'reservation';
+      case NotifEvent.reservationDemain:       return 'reservation';
+      case NotifEvent.contratExpiration:       return 'contract';
+      case NotifEvent.salaireAPayer:           return 'salary';
+      case NotifEvent.stockFaible:             return 'stock_low';
+      case NotifEvent.ruptureStock:            return 'stock_out';
+      default:                                 return 'system';
+    }
   }
 
   void _playForEvent(NotifEvent event) {
@@ -1118,6 +1248,7 @@ class NotificationService extends ChangeNotifier {
     final idx = _history.indexWhere((n) => n.id == id);
     if (idx >= 0) {
       _history[idx].isRead = true;
+      _history[idx].readAt ??= DateTime.now();
       // Si c'était l'alerte urgente, stopper la boucle
       if (id == _urgentEventId) stopUrgentLoop();
       notifyListeners();
@@ -1126,76 +1257,97 @@ class NotificationService extends ChangeNotifier {
     }
   }
 
-  void markAllRead() {
+  /// Marque toutes les notifications comme lues en RAM ET dans Firestore.
+  /// L'appel Firestore est ATTENDU (await) pour garantir la persistance
+  /// avant que l'UI ne se mette à jour.
+  Future<void> markAllRead() async {
+    // 1. Mettre à jour en RAM immédiatement (feedback visuel instantané)
     for (final n in _history) {
       n.isRead = true;
+      n.readAt ??= DateTime.now();
     }
     stopUrgentLoop();
     notifyListeners();
-    // Persister TOUS dans Firestore (non-bloquant)
-    unawaited(_markAllReadInFirestore());
+    // 2. Persister dans Firestore (attendu — garantit la durabilité)
+    await _markAllReadInFirestore();
+    if (kDebugMode) debugPrint('[NotifSvc] ✅ markAllRead() — Firestore persisté');
   }
 
-  /// Marque un document Firestore comme lu (read: true + readAt: serverTimestamp)
+  /// Marque un document Firestore comme lu.
+  /// Écrit les deux champs : read ET isRead (compatibilité anciens/nouveaux docs).
+  /// Utilise set() avec merge:true pour éviter l'erreur si le doc n'existe pas.
   Future<void> _markReadInFirestore(String docId) async {
     try {
-      if (_isLocalId(docId)) return; // IDs locaux non persistés
+      final now = FieldValue.serverTimestamp();
       await FirebaseFirestore.instance
           .collection('notifications')
           .doc(docId)
-          .update({
-        'read':   true,
-        'readAt': FieldValue.serverTimestamp(),
-      });
+          .set({
+        'read':    true,
+        'isRead':  true,
+        'readAt':  now,
+        'playedAt': FieldValue.serverTimestamp(), // empêche aussi le rejeu sonore
+      }, SetOptions(merge: true));
       if (kDebugMode) debugPrint('[NotifSvc] ✅ Marqué lu Firestore: $docId');
     } catch (e) {
       if (kDebugMode) debugPrint('[NotifSvc] _markReadInFirestore erreur: $e');
     }
   }
 
-  /// Marque playedAt dans Firestore → empêche le rejeu lors d'une reconnexion
+  /// Marque playedAt dans Firestore → empêche le rejeu lors d'une reconnexion.
+  /// Utilise set+merge pour éviter l'erreur si le doc n'existe pas encore
+  /// (race condition entre trigger() local et la création Firestore).
   Future<void> _markPlayedInFirestore(String docId) async {
     try {
-      if (_isLocalId(docId)) return;
       await FirebaseFirestore.instance
           .collection('notifications')
           .doc(docId)
-          .update({'playedAt': FieldValue.serverTimestamp()});
+          .set({'playedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
       if (kDebugMode) debugPrint('[NotifSvc] 🔔 playedAt enregistré: $docId');
     } catch (e) {
       if (kDebugMode) debugPrint('[NotifSvc] _markPlayedInFirestore erreur: $e');
     }
   }
 
-  /// Retourne true si l'id est un ID local synthétique (pas un vrai doc Firestore)
-  /// IDs locaux : "commandeUrgente_1234567890" (contiennent '_' et sont courts)
-  bool _isLocalId(String id) => id.contains('_') && id.length < 28;
+  /// Retourne true si l'id est un ID purement local (jamais persisté dans Firestore).
+  /// Désormais tous les IDs passent par Firestore — cette méthode retourne
+  /// toujours false pour ne plus filtrer aucun ID.
+  /// Conservée pour rétrocompatibilité avec les appels existants.
+  bool _isLocalId(String id) => false;
 
-  /// Marque tous les documents comme lus dans Firestore (WriteBatch)
+  /// Marque TOUS les documents de l'historique comme lus dans Firestore.
+  /// Utilise set() avec merge:true → fonctionne même si le doc n'existe plus.
+  /// Écrit read + isRead + readAt + playedAt pour une compatibilité maximale.
   Future<void> _markAllReadInFirestore() async {
     try {
-      // On marque TOUS les IDs Firestore réels de l'historique
-      final fsIds = _history
-          .map((n) => n.id)
-          .where((id) => !_isLocalId(id))
-          .toList();
-      if (fsIds.isEmpty) return;
+      // Prendre tous les IDs de l'historique (plus de filtre _isLocalId)
+      final allIds = _history.map((n) => n.id).toSet().toList();
+      if (allIds.isEmpty) return;
+
+      final now = FieldValue.serverTimestamp();
 
       // WriteBatch par tranches de 450 (limite Firestore : 500)
       const batchSize = 450;
-      for (var i = 0; i < fsIds.length; i += batchSize) {
-        final chunk = fsIds.skip(i).take(batchSize).toList();
+      for (var i = 0; i < allIds.length; i += batchSize) {
+        final chunk = allIds.skip(i).take(batchSize).toList();
         final batch = FirebaseFirestore.instance.batch();
-        final now   = FieldValue.serverTimestamp();
         for (final id in chunk) {
           final ref = FirebaseFirestore.instance
               .collection('notifications')
               .doc(id);
-          batch.update(ref, {'read': true, 'readAt': now});
+          // set+merge : crée le doc si manquant, met à jour sinon
+          batch.set(ref, {
+            'read':     true,
+            'isRead':   true,
+            'readAt':   now,
+            'playedAt': now, // empêche tout rejeu sonore futur
+          }, SetOptions(merge: true));
         }
         await batch.commit();
       }
-      if (kDebugMode) debugPrint('[NotifSvc] ✅ Tout marqué lu Firestore (${fsIds.length} docs)');
+      if (kDebugMode) {
+        debugPrint('[NotifSvc] ✅ Tout marqué lu Firestore (${allIds.length} docs)');
+      }
     } catch (e) {
       if (kDebugMode) debugPrint('[NotifSvc] _markAllReadInFirestore erreur: $e');
     }

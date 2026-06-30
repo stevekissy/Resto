@@ -748,6 +748,7 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
       NotificationService().trigger(
         NotifEvent.nouvelleCommande,
         message: 'Commande #${widget.order.orderNumber} envoyée en cuisine',
+        stableId: 'sent_to_kitchen_${widget.order.id}',
       );
 
       if (mounted) {
@@ -979,8 +980,11 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
       );
       
       // Notifier caisse
-      NotificationService().trigger(NotifEvent.paiementEnregistre,
-          message: 'Solde encaissé : commande #${order.orderNumber} — ${_fmt.format(remaining)} F');
+      NotificationService().trigger(
+        NotifEvent.paiementEnregistre,
+        message: 'Solde encaissé : commande #${order.orderNumber} — ${_fmt.format(remaining)} F',
+        stableId: 'payment_online_${order.id}',
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
