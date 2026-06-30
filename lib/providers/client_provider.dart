@@ -512,8 +512,9 @@ class ClientProvider extends ChangeNotifier {
 
   // ── Admin : mettre à jour le statut d'une commande ─────────────────────
 
-  Future<void> updateOrderStatus(String orderId, ClientOrderStatus newStatus) async {
-    await _svc.updateOrderStatus(orderId, newStatus);
+  Future<void> updateOrderStatus(String orderId, ClientOrderStatus newStatus,
+      {String callerRole = ''}) async {
+    await _svc.updateOrderStatus(orderId, newStatus, callerRole: callerRole);
 
     // ── Attribution des points fidélité après livraison OU service sur place ──
     // Règle STRICTE : points crédités UNIQUEMENT quand :
@@ -552,8 +553,8 @@ class ClientProvider extends ChangeNotifier {
 
   // ── Admin : accepter une commande (étape dédiée avant cuisine) ───────────
 
-  Future<void> acceptOrder(String orderId) async {
-    await _svc.acceptOrder(orderId);
+  Future<void> acceptOrder(String orderId, {String callerRole = ''}) async {
+    await _svc.acceptOrder(orderId, callerRole: callerRole);
     // Pas d'attribution de points ici — seulement après paiement/livraison
   }
 

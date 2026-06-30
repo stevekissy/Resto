@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../providers/client_provider.dart';
 import '../../providers/app_provider.dart';
 import '../../models/client_models.dart';
+import '../../models/models.dart' show UserRole;
 import '../../services/notification_service.dart';
 import '../../utils/app_theme.dart';
 
@@ -675,6 +676,31 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
     }
   }
 
+  // ── Helpers rôle ─────────────────────────────────────────────────────────
+
+  /// Rôle de l'utilisateur courant (snake_case).
+  String get _callerRole {
+    final role = context.read<AppProvider>().currentUser?.role;
+    if (role == null) return '';
+    switch (role) {
+      case UserRole.admin:        return 'admin';
+      case UserRole.manager:      return 'manager';
+      case UserRole.cashier:      return 'cashier';
+      case UserRole.kitchen:      return 'kitchen';
+      case UserRole.server:       return 'server';
+      case UserRole.stockManager: return 'stock_manager';
+      case UserRole.client:       return 'client';
+    }
+  }
+
+  /// Vrai si sentToKitchen==true + cuisine active + appelant != cuisine.
+  bool get _isLockedForCaller {
+    final ks = widget.order.kitchenStatus ?? '';
+    return widget.order.sentToKitchen &&
+           (ks == 'pending' || ks == 'preparing') &&
+           _callerRole != 'kitchen';
+  }
+
   // ── Actions ──────────────────────────────────────────────────────────
 
   /// Accepter la commande (étape dédiée avant envoi cuisine)
@@ -682,7 +708,10 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
     if (_processing) return;
     setState(() => _processing = true);
     try {
-      await context.read<ClientProvider>().acceptOrder(widget.order.id);
+      await context.read<ClientProvider>().acceptOrder(
+        widget.order.id,
+        callerRole: _callerRole,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
@@ -804,7 +833,10 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
 
     setState(() => _processing = true);
     try {
-      await context.read<ClientProvider>().updateOrderStatus(widget.order.id, newStatus);
+      await context.read<ClientProvider>().updateOrderStatus(
+        widget.order.id, newStatus,
+        callerRole: _callerRole,
+      );
       
       // Notifier selon le statut
       final notifSvc = NotificationService();
@@ -962,7 +994,9 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
     try {
       // Marquer payée + livrée (déclenche attribution points fidélité)
       await context.read<ClientProvider>().updateOrderStatus(
-          widget.order.id, ClientOrderStatus.delivered);
+          widget.order.id, ClientOrderStatus.delivered,
+          callerRole: _callerRole,
+      );
       
       // Notifier caisse
       NotificationService().trigger(NotifEvent.paiementEnregistre,
@@ -1002,6 +1036,9 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
     // isInKitchen : envoyée en cuisine, pas encore prête
     final isInKitchen = order.sentToKitchen &&
         (kitchenSt == 'pending' || kitchenSt == 'preparing');
+
+    // isLockedForCaller : commande en cuisine + appelant non-cuisine
+    final isLockedForCaller = _isLockedForCaller;
 
     // effectiveStatus : pour la border/couleur de la carte
     // Si en cuisine mais status==0 (POS), on affiche la couleur "preparing"
@@ -1474,7 +1511,7 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
 
           // ── Boutons workflow de statut ────────────────────────────────
           // Bouton Accepter dédié (commande reçue, pas encore acceptée)
-          if (!isClosed && !isInKitchen &&
+          if (!isClosed && !isInKitchen && !isLockedForCaller &&
               status == ClientOrderStatus.pending &&
               (order.adminStatus == null || order.adminStatus == 'received' || order.adminStatus == ''))
             Padding(
@@ -1504,7 +1541,7 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                       ),
                     ),
             ),
-          if (!isClosed && nextStatuses.isNotEmpty)
+          if (!isClosed && nextStatuses.isNotEmpty && !isLockedForCaller)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
               child: _processing
@@ -1538,28 +1575,30 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
                       }).toList(),
                     ),
             )
-          // ── Badge verrouillé : commande en préparation (cuisine) ─────
-          else if (!isClosed && isInKitchen)
+          // ── Badge verrouillé : commande en cuisine (non-cuisine) ─────
+          else if (!isClosed && isInKitchen && isLockedForCaller)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
-                  color: AppTheme.preparing.withValues(alpha: 0.10),
+                  color: AppTheme.preparing.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTheme.preparing.withValues(alpha: 0.35)),
+                  border: Border.all(color: AppTheme.preparing.withValues(alpha: 0.4)),
                 ),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.lock, color: AppTheme.preparing, size: 13),
-                    const SizedBox(width: 6),
-                    Text(
-                      'En préparation — gérée par la cuisine',
-                      style: TextStyle(
-                        color: AppTheme.preparing,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
+                    Icon(Icons.lock_outline, color: AppTheme.preparing, size: 14),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Commande envoyée en cuisine, modification impossible.',
+                        style: TextStyle(
+                          color: AppTheme.preparing,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],

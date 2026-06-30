@@ -492,7 +492,27 @@ class ClientFirebaseService {
 
   /// SOURCE UNIQUE : met à jour le statut directement dans 'orders'.
   /// [orderId] = id du doc orders (source unique — plus de clientOrderId séparé)
-  Future<void> updateOrderStatus(String orderId, ClientOrderStatus status) async {
+  ///
+  /// ⛔ RÈGLE VERROUILLAGE CUISINE :
+  /// Si sentToKitchen==true, seul un appelant ayant rôle 'cuisine' peut modifier
+  /// le kitchenStatus. Tout autre modification est rejetée avec une exception.
+  /// [callerRole] : rôle de l'appelant ('kitchen' | 'admin' | 'manager' | …)
+  Future<void> updateOrderStatus(String orderId, ClientOrderStatus status,
+      {String callerRole = ''}) async {
+    // ── Guard verrouillage cuisine ────────────────────────────────────────
+    // Vérifier directement en Firestore pour être sûr (defense-in-depth)
+    if (callerRole != 'kitchen') {
+      final snap = await _db.collection('orders').doc(orderId).get();
+      if (snap.exists) {
+        final sentToKitchen = snap.data()?['sentToKitchen'] as bool? ?? false;
+        final ks = snap.data()?['kitchenStatus'] as String? ?? '';
+        // Bloqué si en cours de traitement par la cuisine
+        // (pending/preparing → cuisine active)
+        if (sentToKitchen && (ks == 'pending' || ks == 'preparing')) {
+          throw Exception('Commande envoyée en cuisine, modification impossible.');
+        }
+      }
+    }
     final update = <String, dynamic>{
       'status': status.index,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -1461,7 +1481,19 @@ class ClientFirebaseService {
   // ── Accepter une commande (admin) ─────────────────────────────────────────
   /// Marque la commande comme acceptée par l'admin.
   /// Étape intermédiaire entre 'received' et 'sent_to_kitchen'.
-  Future<void> acceptOrder(String orderId) async {
+  /// ⛔ RÈGLE VERROUILLAGE CUISINE :
+  /// Impossible d'accepter une commande déjà envoyée en cuisine.
+  /// [callerRole] : rôle de l'appelant — doit être != 'kitchen'
+  Future<void> acceptOrder(String orderId, {String callerRole = ''}) async {
+    // Guard verrouillage cuisine
+    final snap = await _db.collection('orders').doc(orderId).get();
+    if (snap.exists) {
+      final sentToKitchen = snap.data()?['sentToKitchen'] as bool? ?? false;
+      final ks = snap.data()?['kitchenStatus'] as String? ?? '';
+      if (sentToKitchen && (ks == 'pending' || ks == 'preparing')) {
+        throw Exception('Commande envoyée en cuisine, modification impossible.');
+      }
+    }
     await _db.collection('orders').doc(orderId).update({
       'adminStatus':   'accepted',
       'orderStatus':   'accepted',
