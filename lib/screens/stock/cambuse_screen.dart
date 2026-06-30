@@ -163,13 +163,8 @@ class _CambuseScreenState extends State<CambuseScreen>
                   labelColor: const Color(0xFF42A5F5),
                   unselectedLabelColor: AppTheme.textSecondary,
                   tabs: [
-                    Tab(
-                      icon: Badge(
-                        label: Text('${items.length}'),
-                        isLabelVisible: items.isNotEmpty,
-                        backgroundColor: AppTheme.primary,
-                        child: const Icon(Icons.inventory_2, size: 16),
-                      ),
+                    const Tab(
+                      icon: Icon(Icons.inventory_2, size: 16),
                       text: 'Stock',
                     ),
                     const Tab(
@@ -184,13 +179,8 @@ class _CambuseScreenState extends State<CambuseScreen>
                       icon: Icon(Icons.playlist_add_check, size: 16),
                       text: 'Inventaire',
                     ),
-                    Tab(
-                      icon: Badge(
-                        label: Text('${provider.cambuseCategories.length}'),
-                        isLabelVisible: provider.cambuseCategories.isNotEmpty,
-                        backgroundColor: AppTheme.primary,
-                        child: const Icon(Icons.category, size: 16),
-                      ),
+                    const Tab(
+                      icon: Icon(Icons.category, size: 16),
                       text: 'Catégories',
                     ),
                   ],
