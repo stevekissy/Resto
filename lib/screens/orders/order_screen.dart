@@ -2323,7 +2323,12 @@ class _OrderListCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 10),
-      border: Border.all(color: order.statusColor.withValues(alpha: 0.3), width: 1),
+      border: Border.all(
+        color: order.isOnlineOrder
+            ? const Color(0xFF7C4DFF).withValues(alpha: 0.5)
+            : order.statusColor.withValues(alpha: 0.3),
+        width: order.isOnlineOrder ? 1.5 : 1,
+      ),
       child: Column(
         children: [
           Row(
@@ -2333,7 +2338,13 @@ class _OrderListCard extends StatelessWidget {
                 decoration: BoxDecoration(color: order.statusColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
                 child: Column(
                   children: [
-                    Text('#${order.orderNumber}', style: TextStyle(color: order.statusColor, fontWeight: FontWeight.w800, fontSize: 14)),
+                    Icon(
+                      order.isOnlineOrder ? Icons.storefront_outlined : Icons.receipt_long,
+                      color: order.isOnlineOrder ? const Color(0xFF7C4DFF) : order.statusColor,
+                      size: 18,
+                    ),
+                    const SizedBox(height: 2),
+                    Text('#${order.orderNumber}', style: TextStyle(color: order.statusColor, fontWeight: FontWeight.w800, fontSize: 13)),
                   ],
                 ),
               ),
@@ -2344,7 +2355,18 @@ class _OrderListCard extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Text(order.tableLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+                        if (order.isOnlineOrder) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF7C4DFF).withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text('EN LIGNE', style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 9, fontWeight: FontWeight.w900)),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        Flexible(child: Text(order.tableLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15), overflow: TextOverflow.ellipsis)),
                         if (order.isUrgent) ...[
                           const SizedBox(width: 8),
                           Container(

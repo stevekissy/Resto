@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -76,23 +75,9 @@ class _KitchenScreenState extends State<KitchenScreen> {
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
 
-    // ── LOG DEBUG : afficher toutes les commandes reçues dans le stream ──
     final allOrders = provider.orders;
-    if (kDebugMode) {
-      debugPrint('[CUISINE v3] Stream reçu : ${allOrders.length} commandes total');
-      for (final o in allOrders) {
-        final ks = o.kitchenStatus ?? 'null';
-        final inKitchen = o.sentToKitchen && _activeKitchenStatuses.contains(ks);
-        debugPrint(
-          '[CUISINE v3] ${inKitchen ? "✅" : "❌"} id=${o.id.substring(0, 12)}… '
-          'sentToKitchen=${o.sentToKitchen} ks=$ks '
-          'isOnline=${o.isOnlineOrder} hasKitchenItems=${o.hasKitchenItems} '
-          'items=${o.items.length} status=${o.status.name}',
-        );
-      }
-    }
 
-    // ── FIX v5 : filtre UNIFIÉ RENFORCÉ — commandes POS + online ──────────
+    // ── Filtre UNIFIÉ — commandes POS + online ─────────────────────────────
     //
     // Après sendToKitchen() (set merge:true), les commandes online ont :
     //   status = 0 (OrderStatus.pending)
@@ -145,17 +130,6 @@ class _KitchenScreenState extends State<KitchenScreen> {
 
     final readyOrders = provider.readyOrders;
 
-    // ── Bandeau debug ─────────────────────────────────────────────────────
-    final onlineTotal  = allOrders.where((o) => o.isOnlineOrder).length;
-    final onlineSent   = allOrders.where((o) => o.sentToKitchen).length;
-    final onlineKitchenIds = onlineInKitchen.map((o) => '${o.id.substring(0,8)}(${o.kitchenStatus})').join(', ');
-    // Diagnostic : sentToKitchen mais kitchenStatus hors range
-    final sentButFiltered = allOrders.where((o) {
-      if (!o.sentToKitchen) return false;
-      final ks = o.kitchenStatus ?? '';
-      return !_activeKitchenStatuses.contains(ks);
-    }).toList();
-
     return Scaffold(
       body: Column(
         children: [
@@ -163,39 +137,6 @@ class _KitchenScreenState extends State<KitchenScreen> {
             provider: provider,
             tts: _tts,
             onSettingsChanged: () => setState(() {}),
-          ),
-          // ── Bandeau debug stream (visible pour diagnostic) ────────────
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            color: const Color(0xFF0D1B2A),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '🔎 Stream : ${allOrders.length} total · $onlineTotal online · $onlineSent sentToKitchen · ${onlineInKitchen.length} actives cuisine  [v28/06-16:00]',
-                  style: const TextStyle(color: Color(0xFF64B5F6), fontSize: 10, fontFamily: 'monospace'),
-                ),
-                if (onlineInKitchen.isNotEmpty)
-                  Text(
-                    '✅ En cuisine : $onlineKitchenIds…',
-                    style: const TextStyle(color: Color(0xFF81C784), fontSize: 10, fontFamily: 'monospace'),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                if (onlineInKitchen.isEmpty && onlineSent > 0)
-                  Text(
-                    '⚠ $onlineSent sentToKitchen mais 0 actif — kitchenStatus: ${allOrders.where((o) => o.sentToKitchen).map((o) => o.kitchenStatus ?? "null").join(",")}',
-                    style: const TextStyle(color: Color(0xFFFFB74D), fontSize: 10, fontFamily: 'monospace'),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                if (sentButFiltered.isNotEmpty)
-                  Text(
-                    '🚫 Filtrés (ks hors range) : ${sentButFiltered.map((o) => "${o.id.substring(0,8)}…=${o.kitchenStatus}").join(", ")}',
-                    style: const TextStyle(color: Color(0xFFEF5350), fontSize: 10, fontFamily: 'monospace'),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-              ],
-            ),
           ),
           Expanded(
             child: activeOrders.isEmpty && readyOrders.isEmpty
