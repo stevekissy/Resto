@@ -87,22 +87,28 @@ class TtsService {
   // ====================================================================
   // CLÉS SHARED PREFERENCES (persistance état ON/OFF)
   // ====================================================================
-  static const _kKitchenEnabled  = 'tts_kitchen_enabled';
-  static const _kCashierEnabled  = 'tts_cashier_enabled';
-  static const _kSpeechRate      = 'tts_speech_rate';
-  static const _kVoiceName       = 'tts_voice_name';
-  static const _kPitch           = 'tts_pitch';
+  static const _kKitchenEnabled       = 'tts_kitchen_enabled';
+  static const _kCashierEnabled       = 'tts_cashier_enabled';
+  static const _kOrderTrackingEnabled = 'tts_order_tracking_enabled';
+  static const _kSpeechRate           = 'tts_speech_rate';
+  static const _kVoiceName            = 'tts_voice_name';
+  static const _kPitch                = 'tts_pitch';
+
+  // ── Suivi commandes vocal ────────────────────────────────────
+  bool _orderTrackingVoiceEnabled = false;
+  bool get orderTrackingVoiceEnabled => _orderTrackingVoiceEnabled;
 
   /// Charge l'état persisté depuis SharedPreferences.
   /// À appeler au démarrage de l'application (ou des écrans cuisine/caisse).
   Future<void> loadPersistedState() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      settings.enabled     = prefs.getBool(_kKitchenEnabled)    ?? true;
-      settings.speechRate  = prefs.getDouble(_kSpeechRate)      ?? 0.88;
-      settings.voiceName   = prefs.getString(_kVoiceName)       ?? '';
-      _pitch               = prefs.getDouble(_kPitch)           ?? 1.22;
-      _cashierEnabledPersisted = prefs.getBool(_kCashierEnabled) ?? false;
+      settings.enabled          = prefs.getBool(_kKitchenEnabled)       ?? true;
+      settings.speechRate       = prefs.getDouble(_kSpeechRate)         ?? 0.88;
+      settings.voiceName        = prefs.getString(_kVoiceName)          ?? '';
+      _pitch                    = prefs.getDouble(_kPitch)              ?? 1.22;
+      _cashierEnabledPersisted  = prefs.getBool(_kCashierEnabled)       ?? false;
+      _orderTrackingVoiceEnabled = prefs.getBool(_kOrderTrackingEnabled) ?? false;
       if (kDebugMode) {
         debugPrint('[TTS] État chargé — cuisine: ${settings.enabled}, rate: ${settings.speechRate}, voix: "${settings.voiceName}", caisse: $_cashierEnabledPersisted');
       }
@@ -148,6 +154,17 @@ class TtsService {
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[TTS] savePitch erreur: $e');
+    }
+  }
+
+  /// Sauvegarde l'état assistance vocale Suivi commandes ON/OFF.
+  Future<void> saveOrderTrackingVoiceEnabled(bool value) async {
+    _orderTrackingVoiceEnabled = value;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kOrderTrackingEnabled, value);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[TTS] saveOrderTrackingVoiceEnabled erreur: $e');
     }
   }
 
@@ -325,6 +342,13 @@ class TtsService {
     enqueue(text);
   }
 
+  /// Enqueue sans vérifier settings.enabled (pour les messages système).
+  void enqueueRaw(String text) {
+    if (text.trim().isEmpty) return;
+    _speechQueue.addLast(text.trim());
+    _processQueue();
+  }
+
   Future<void> stop() async {
     _speechQueue.clear();
     _isSpeaking = false;
@@ -396,6 +420,63 @@ class TtsService {
       'La commande numéro ${order.orderNumber} est prête. '
       'Table ${order.tableNumber}, votre commande peut être servie.',
     );
+  }
+
+  // ====================================================================
+  // ANNONCES SUIVI COMMANDES — Restaurant Sankadiokro
+  // ====================================================================
+
+  /// Annonce un changement de statut dans l'écran Suivi Commandes.
+  /// Voix claire, professionnelle, style assistante africaine.
+  /// Respecte settings.enabled (partagé cuisine/caisse/suivi).
+  void announceOrderStatusChange(Order order) {
+    final num = order.orderNumber;
+    String message;
+
+    switch (order.status) {
+      case OrderStatus.preparing:
+        message =
+            'Restaurant Sankadiokro — '
+            'Commande numéro $num en préparation. '
+            '${_tableOrOnline(order)}, la cuisine est en action.';
+        break;
+      case OrderStatus.ready:
+        message =
+            'Restaurant Sankadiokro — '
+            'Commande numéro $num prête. '
+            '${_tableOrOnline(order)}, prête à servir !';
+        break;
+      case OrderStatus.served:
+        message =
+            'Restaurant Sankadiokro — '
+            'Commande numéro $num servie. '
+            '${_tableOrOnline(order)}, bonne dégustation !';
+        break;
+      case OrderStatus.cancelled:
+        final reason = (order.cancelReason?.isNotEmpty == true)
+            ? 'Raison : ${order.cancelReason}.'
+            : '';
+        message =
+            'Restaurant Sankadiokro — '
+            'Commande numéro $num annulée. '
+            '${_tableOrOnline(order)}. $reason';
+        break;
+      case OrderStatus.pending:
+        message =
+            'Restaurant Sankadiokro — '
+            'Commande numéro $num en attente de préparation.';
+        break;
+    }
+
+    // Utiliser enqueueRaw pour passer même si settings.enabled est false
+    // (l'utilisateur a explicitement activé le suivi vocal)
+    enqueueRaw(message.trim());
+    if (kDebugMode) debugPrint('[TTS Suivi] ${order.orderNumber} → ${order.status.name}');
+  }
+
+  String _tableOrOnline(Order order) {
+    if (order.isOnlineOrder) return 'Commande en ligne';
+    return 'Table ${order.tableNumber}';
   }
 
   Future<void> announceDelay(Order order) async {

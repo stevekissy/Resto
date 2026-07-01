@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
+import '../../services/tts_service.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../../widgets/product_image_widget.dart';
@@ -2223,12 +2224,25 @@ class OrdersListTab extends StatefulWidget {
 }
 
 class _OrdersListTabState extends State<OrdersListTab> {
+  // ── Filtrage ────────────────────────────────────────────────
+  // null = toutes ; OrderStatus.cancelled = annulées uniquement
   OrderStatus? _filterStatus;
+
+  // ── Assistance vocale ────────────────────────────────────────
+  final TtsService _tts = TtsService();
+  bool _voiceEnabled = false;
+  /// orderId → dernier statut annoncé (ex: 'preparing', 'ready', 'served', 'cancelled')
+  final Map<String, String> _announcedStatuses = {};
+  List<Order> _prevOrders = [];
+
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
+    _tts.loadPersistedState().then((_) {
+      if (mounted) setState(() => _voiceEnabled = _tts.orderTrackingVoiceEnabled);
+    });
     _timer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
@@ -2240,44 +2254,160 @@ class _OrdersListTabState extends State<OrdersListTab> {
     super.dispose();
   }
 
+  // ── Détection des changements de statut → annonce vocale ────
+  void _detectAndAnnounce(List<Order> orders) {
+    if (!_voiceEnabled) return;
+    for (final order in orders) {
+      final prevOrder = _prevOrders.where((o) => o.id == order.id).firstOrNull;
+      final lastAnnounced = _announcedStatuses[order.id] ?? '';
+      final statusKey = order.status.name;
+
+      // Ignorer si déjà annoncé ou pas de changement
+      if (statusKey == lastAnnounced) continue;
+      // Ignorer les statuts déjà en place à l'arrivée (première vue)
+      if (prevOrder == null && order.status != OrderStatus.cancelled) continue;
+      // Détecter changement réel
+      if (prevOrder != null && prevOrder.status == order.status) continue;
+
+      _announcedStatuses[order.id] = statusKey;
+      _tts.announceOrderStatusChange(order);
+    }
+    _prevOrders = List.from(orders);
+  }
+
+  void _toggleVoice() async {
+    final newVal = !_voiceEnabled;
+    setState(() => _voiceEnabled = newVal);
+    await _tts.saveOrderTrackingVoiceEnabled(newVal);
+    if (newVal) {
+      _tts.enqueueRaw(
+        'Assistance vocale activée. Restaurant Sankadiokro — Suivi commandes.',
+      );
+    } else {
+      _tts.stop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    var orders = provider.orders;
-    if (_filterStatus != null) orders = orders.where((o) => o.status == _filterStatus).toList();
+    var allOrders = provider.orders;
+
+    // Tri : annulées en dernier, puis par heure de création décroissante
+    allOrders = [...allOrders]..sort((a, b) {
+      if (a.status == OrderStatus.cancelled && b.status != OrderStatus.cancelled) return 1;
+      if (a.status != OrderStatus.cancelled && b.status == OrderStatus.cancelled) return -1;
+      return b.createdAt.compareTo(a.createdAt);
+    });
+
+    var orders = _filterStatus != null
+        ? allOrders.where((o) => o.status == _filterStatus).toList()
+        : allOrders;
+
+    // Annonces vocales (sans setState pour éviter les boucles)
+    WidgetsBinding.instance.addPostFrameCallback((_) => _detectAndAnnounce(allOrders));
+
+    final cancelledCount = allOrders.where((o) => o.status == OrderStatus.cancelled).length;
 
     return Column(
       children: [
+        // ── Barre filtres + toggle voix ────────────────────────────
         Padding(
-          padding: const EdgeInsets.all(12),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _FilterChip(label: 'Toutes', selected: _filterStatus == null, onTap: () => setState(() => _filterStatus = null)),
-                const SizedBox(width: 8),
-                ...OrderStatus.values.where((s) => s != OrderStatus.cancelled).map((s) {
-                  final labels = ['En attente', 'En préparation', 'Prêtes', 'Servies', ''];
-                  final colors = [AppTheme.pending, AppTheme.preparing, AppTheme.ready, const Color(0xFF2196F3), AppTheme.error];
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: _FilterChip(
-                      label: labels[s.index],
-                      color: colors[s.index],
-                      selected: _filterStatus == s,
-                      onTap: () => setState(() => _filterStatus = s),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _FilterChip(
+                        label: 'Toutes',
+                        selected: _filterStatus == null,
+                        onTap: () => setState(() => _filterStatus = null),
+                      ),
+                      const SizedBox(width: 6),
+                      ...OrderStatus.values.where((s) => s != OrderStatus.cancelled).map((s) {
+                        const labels = ['En attente', 'En préparation', 'Prêtes', 'Servies', ''];
+                        const colors = [
+                          Color(0xFFFFC107),
+                          Color(0xFFFF6B00),
+                          Color(0xFF4CAF50),
+                          Color(0xFF2196F3),
+                          Color(0xFFF44336),
+                        ];
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: _FilterChip(
+                            label: labels[s.index],
+                            color: colors[s.index],
+                            selected: _filterStatus == s,
+                            onTap: () => setState(() => _filterStatus = s),
+                          ),
+                        );
+                      }),
+                      // Chip Annulées avec compteur
+                      if (cancelledCount > 0) Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: _FilterChip(
+                          label: 'Annulées ($cancelledCount)',
+                          color: AppTheme.error,
+                          selected: _filterStatus == OrderStatus.cancelled,
+                          onTap: () => setState(() => _filterStatus = OrderStatus.cancelled),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // ── Toggle assistance vocale ─────────────────────────
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: _toggleVoice,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: _voiceEnabled
+                        ? AppTheme.primary.withValues(alpha: 0.15)
+                        : AppTheme.surfaceLight,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: _voiceEnabled
+                          ? AppTheme.primary.withValues(alpha: 0.6)
+                          : const Color(0xFF2A2A5A),
                     ),
-                  );
-                }),
-              ],
-            ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _voiceEnabled ? Icons.volume_up : Icons.volume_off,
+                        color: _voiceEnabled ? AppTheme.primary : AppTheme.textSecondary,
+                        size: 15,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _voiceEnabled ? 'Voix ON' : 'Voix',
+                        style: TextStyle(
+                          color: _voiceEnabled ? AppTheme.primary : AppTheme.textSecondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
+        const SizedBox(height: 8),
+        // ── Liste des commandes ────────────────────────────────────
         Expanded(
           child: orders.isEmpty
             ? const EmptyState(icon: Icons.receipt_long, title: 'Aucune commande trouvée')
             : ListView.builder(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 itemCount: orders.length,
                 itemBuilder: (context, i) => _OrderListCard(order: orders[i], provider: provider),
               ),
@@ -2321,30 +2451,54 @@ class _OrderListCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isCancelled = order.status == OrderStatus.cancelled;
+
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 10),
       border: Border.all(
-        color: order.isOnlineOrder
-            ? const Color(0xFF7C4DFF).withValues(alpha: 0.5)
-            : order.statusColor.withValues(alpha: 0.3),
-        width: order.isOnlineOrder ? 1.5 : 1,
+        color: isCancelled
+            ? AppTheme.error.withValues(alpha: 0.4)
+            : order.isOnlineOrder
+                ? const Color(0xFF7C4DFF).withValues(alpha: 0.5)
+                : order.statusColor.withValues(alpha: 0.3),
+        width: isCancelled ? 1.5 : (order.isOnlineOrder ? 1.5 : 1),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── En-tête commande ─────────────────────────────────────
           Row(
             children: [
               Container(
                 padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(color: order.statusColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(
+                  color: order.statusColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: Column(
                   children: [
                     Icon(
-                      order.isOnlineOrder ? Icons.storefront_outlined : Icons.receipt_long,
-                      color: order.isOnlineOrder ? const Color(0xFF7C4DFF) : order.statusColor,
+                      isCancelled
+                          ? Icons.cancel
+                          : order.isOnlineOrder
+                              ? Icons.storefront_outlined
+                              : Icons.receipt_long,
+                      color: isCancelled
+                          ? AppTheme.error
+                          : order.isOnlineOrder
+                              ? const Color(0xFF7C4DFF)
+                              : order.statusColor,
                       size: 18,
                     ),
                     const SizedBox(height: 2),
-                    Text('#${order.orderNumber}', style: TextStyle(color: order.statusColor, fontWeight: FontWeight.w800, fontSize: 13)),
+                    Text(
+                      '#${order.orderNumber}',
+                      style: TextStyle(
+                        color: isCancelled ? AppTheme.error : order.statusColor,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -2362,61 +2516,158 @@ class _OrderListCard extends StatelessWidget {
                               color: const Color(0xFF7C4DFF).withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(4),
                             ),
-                            child: const Text('EN LIGNE', style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 9, fontWeight: FontWeight.w900)),
+                            child: const Text('EN LIGNE',
+                                style: TextStyle(color: Color(0xFF7C4DFF), fontSize: 9, fontWeight: FontWeight.w900)),
                           ),
                           const SizedBox(width: 6),
                         ],
-                        Flexible(child: Text(order.tableLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15), overflow: TextOverflow.ellipsis)),
+                        Flexible(
+                          child: Text(
+                            order.tableLabel,
+                            style: TextStyle(
+                              color: isCancelled ? Colors.white70 : Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                              decoration: isCancelled ? TextDecoration.lineThrough : null,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                         if (order.isUrgent) ...[
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(8)),
-                            child: const Text('URGENT', style: TextStyle(color: AppTheme.error, fontSize: 10, fontWeight: FontWeight.w900)),
+                            decoration: BoxDecoration(
+                              color: AppTheme.error.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text('URGENT',
+                                style: TextStyle(color: AppTheme.error, fontSize: 10, fontWeight: FontWeight.w900)),
                           ),
                         ],
                       ],
                     ),
-                    Text('${order.items.fold(0, (s, i) => s + i.quantity)} articles • ${order.totalAmount.toStringAsFixed(0)} F CFA',
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                    Text('Il y a ${order.elapsedMinutes} min', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                    Text(
+                      '${order.items.fold(0, (s, i) => s + i.quantity)} articles • ${order.totalAmount.toStringAsFixed(0)} F CFA',
+                      style: TextStyle(
+                        color: isCancelled
+                            ? AppTheme.textSecondary.withValues(alpha: 0.6)
+                            : AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    Text(
+                      'Il y a ${order.elapsedMinutes} min',
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                    ),
                   ],
                 ),
               ),
               StatusBadge(label: order.statusLabel, color: order.statusColor),
             ],
           ),
-          // Items preview
+
+          // ── Bloc annulation (visible si cancelled) ───────────────
+          if (isCancelled) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.error.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.error.withValues(alpha: 0.25)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.cancel_outlined, color: AppTheme.error, size: 14),
+                      const SizedBox(width: 6),
+                      const Text('Commande annulée',
+                          style: TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700, fontSize: 12)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  // Raison
+                  if ((order.cancelReason ?? '').isNotEmpty) _CancelInfoRow(
+                    icon: Icons.comment_outlined,
+                    label: 'Raison',
+                    value: order.cancelReason!,
+                    valueColor: Colors.white,
+                  ),
+                  // Annulé par (nom)
+                  _CancelInfoRow(
+                    icon: Icons.person_outline,
+                    label: 'Annulé par',
+                    value: order.cancelledByName ?? order.cancelledBy ?? '—',
+                  ),
+                  // Rôle
+                  if ((order.cancelledByRole ?? '').isNotEmpty) _CancelInfoRow(
+                    icon: Icons.badge_outlined,
+                    label: 'Rôle',
+                    value: _roleLabel(order.cancelledByRole!),
+                  ),
+                  // Date/heure
+                  if (order.cancelledAt != null) _CancelInfoRow(
+                    icon: Icons.access_time,
+                    label: 'Le',
+                    value: _formatDateTime(order.cancelledAt!),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // ── Articles ─────────────────────────────────────────────
           const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: AppTheme.surfaceLight, borderRadius: BorderRadius.circular(10)),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceLight,
+              borderRadius: BorderRadius.circular(10),
+            ),
             child: Column(
               children: order.items.map((item) => Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('${item.quantity}× ${item.productName}', style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12)),
-                    Text('${item.totalPrice.toStringAsFixed(0)} F', style: const TextStyle(color: AppTheme.primary, fontSize: 12)),
+                    Text('${item.quantity}× ${item.productName}',
+                        style: TextStyle(
+                          color: isCancelled
+                              ? AppTheme.textSecondary
+                              : AppTheme.textPrimary,
+                          fontSize: 12,
+                          decoration: isCancelled ? TextDecoration.lineThrough : null,
+                        )),
+                    Text('${item.totalPrice.toStringAsFixed(0)} F',
+                        style: TextStyle(
+                          color: isCancelled ? AppTheme.textSecondary : AppTheme.primary,
+                          fontSize: 12,
+                        )),
                   ],
                 ),
               )).toList(),
             ),
           ),
-          // Infos serveur si présent
-          if (order.serverName != null) ...[                                           
+
+          // ── Serveur ──────────────────────────────────────────────
+          if (order.serverName != null) ...[
             const SizedBox(height: 6),
             Row(
               children: [
                 const Icon(Icons.person_outline, color: AppTheme.textSecondary, size: 13),
                 const SizedBox(width: 4),
-                Text('Serveur : ${order.serverName}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                Text('Serveur : ${order.serverName}',
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
               ],
             ),
           ],
-          // Status actions
-          if (order.status != OrderStatus.served && order.status != OrderStatus.cancelled) ...[
+
+          // ── Boutons d'action (non servi, non annulé) ─────────────
+          if (order.status != OrderStatus.served && !isCancelled) ...[
             const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -2426,6 +2677,24 @@ class _OrderListCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _roleLabel(String role) {
+    const map = {
+      'admin': 'Administrateur',
+      'manager': 'Manager',
+      'server': 'Serveur',
+      'kitchen': 'Cuisine',
+      'cashier': 'Caissier',
+      'owner': 'Propriétaire',
+    };
+    return map[role] ?? role;
+  }
+
+  String _formatDateTime(DateTime dt) {
+    final d = '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+    final t = '${dt.hour.toString().padLeft(2, '0')}h${dt.minute.toString().padLeft(2, '0')}';
+    return '$d à $t';
   }
 
   List<Widget> _buildActions(BuildContext context, Order order, AppProvider provider) {
@@ -2551,76 +2820,9 @@ class _OrderListCard extends StatelessWidget {
   }
 
   void _showCancelDialog(BuildContext context, Order order, AppProvider provider) {
-    final reasonCtrl = TextEditingController();
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.cancel, color: AppTheme.error),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text('Annuler #${order.orderNumber}',
-                  style: const TextStyle(color: Colors.white, fontSize: 15)),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${order.tableLabel} — ${order.totalAmount.toStringAsFixed(0)} F CFA',
-                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-            const SizedBox(height: 14),
-            const Text('Raison de l\'annulation *',
-                style: TextStyle(color: Colors.white, fontSize: 13)),
-            const SizedBox(height: 6),
-            TextField(
-              controller: reasonCtrl,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              maxLines: 2,
-              decoration: const InputDecoration(
-                hintText: 'Ex: Erreur de saisie, client parti...',
-                contentPadding: EdgeInsets.all(10),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Fermer', style: TextStyle(color: AppTheme.textSecondary)),
-          ),
-          ElevatedButton.icon(
-            onPressed: () async {
-              final reason = reasonCtrl.text.trim();
-              if (reason.isEmpty) return;
-              Navigator.pop(context);
-              try {
-                await provider.cancelOrder(orderId: order.id, cancelReason: reason);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text('Commande #${order.orderNumber} annulée'),
-                    backgroundColor: AppTheme.error,
-                  ));
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text('Erreur : $e'),
-                    backgroundColor: Colors.red,
-                  ));
-                }
-              }
-            },
-            icon: const Icon(Icons.cancel, size: 14),
-            label: const Text('Confirmer l\'annulation'),
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error, foregroundColor: Colors.white),
-          ),
-        ],
-      ),
+      builder: (_) => _CancelOrderDialog(order: order, provider: provider),
     );
   }
 
@@ -2628,6 +2830,219 @@ class _OrderListCard extends StatelessWidget {
     showDialog(
       context: context,
       builder: (_) => _EditOrderDialog(order: order, provider: provider),
+    );
+  }
+}
+
+// ── Widget ligne info annulation ─────────────────────────────────────────────
+class _CancelInfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color? valueColor;
+  const _CancelInfoRow({required this.icon, required this.label, required this.value, this.valueColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppTheme.textSecondary, size: 12),
+          const SizedBox(width: 5),
+          Text('$label : ', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.w600)),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                color: valueColor ?? AppTheme.textSecondary,
+                fontSize: 11,
+                fontStyle: valueColor != null ? FontStyle.normal : FontStyle.italic,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Dialog Annulation avec validation ────────────────────────────────────────
+class _CancelOrderDialog extends StatefulWidget {
+  final Order order;
+  final AppProvider provider;
+  const _CancelOrderDialog({required this.order, required this.provider});
+  @override
+  State<_CancelOrderDialog> createState() => _CancelOrderDialogState();
+}
+
+class _CancelOrderDialogState extends State<_CancelOrderDialog> {
+  final _reasonCtrl = TextEditingController();
+  bool _reasonEmpty = true;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _reasonCtrl.addListener(() {
+      final empty = _reasonCtrl.text.trim().isEmpty;
+      if (empty != _reasonEmpty) setState(() => _reasonEmpty = empty);
+    });
+  }
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _confirm() async {
+    final reason = _reasonCtrl.text.trim();
+    if (reason.isEmpty) return;
+    setState(() => _loading = true);
+    try {
+      await widget.provider.cancelOrder(
+        orderId: widget.order.id,
+        cancelReason: reason,
+      );
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Commande #${widget.order.orderNumber} annulée'),
+          backgroundColor: AppTheme.error,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Erreur : $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          const Icon(Icons.cancel, color: AppTheme.error, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Annuler #${widget.order.orderNumber}',
+                    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+                Text('${widget.order.tableLabel} — ${widget.order.totalAmount.toStringAsFixed(0)} F CFA',
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+              ],
+            ),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Articles résumés
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: AppTheme.surfaceLight, borderRadius: BorderRadius.circular(8)),
+            child: Column(
+              children: widget.order.items.map((i) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 1),
+                child: Row(
+                  children: [
+                    Text('${i.quantity}× ', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                    Expanded(child: Text(i.productName, style: const TextStyle(color: Colors.white70, fontSize: 11))),
+                  ],
+                ),
+              )).toList(),
+            ),
+          ),
+          const SizedBox(height: 14),
+          // Champ raison
+          Row(
+            children: [
+              const Text('Raison d\'annulation',
+                  style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                child: const Text('Obligatoire', style: TextStyle(color: AppTheme.error, fontSize: 9, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _reasonCtrl,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: 'Ex: Erreur de saisie, client parti, doublon…',
+              hintStyle: TextStyle(color: AppTheme.textSecondary.withValues(alpha: 0.6), fontSize: 12),
+              contentPadding: const EdgeInsets.all(10),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(
+                  color: _reasonEmpty
+                      ? AppTheme.error.withValues(alpha: 0.4)
+                      : AppTheme.primary.withValues(alpha: 0.5),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(
+                  color: _reasonEmpty ? AppTheme.error : AppTheme.primary,
+                  width: 1.5,
+                ),
+              ),
+              filled: true,
+              fillColor: AppTheme.surfaceLight,
+            ),
+          ),
+          if (_reasonEmpty) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                const Icon(Icons.info_outline, color: AppTheme.error, size: 12),
+                const SizedBox(width: 4),
+                const Text('La raison est obligatoire pour annuler.',
+                    style: TextStyle(color: AppTheme.error, fontSize: 10)),
+              ],
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.pop(context),
+          child: const Text('Fermer', style: TextStyle(color: AppTheme.textSecondary)),
+        ),
+        ElevatedButton.icon(
+          onPressed: _loading || _reasonEmpty ? null : _confirm,
+          icon: _loading
+              ? const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.cancel, size: 14),
+          label: const Text('Confirmer l\'annulation'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _reasonEmpty ? AppTheme.surfaceLight : AppTheme.error,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: AppTheme.surfaceLight,
+            disabledForegroundColor: AppTheme.textSecondary,
+          ),
+        ),
+      ],
     );
   }
 }

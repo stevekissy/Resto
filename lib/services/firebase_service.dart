@@ -448,6 +448,9 @@ class FirebaseService {
             cancelledAt: _toDateTimeNullable(data['cancelledAt']),
             cancelledBy: data['cancelledBy'] as String?,
             cancelReason: data['cancelReason'] as String?,
+            cancelledByName: data['cancelledByName'] as String?,
+            cancelledByRole: data['cancelledByRole'] as String?,
+            cancelledByUserId: data['cancelledByUserId'] as String?,
             // FIX CRASH : paymentStatus peut être int (0) dans commandes online
             paymentStatus: (() {
               final v = data['paymentStatus'];
@@ -671,6 +674,9 @@ class FirebaseService {
     required String orderId,
     required String cancelledBy,
     required String cancelReason,
+    String? cancelledByName,
+    String? cancelledByRole,
+    String? cancelledByUserId,
   }) async {
     // ── Guard Firestore : vérification atomique côté serveur ─────────
     await _db.runTransaction((tx) async {
@@ -683,12 +689,18 @@ class FirebaseService {
         throw Exception('Commande déjà en préparation, annulation impossible depuis ce module.');
       }
       tx.update(ref, {
-        'status':      OrderStatus.cancelled.index,
-        'cancelledAt': DateTime.now().millisecondsSinceEpoch,
-        'cancelledBy': cancelledBy,
-        'cancelReason': cancelReason,
+        'status':             OrderStatus.cancelled.index,
+        'kitchenStatus':      'cancelled',
+        'orderStatus':        'cancelled',
+        'cancelledAt':        DateTime.now().millisecondsSinceEpoch,
+        'cancelledBy':        cancelledBy,
+        'cancelReason':       cancelReason,
+        'cancelledByName':    cancelledByName ?? cancelledBy,
+        'cancelledByRole':    cancelledByRole ?? '',
+        'cancelledByUserId':  cancelledByUserId ?? '',
       });
     });
+    debugPrint('[FirebaseService] cancelOrder: $orderId → annulé par $cancelledBy ($cancelledByRole) — raison: $cancelReason');
   }
 
   // =================== STOCK ===================

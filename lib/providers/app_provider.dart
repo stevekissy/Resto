@@ -1248,7 +1248,9 @@ class AppProvider extends ChangeNotifier {
     required String orderId,
     required String cancelReason,
   }) async {
-    final cancelledBy = _currentUser?.name ?? 'Inconnu';
+    final cancelledBy     = _currentUser?.name   ?? 'Inconnu';
+    final cancelledByRole = _currentUser?.role?.name ?? '';
+    final cancelledById   = _currentUser?.id     ?? '';
 
     // Guard côté provider (defense-in-depth avant appel Firebase)
     final order = _orders.firstWhere(
@@ -1281,9 +1283,12 @@ class AppProvider extends ChangeNotifier {
     }
 
     await _firebase.cancelOrder(
-      orderId: orderId,
-      cancelledBy: cancelledBy,
-      cancelReason: cancelReason,
+      orderId:          orderId,
+      cancelledBy:      cancelledBy,
+      cancelReason:     cancelReason,
+      cancelledByName:  cancelledBy,
+      cancelledByRole:  cancelledByRole,
+      cancelledByUserId: cancelledById,
     );
   }
 

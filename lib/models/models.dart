@@ -450,8 +450,11 @@ class Order {
   // ── Cycle de vie modification / annulation ──────────────────────────
   DateTime? updatedAt;
   DateTime? cancelledAt;
-  String? cancelledBy;
+  String? cancelledBy;         // Nom affiché (rétrocompatibilité)
   String? cancelReason;
+  String? cancelledByName;     // Nom complet de l'annuleur
+  String? cancelledByRole;     // Rôle (admin, manager, server…)
+  String? cancelledByUserId;   // UID Firestore de l'annuleur
 
   Order({
     required this.id,
@@ -488,6 +491,9 @@ class Order {
     this.cancelledAt,
     this.cancelledBy,
     this.cancelReason,
+    this.cancelledByName,
+    this.cancelledByRole,
+    this.cancelledByUserId,
     this.paymentStatus,
     this.settlementStatus,
     this.orderType = 'dine_in',
@@ -573,6 +579,9 @@ class Order {
     'cancelledAt': cancelledAt?.millisecondsSinceEpoch,
     'cancelledBy': cancelledBy,
     'cancelReason': cancelReason,
+    'cancelledByName': cancelledByName,
+    'cancelledByRole': cancelledByRole,
+    'cancelledByUserId': cancelledByUserId,
     'paymentStatus': paymentStatus,
     'settlementStatus': settlementStatus,
     'orderType': orderType,
@@ -625,6 +634,9 @@ class Order {
         : null,
     cancelledBy: map['cancelledBy'] as String?,
     cancelReason: map['cancelReason'] as String?,
+    cancelledByName: map['cancelledByName'] as String?,
+    cancelledByRole: map['cancelledByRole'] as String?,
+    cancelledByUserId: map['cancelledByUserId'] as String?,
     paymentStatus: map['paymentStatus'] as String?,
     settlementStatus: map['settlementStatus'] as String?,
     orderType: map['orderType'] as String? ?? 'dine_in',
