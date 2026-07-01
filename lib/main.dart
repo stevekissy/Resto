@@ -179,7 +179,7 @@ class SankadiokroApp extends StatelessWidget {
         ChangeNotifierProvider<SandboxProvider>(create: (_) => SandboxProvider()),
       ],
       child: MaterialApp(
-        title: 'Sankadio Manager',
+        title: 'Les meilleurs plats africains sont chez nous',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
         // Pas de routes nommées pour éviter les conflits avec Netlify.

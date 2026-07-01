@@ -1,11 +1,11 @@
 {
-    "name": "Restaurant Sankadiokro",
-    "short_name": "Sankadiokro",
+    "name": "Les meilleurs plats africains sont chez nous",
+    "short_name": "Les meilleurs plats africains",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#FFFFFF",
     "theme_color": "#B5451B",
-    "description": "Restaurant Sankadiokro — Gestion et commandes en ligne",
+    "description": "Les meilleurs plats africains sont chez nous",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
