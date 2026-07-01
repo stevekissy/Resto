@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
 import '../../services/tts_service.dart';
 import '../../utils/app_theme.dart';
+import '../../utils/time_utils.dart';
 import '../../widgets/common_widgets.dart';
 import '../../widgets/product_image_widget.dart';
 import '../../models/models.dart';
@@ -2557,7 +2558,7 @@ class _OrderListCard extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      'Il y a ${order.elapsedMinutes} min',
+                      formatDurationHuman(order.createdAt),
                       style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
                     ),
                   ],

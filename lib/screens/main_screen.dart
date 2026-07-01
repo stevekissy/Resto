@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../utils/app_theme.dart';
+import '../utils/time_utils.dart';
 import '../models/models.dart';
 import '../widgets/common_widgets.dart';
 import 'dashboard/dashboard_screen.dart';
@@ -594,13 +595,7 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  String _timeAgo(DateTime dt) {
-    final diff = DateTime.now().difference(dt);
-    if (diff.inSeconds < 60)  return 'À l\'instant';
-    if (diff.inMinutes < 60)  return 'Il y a ${diff.inMinutes} min';
-    if (diff.inHours < 24)    return 'Il y a ${diff.inHours} h';
-    return '${dt.day.toString().padLeft(2,'0')}/${dt.month.toString().padLeft(2,'0')} ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
-  }
+  String _timeAgo(DateTime dt) => formatDurationHuman(dt);
 
   void _showProfileMenu(BuildContext context, AppProvider provider) {
     showModalBottomSheet(

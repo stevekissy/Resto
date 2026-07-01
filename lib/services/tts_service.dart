@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 import '../providers/app_provider.dart';
+import '../utils/time_utils.dart';
 
 // Importation conditionnelle : dart:js uniquement sur web
 // ignore: uri_does_not_exist
@@ -482,7 +483,7 @@ class TtsService {
   Future<void> announceDelay(Order order) async {
     enqueue(
       'Attention, retard signalé ! '
-      'La commande de la table ${order.tableNumber} attend depuis ${order.elapsedMinutes} minutes. '
+      'La commande de la table ${order.tableNumber} attend depuis ${formatMinutesVoice(order.elapsedMinutes)}. '
       'Veuillez accélérer la préparation.',
     );
   }
@@ -855,7 +856,7 @@ class TtsService {
       final minutes = o.elapsedMinutes;
       if (minutes >= 2) {
         final orderAmt = fmt.format(o.totalAmount);
-        enqueue('Rappel caisse — une facture en attente depuis $minutes minutes — '
+        enqueue('Rappel caisse — une facture en attente depuis ${formatMinutesVoice(minutes)} — '
             'table ${o.tableNumber} — $orderAmt francs');
       }
     } else {

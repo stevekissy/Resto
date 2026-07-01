@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../services/notification_service.dart';
 import '../../utils/app_theme.dart';
+import '../../utils/time_utils.dart';
 import '../../widgets/common_widgets.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -874,18 +875,7 @@ class _NotifCard extends StatelessWidget {
     }
   }
 
-  String _formatDt(DateTime dt) {
-    final now  = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inSeconds < 60)  return 'À l\'instant';
-    if (diff.inMinutes < 60)  return 'Il y a ${diff.inMinutes} min';
-    if (diff.inHours < 24)    return 'Il y a ${diff.inHours} h';
-    if (diff.inDays == 1)     return 'Hier ${_hm(dt)}';
-    return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} ${_hm(dt)}';
-  }
-
-  String _hm(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  String _formatDt(DateTime dt) => formatDurationHuman(dt);
 }
 
 // ── Bouton "Marquer tout comme lu" proéminent ────────────────────────────

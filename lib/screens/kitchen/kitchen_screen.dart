@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../providers/app_provider.dart';
 import '../../services/tts_service.dart';
 import '../../utils/app_theme.dart';
+import '../../utils/time_utils.dart';
 import '../../widgets/common_widgets.dart';
 import '../../models/models.dart';
 
@@ -1249,8 +1250,8 @@ class _KitchenTimerWidgetState extends State<_KitchenTimerWidget> {
   Widget build(BuildContext context) {
     final elapsed = DateTime.now().difference(widget.order.createdAt);
     final mins    = elapsed.inMinutes;
-    final secs    = elapsed.inSeconds % 60;
     final isLate  = mins >= 20;
+    final timerLabel = formatElapsedCompact(elapsed);
 
     final maxCookTime = widget.kitchenItems.isEmpty ? 20.0
         : widget.kitchenItems.fold<double>(0, (m, i) {
@@ -1278,7 +1279,7 @@ class _KitchenTimerWidgetState extends State<_KitchenTimerWidget> {
                 Icon(Icons.timer, color: timerColor, size: 13),
                 const SizedBox(width: 3),
                 Text(
-                  '${mins.toString().padLeft(2,'0')}:${secs.toString().padLeft(2,'0')}',
+                  timerLabel,
                   style: TextStyle(color: timerColor,
                       fontWeight: FontWeight.w900, fontSize: 16,
                       fontFamily: 'monospace'),
@@ -1288,7 +1289,8 @@ class _KitchenTimerWidgetState extends State<_KitchenTimerWidget> {
                       style: TextStyle(color: timerColor,
                           fontSize: 9, fontWeight: FontWeight.w700)),
               ]),
-              Text('~${remainingMins}min',
+              Text(
+                  formatRemainingMins(remainingMins.toInt()),
                   style: TextStyle(color: timerColor,
                       fontSize: 10, fontWeight: FontWeight.w600)),
             ],

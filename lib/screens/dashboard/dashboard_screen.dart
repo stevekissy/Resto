@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../providers/app_provider.dart';
 import '../../utils/app_theme.dart';
+import '../../utils/time_utils.dart';
 import '../../widgets/common_widgets.dart';
 import '../../models/models.dart';
 
@@ -317,8 +318,10 @@ class _OrderCard extends StatelessWidget {
                     ],
                   ],
                 ),
-                Text('${order.items.length} article(s) • ${order.elapsedMinutes} min',
-                  style: TextStyle(color: isLate ? AppTheme.error : AppTheme.textSecondary, fontSize: 12)),
+                Text(
+                  '${order.items.length} article(s) • ${formatDurationHuman(order.createdAt)}',
+                  style: TextStyle(color: isLate ? AppTheme.error : AppTheme.textSecondary, fontSize: 12),
+                ),
               ],
             ),
           ),
