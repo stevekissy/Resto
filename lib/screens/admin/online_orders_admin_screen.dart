@@ -6,11 +6,12 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../providers/client_provider.dart';
 import '../../providers/app_provider.dart';
 import '../../models/client_models.dart';
 import '../../models/models.dart' show UserRole;
+import '../../services/client_firebase_service.dart';
 import '../../services/notification_service.dart';
 import '../../utils/app_theme.dart';
 import '../../widgets/common_widgets.dart';
@@ -2510,6 +2511,8 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
   Uint8List? _previewBytes;   // bytes sélectionnés localement
   String _pickedMime = 'image/jpeg';
   bool _imageChanged = false;
+  double _uploadProgress = 0.0;   // 0.0 → 1.0 pendant l'upload
+  bool _isUploading = false;       // true pendant l'envoi vers Storage
 
   bool get _isEdit => widget.existing != null;
 
@@ -2539,29 +2542,43 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
     super.dispose();
   }
 
-  // ── Picker image ───────────────────────────────────────────────────────
+  // ── Picker image (FilePicker — fiable web + mobile) ────────────────────
   Future<void> _pickImage() async {
+    if (_isUploading) return; // Bloquer pendant un upload en cours
     try {
-      final picker = ImagePicker();
-      final picked = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1200,
-        maxHeight: 600,
-        imageQuality: 80,
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+        withData: true, // Charge les bytes directement (essentiel sur web)
       );
-      if (picked == null) return;
-      final bytes = await picked.readAsBytes();
-      // Détecter le type MIME depuis les magic bytes
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.first;
+      final bytes = file.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Impossible de lire le fichier. Réessayez.'),
+              backgroundColor: AppTheme.error,
+            ),
+          );
+        }
+        return;
+      }
+      // Détecter le type MIME depuis les magic bytes (plus fiable que l'extension)
       String mime = 'image/jpeg';
       if (bytes.length >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50) {
         mime = 'image/png';
-      } else if (bytes.length >= 4 && bytes[0] == 0x52 && bytes[1] == 0x49) {
+      } else if (bytes.length >= 12 &&
+          bytes[0] == 0x52 && bytes[1] == 0x49 &&
+          bytes[2] == 0x46 && bytes[3] == 0x46) {
         mime = 'image/webp';
       }
       setState(() {
         _previewBytes = bytes;
         _pickedMime = mime;
         _imageChanged = true;
+        _uploadProgress = 0.0;
       });
     } catch (e) {
       if (mounted) {
@@ -2583,7 +2600,7 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
     });
   }
 
-  // ── Aperçu image ──────────────────────────────────────────────────────
+  // ── Aperçu image + barre de progression ───────────────────────────────
   Widget _buildImageSection() {
     final hasPreview = _previewBytes != null;
     final hasExisting = _currentImageUrl != null && _currentImageUrl!.isNotEmpty;
@@ -2617,6 +2634,45 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
           ),
         ) else
           _imagePlaceholder(),
+        // ── Barre de progression upload ──────────────────────────────
+        if (_isUploading) ...[
+          const SizedBox(height: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Envoi en cours…',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+                  Text(
+                    '${(_uploadProgress * 100).toStringAsFixed(0)}%',
+                    style: const TextStyle(
+                      color: AppTheme.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: _uploadProgress,
+                  backgroundColor: AppTheme.surfaceLight,
+                  valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primary),
+                  minHeight: 6,
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -2862,16 +2918,22 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
             ),
             const SizedBox(height: 20),
 
-            // Bouton enregistrer
+            // Bouton enregistrer (bloqué pendant loading ET upload)
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: _isLoading ? null : _save,
-                icon: _isLoading
+                onPressed: (_isLoading || _isUploading) ? null : _save,
+                icon: (_isLoading || _isUploading)
                     ? const SizedBox(width: 16, height: 16,
                         child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                     : Icon(_isEdit ? Icons.save_outlined : Icons.add),
-                label: Text(_isEdit ? 'Enregistrer les modifications' : 'Créer la promotion'),
+                label: Text(
+                  _isUploading
+                      ? 'Envoi image… ${(_uploadProgress * 100).toStringAsFixed(0)}%'
+                      : _isLoading
+                          ? 'Enregistrement…'
+                          : (_isEdit ? 'Enregistrer les modifications' : 'Créer la promotion'),
+                ),
               ),
             ),
           ],
@@ -2880,7 +2942,33 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
     );
   }
 
+  // ── Upload image avec progression ──────────────────────────────────────
+  Future<String?> _uploadImageWithProgress({
+    required ClientFirebaseService svc,
+    required Uint8List bytes,
+    required String promoId,
+  }) async {
+    setState(() {
+      _isUploading = true;
+      _uploadProgress = 0.0;
+    });
+    try {
+      final url = await svc.uploadPromotionImage(
+        bytes: bytes,
+        promoId: promoId,
+        mimeType: _pickedMime,
+        onProgress: (p) {
+          if (mounted) setState(() => _uploadProgress = p);
+        },
+      );
+      return url;
+    } finally {
+      if (mounted) setState(() => _isUploading = false);
+    }
+  }
+
   Future<void> _save() async {
+    if (_isUploading) return; // Sécurité : ne pas lancer si upload en cours
     final title = _titleCtrl.text.trim();
     if (title.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2908,11 +2996,11 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
         // Résoudre l'imageUrl finale
         String? finalImageUrl = _currentImageUrl;
         if (_imageChanged && _previewBytes != null) {
-          // Upload nouvelle image vers Firebase Storage
-          finalImageUrl = await svc.uploadPromotionImage(
+          // Upload nouvelle image vers Firebase Storage avec progression
+          finalImageUrl = await _uploadImageWithProgress(
+            svc: svc,
             bytes: _previewBytes!,
             promoId: p.id,
-            mimeType: _pickedMime,
           );
         } else if (_imageChanged && _previewBytes == null) {
           // Image supprimée par l'utilisateur
@@ -2944,13 +3032,13 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
         // Générer l'ID en avance pour pouvoir uploader l'image avant Firestore
         final promoId = const Uuid().v4();
 
-        // Upload image si sélectionnée
+        // Upload image si sélectionnée (avec progression)
         String? finalImageUrl;
         if (_previewBytes != null) {
-          finalImageUrl = await svc.uploadPromotionImage(
+          finalImageUrl = await _uploadImageWithProgress(
+            svc: svc,
             bytes: _previewBytes!,
             promoId: promoId,
-            mimeType: _pickedMime,
           );
         }
 
@@ -2998,7 +3086,7 @@ class _PromoFormSheetState extends State<_PromoFormSheet> {
         debugPrint('[PromoSave] $e\n$stack');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Erreur : $detail'),
+            content: Text('Erreur upload : $detail'),
             backgroundColor: AppTheme.error,
             duration: const Duration(seconds: 8),
           ),
@@ -3288,20 +3376,28 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
     super.dispose();
   }
 
-  // ── Picker image ───────────────────────────────────────────────────────
+  // ── Picker image (FilePicker — fiable web + mobile) ────────────────────
   Future<void> _pickImage() async {
     try {
-      final picker = ImagePicker();
-      // Résolution réduite pour rester sous la limite Firestore 1 MiB
-      // 800×400 @ quality 70 ≈ 50-150 KB bytes → ~67-200 KB base64 → OK
-      final picked = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 800,
-        maxHeight: 400,
-        imageQuality: 70,
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+        withData: true, // Charge les bytes directement (essentiel sur web)
       );
-      if (picked == null) return;
-      final bytes = await picked.readAsBytes();
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.first;
+      final bytes = file.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Impossible de lire le fichier. Réessayez.'),
+              backgroundColor: AppTheme.error,
+            ),
+          );
+        }
+        return;
+      }
 
       // Vérification taille immédiate avant même d'encoder en base64
       // base64 ajoute ~33% → bytes * 1.37 ≈ taille base64
@@ -3311,7 +3407,7 @@ class _BannerFormSheetState extends State<_BannerFormSheet> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'Image trop grande (${(bytes.length / 1024).round()} Ko compressés). '
+                'Image trop grande (${(bytes.length / 1024).round()} Ko). '
                 'Utilisez une image plus petite (max ~650 Ko).',
               ),
               backgroundColor: AppTheme.error,

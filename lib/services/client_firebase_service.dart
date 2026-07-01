@@ -963,39 +963,65 @@ class ClientFirebaseService {
   /// [bytes] — bytes de l'image
   /// [promoId] — identifiant de la promotion (UUID généré avant l'appel)
   /// [mimeType] — 'image/jpeg' | 'image/png' | 'image/webp'
+  /// Upload une image de promotion vers Firebase Storage.
+  /// Stockage : promotions/{promoId}/banner.jpg (nom fixe, peu importe le MIME)
+  /// [onProgress] callback optionnel : reçoit une valeur 0.0→1.0 pendant l'upload.
   Future<String> uploadPromotionImage({
     required Uint8List bytes,
     required String promoId,
     String mimeType = 'image/jpeg',
+    void Function(double progress)? onProgress,
   }) async {
-    final ext = mimeType.split('/').last; // 'jpeg', 'png', 'webp'
+    // Toujours stocker sous banner.jpg (chemin canonique)
     final ref = FirebaseStorage.instance
         .ref()
-        .child('promotions/$promoId/image.$ext');
-    final task = await ref.putData(
+        .child('promotions/$promoId/banner.jpg');
+
+    // Supprimer l'ancienne version si elle existe (évite les caches Storage)
+    try { await ref.delete(); } catch (_) {}
+
+    final task = ref.putData(
       bytes,
-      SettableMetadata(contentType: mimeType),
+      SettableMetadata(
+        contentType: mimeType,
+        cacheControl: 'no-cache, no-store, must-revalidate',
+      ),
     );
-    return await task.ref.getDownloadURL();
+
+    // Écouter la progression si callback fourni
+    if (onProgress != null) {
+      task.snapshotEvents.listen((snap) {
+        if (snap.totalBytes > 0) {
+          onProgress(snap.bytesTransferred / snap.totalBytes);
+        }
+      }, onError: (_) {});
+    }
+
+    // Attendre la complétion
+    final snapshot = await task;
+    return await snapshot.ref.getDownloadURL();
   }
 
   /// Supprime l'image d'une promotion dans Firebase Storage (si elle existe).
   Future<void> deletePromotionImage(String promoId) async {
     try {
-      // Essaie les trois extensions courantes
+      // Chemin canonique actuel
+      await FirebaseStorage.instance
+          .ref()
+          .child('promotions/$promoId/banner.jpg')
+          .delete();
+    } catch (_) {
+      // Si pas trouvé sous banner.jpg, essayer les anciens chemins
       for (final ext in ['jpeg', 'png', 'webp']) {
         try {
           await FirebaseStorage.instance
               .ref()
               .child('promotions/$promoId/image.$ext')
               .delete();
-          break; // Supprimé avec succès → on arrête
         } catch (_) {
-          // Ce format n'existe pas, on essaie le suivant
+          // Ce format n'existe pas, on continue
         }
       }
-    } catch (_) {
-      // Ignorer si aucun fichier à supprimer
     }
   }
 
