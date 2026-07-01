@@ -486,8 +486,10 @@ class _MainScreenState extends State<MainScreen> {
             title: const Text('Déconnexion', style: TextStyle(color: AppTheme.error, fontSize: 14, fontWeight: FontWeight.w600)),
             onTap: () async {
               Navigator.pop(context); // ferme le drawer d'abord
+              SankadiokroLoader.show(context, label: 'Déconnexion…');
               await provider.logout();
               if (!context.mounted) return;
+              SankadiokroLoader.hide(context);
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -659,8 +661,10 @@ class _MainScreenState extends State<MainScreen> {
               child: ElevatedButton.icon(
                 onPressed: () async {
                   Navigator.pop(ctx);
+                  SankadiokroLoader.show(context, label: 'Déconnexion…');
                   await provider.logout();
                   if (!context.mounted) return;
+                  SankadiokroLoader.hide(context);
                   Navigator.pushAndRemoveUntil(
                     context,
                     MaterialPageRoute(builder: (_) => const LoginScreen()),

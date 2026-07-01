@@ -471,9 +471,9 @@ class _SplashScreenState extends State<_SplashScreen>
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF0D47A1),
-              Color(0xFF2196F3),
-              Color(0xFF0D47A1),
+              Color(0xFF1A0A00), // brun très sombre — identité Sankadiokro
+              Color(0xFF2D1200), // brun profond
+              Color(0xFF0A0500), // presque noir
             ],
           ),
         ),
@@ -491,63 +491,72 @@ class _SplashScreenState extends State<_SplashScreen>
                       scale: _scaleAnim,
                       child: Container(
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(24),
+                          borderRadius: BorderRadius.circular(28),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.4),
-                              blurRadius: 40,
-                              spreadRadius: 5,
+                              color: const Color(0xFFB5451B).withValues(alpha: 0.4),
+                              blurRadius: 48,
+                              spreadRadius: 6,
+                            ),
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.5),
+                              blurRadius: 24,
+                              offset: const Offset(0, 8),
                             ),
                           ],
                         ),
-                        child: const SankaLogo(size: 120),
+                        child: const SankaLogo(size: 130),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 28),
                     // Nom du restaurant
                     const Text(
-                      'SANKADIOKRO',
+                      'RESTAURANT SANKADIOKRO',
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 5,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 3.5,
                         shadows: [
                           Shadow(
-                            color: Colors.black38,
+                            color: Color(0xFFB5451B),
+                            blurRadius: 12,
                             offset: Offset(0, 2),
-                            blurRadius: 8,
                           ),
                         ],
                       ),
+                      textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Système Professionnel de Gestion Restaurant',
+                      'Les meilleurs plats africains sont chez nous',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.8),
-                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.55),
+                        fontSize: 11,
                         fontWeight: FontWeight.w400,
+                        letterSpacing: 0.5,
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 48),
-                    // Indicateur de chargement
+                    const SizedBox(height: 40),
+                    // Indicateur de chargement — couleur orange Sankadiokro
                     const SizedBox(
-                      width: 36,
-                      height: 36,
+                      width: 28,
+                      height: 28,
                       child: CircularProgressIndicator(
-                        strokeWidth: 3,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(Colors.white),
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Color(0xFFB5451B),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     Text(
-                      'Vérification de la session...',
+                      'Vérification de la session…',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
+                        color: Colors.white.withValues(alpha: 0.65),
                         fontSize: 13,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],

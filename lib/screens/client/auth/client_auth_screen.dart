@@ -113,6 +113,11 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
         final provider = context.read<ClientProvider>();
         await provider.init(uid);
         if (mounted) {
+          // Animation de transition avant navigation
+          SankadiokroLoader.show(context, label: 'Connexion en cours…');
+          await Future.delayed(const Duration(milliseconds: 800));
+          if (!mounted) return;
+          SankadiokroLoader.hide(context);
           Navigator.pushReplacement(context,
               MaterialPageRoute(builder: (_) => const ClientMainScreen()));
         }
@@ -203,6 +208,11 @@ class _ClientAuthScreenState extends State<ClientAuthScreen>
         final provider = context.read<ClientProvider>();
         await provider.init(uid);
         if (mounted) {
+          // Animation de bienvenue — création de compte
+          SankadiokroLoader.show(context, label: 'Bienvenue chez Sankadiokro !');
+          await Future.delayed(const Duration(milliseconds: 900));
+          if (!mounted) return;
+          SankadiokroLoader.hide(context);
           Navigator.pushReplacement(context,
               MaterialPageRoute(builder: (_) => const ClientMainScreen()));
         }

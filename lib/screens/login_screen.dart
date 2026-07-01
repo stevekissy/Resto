@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../utils/app_theme.dart';
+import '../widgets/common_widgets.dart';
 import 'main_screen.dart';
 import 'client/auth/client_auth_screen.dart';
 
@@ -124,6 +125,11 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         // ─── LOG DIAGNOSTIC ───────────────────────────────────────────
         debugPrint('[DIAG][login_screen.dart:110] ▶ Navigator.pushAndRemoveUntil vers MainScreen');
         // ──────────────────────────────────────────────────────────────
+        // Animation de transition — logo Sankadiokro pendant la navigation
+        SankadiokroLoader.show(context, label: 'Connexion en cours…');
+        await Future.delayed(const Duration(milliseconds: 800));
+        if (!mounted) return;
+        SankadiokroLoader.hide(context);
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (_) => const MainScreen()),

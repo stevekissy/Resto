@@ -13,6 +13,7 @@ import '../../models/client_models.dart';
 import '../../models/models.dart' show UserRole;
 import '../../services/notification_service.dart';
 import '../../utils/app_theme.dart';
+import '../../widgets/common_widgets.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PANNEAU ADMIN — Commandes en ligne (refonte complète)
@@ -738,11 +739,15 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
     }
 
     setState(() => _processing = true);
+    // Animation — envoi en cuisine
+    SankadiokroLoader.show(context, label: 'Envoi en cuisine…');
     try {
       // SOURCE UNIQUE : widget.order.id = id du doc orders directement
       final orderId = widget.order.id;
       debugPrint('[_sendToKitchen] orderId=$orderId');
       await context.read<AppProvider>().sendOnlineOrderToKitchen(orderId);
+
+      if (mounted) SankadiokroLoader.hide(context);
 
       // Notification locale
       NotificationService().trigger(
@@ -766,6 +771,7 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
       }
     } catch (e) {
       if (mounted) {
+        SankadiokroLoader.hide(context);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Erreur envoi cuisine : $e'), backgroundColor: AppTheme.error));
       }
@@ -972,12 +978,16 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
 
     if (ok != true) return;
     setState(() => _processing = true);
+    // Animation — validation paiement
+    SankadiokroLoader.show(context, label: 'Validation du paiement…');
     try {
       // Marquer payée + livrée (déclenche attribution points fidélité)
       await context.read<ClientProvider>().updateOrderStatus(
           widget.order.id, ClientOrderStatus.delivered,
           callerRole: _callerRole,
       );
+
+      if (mounted) SankadiokroLoader.hide(context);
       
       // Notifier caisse
       NotificationService().trigger(
@@ -993,6 +1003,12 @@ class _AdminOrderCardState extends State<_AdminOrderCard> {
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ));
+      }
+    } catch (e) {
+      if (mounted) {
+        SankadiokroLoader.hide(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Erreur paiement : $e'), backgroundColor: AppTheme.error));
       }
     } finally {
       if (mounted) setState(() => _processing = false);

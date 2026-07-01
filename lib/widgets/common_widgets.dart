@@ -367,3 +367,302 @@ class _AnimatedCounterState extends State<AnimatedCounter> with SingleTickerProv
     );
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════
+//  SankadiokroLoader — Animation de chargement avec logo Sankadiokro
+//  Utilisé pour les transitions importantes : login, logout, commande…
+//
+//  Usage (méthode recommandée — overlay non-bloquant) :
+//
+//    // Afficher l'overlay (minimum 700ms automatiquement)
+//    SankadiokroLoader.show(context, label: 'Connexion en cours…');
+//
+//    // Exécuter l'action async
+//    await monAction();
+//
+//    // Masquer l'overlay
+//    SankadiokroLoader.hide(context);
+//
+//  Ou via la méthode tout-en-un (attend la future + le minimum 700ms) :
+//
+//    await SankadiokroLoader.run(
+//      context,
+//      future: monAction(),
+//      label: 'Envoi en cuisine…',
+//    );
+// ══════════════════════════════════════════════════════════════════════
+
+class SankadiokroLoader {
+  // ── Route overlay actuellement affichée ──────────────────────────
+  static OverlayEntry? _entry;
+  static DateTime? _shownAt;
+  static const _minDurationMs = 700; // durée minimale visible
+
+  /// Affiche l'overlay par-dessus toute l'application.
+  /// [label] : texte affiché sous le logo (ex: 'Connexion en cours…')
+  static void show(BuildContext context, {String label = 'Chargement…'}) {
+    hide(context); // sécurité : évite les doublons
+    final overlay = Overlay.of(context, rootOverlay: true);
+    _shownAt = DateTime.now();
+    _entry = OverlayEntry(
+      builder: (_) => _SankaLoaderOverlay(label: label),
+    );
+    overlay.insert(_entry!);
+  }
+
+  /// Masque l'overlay en respectant la durée minimale [_minDurationMs].
+  static void hide(BuildContext context) {
+    if (_entry == null) return;
+    final shown = _shownAt;
+    final entry = _entry!;
+    _entry = null;
+    _shownAt = null;
+
+    if (shown == null) {
+      entry.remove();
+      return;
+    }
+    final elapsed = DateTime.now().difference(shown).inMilliseconds;
+    final remaining = _minDurationMs - elapsed;
+
+    if (remaining <= 0) {
+      entry.remove();
+    } else {
+      Future.delayed(Duration(milliseconds: remaining), () {
+        try { entry.remove(); } catch (_) {}
+      });
+    }
+  }
+
+  /// Lance [future] puis masque l'overlay (minimum 700ms garanti).
+  /// Retourne le résultat de la future.
+  static Future<T> run<T>(
+    BuildContext context, {
+    required Future<T> future,
+    String label = 'Chargement…',
+  }) async {
+    show(context, label: label);
+    try {
+      return await future;
+    } finally {
+      if (context.mounted) hide(context);
+    }
+  }
+}
+
+// ── Widget overlay interne ────────────────────────────────────────────
+
+class _SankaLoaderOverlay extends StatefulWidget {
+  final String label;
+  const _SankaLoaderOverlay({required this.label});
+
+  @override
+  State<_SankaLoaderOverlay> createState() => _SankaLoaderOverlayState();
+}
+
+class _SankaLoaderOverlayState extends State<_SankaLoaderOverlay>
+    with TickerProviderStateMixin {
+  // Fade d'entrée
+  late final AnimationController _fadeCtrl;
+  late final Animation<double> _fadeAnim;
+
+  // Zoom d'entrée (spring)
+  late final AnimationController _scaleCtrl;
+  late final Animation<double> _scaleAnim;
+
+  // Pulsation continue du logo
+  late final AnimationController _pulseCtrl;
+  late final Animation<double> _pulseAnim;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // ── Fade entrée ─────────────────────────────────────────────────
+    _fadeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeIn);
+
+    // ── Zoom spring ─────────────────────────────────────────────────
+    _scaleCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 550),
+    );
+    _scaleAnim = Tween<double>(begin: 0.6, end: 1.0).animate(
+      CurvedAnimation(parent: _scaleCtrl, curve: Curves.elasticOut),
+    );
+
+    // ── Pulsation douce ─────────────────────────────────────────────
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 1.0, end: 1.06).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
+    );
+
+    _fadeCtrl.forward();
+    _scaleCtrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _fadeCtrl.dispose();
+    _scaleCtrl.dispose();
+    _pulseCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fadeAnim,
+      child: Container(
+        width: double.infinity,
+        height: double.infinity,
+        // Fond dégradé brun-noir (couleurs Sankadiokro)
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF1A0A00), // brun très sombre
+              Color(0xFF2D1200), // brun profond
+              Color(0xFF0A0500), // presque noir
+            ],
+          ),
+        ),
+        child: AnimatedBuilder(
+          animation: Listenable.merge([_scaleAnim, _pulseAnim]),
+          builder: (context, _) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // ── Logo avec zoom + pulsation ───────────────────
+                  Transform.scale(
+                    scale: _scaleAnim.value * _pulseAnim.value,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(28),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFB5451B).withValues(alpha: 0.45),
+                            blurRadius: 48 * _pulseAnim.value,
+                            spreadRadius: 6 * _pulseAnim.value,
+                          ),
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.5),
+                            blurRadius: 24,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(28),
+                        child: Image.asset(
+                          'assets/images/logo_sankadiokro.png',
+                          width: 130,
+                          height: 130,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 130,
+                            height: 130,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFB5451B),
+                              borderRadius: BorderRadius.circular(28),
+                            ),
+                            child: const Icon(
+                              Icons.restaurant,
+                              color: Colors.white,
+                              size: 64,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 28),
+
+                  // ── Nom du restaurant ────────────────────────────
+                  ScaleTransition(
+                    scale: _scaleAnim,
+                    child: const Text(
+                      'RESTAURANT SANKADIOKRO',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 3.5,
+                        shadows: [
+                          Shadow(
+                            color: Color(0xFFB5451B),
+                            blurRadius: 12,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+
+                  const SizedBox(height: 6),
+
+                  // ── Slogan ───────────────────────────────────────
+                  ScaleTransition(
+                    scale: _scaleAnim,
+                    child: Text(
+                      'Les meilleurs plats africains sont chez nous',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.55),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w400,
+                        letterSpacing: 0.5,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+
+                  const SizedBox(height: 40),
+
+                  // ── Label action + indicateur discret ───────────
+                  FadeTransition(
+                    opacity: _fadeAnim,
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              const Color(0xFFB5451B).withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          widget.label,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.65),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 0.3,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}

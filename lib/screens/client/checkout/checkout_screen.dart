@@ -6,6 +6,7 @@ import '../../../providers/client_provider.dart';
 import '../../../sandbox/client_provider_proxy.dart';
 import '../../../models/client_models.dart';
 import '../../../utils/app_theme.dart';
+import '../../../widgets/common_widgets.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CHECKOUT — Panier + Type commande + Adresse + Paiement + Acompte + Fidélité
@@ -761,6 +762,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     // car l'acompte est toujours payé (mode sélectionné par défaut)
 
     setState(() => _isPlacing = true);
+    // Animation de chargement — envoi commande
+    SankadiokroLoader.show(context, label: 'Envoi de votre commande…');
     try {
       final orderId = await provider.placeOrder(
         paymentMethod: _depositMethod,
@@ -770,6 +773,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         loyaltyPointsUsed: _useLoyaltyPoints ? _loyaltyPointsToUse : 0,
         deliveryNote: _deliveryNoteCtrl.text.trim().isEmpty ? null : _deliveryNoteCtrl.text.trim(),
       );
+
+      if (!mounted) return;
+      SankadiokroLoader.hide(context);
 
       if (orderId != null && mounted) {
         _showOrderSuccess(context, orderId, depositAmt);
