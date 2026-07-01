@@ -180,31 +180,89 @@ class PrintService {
     </div>
   ''';
 
-  /// Génère un bloc QR code visuel (canvas JS)
-  String _qrScript(String qrData) {
-    final safe = qrData.replaceAll('"', r'\"');
+  /// Génère un vrai QR code scannable via qrcode.js (CDN)
+  /// avec le logo Sankadiokro centré et l'URL de vérification de la facture.
+  /// [invoiceUrl] : URL publique de la facture (ex: https://www.restaurantsankadiokro.com/facture/FAC-20260701-0116)
+  /// [invoiceId]  : identifiant court affiché sous le QR (ex: FAC-20260701-0116)
+  String _qrScript(String invoiceUrl, {String? invoiceId}) {
+    final safeUrl = invoiceUrl.replaceAll('"', r'\"');
+    final logo    = _logoBase64();
+    // ID court pour affichage sous le QR (fallback : URL complète)
+    final displayId = invoiceId ?? invoiceUrl;
+
     return '''
-    <div class="qr-block">
-      <canvas id="qr-canvas" class="qr-canvas" width="90" height="90"></canvas>
-      <div class="qr-label">Scannez pour v&eacute;rifier</div>
+    <!-- QR Code réel — qrcode.js v1.5.3 via CDN jsDelivr (offline-fallback prévu) -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"
+            onerror="window._qrFailed=true"></script>
+    <div class="qr-block" id="qr-wrapper">
+      <div style="position:relative;display:inline-block;margin:0 auto;">
+        <!-- Canvas QR rempli par qrcode.js -->
+        <canvas id="qr-canvas" width="96" height="96"
+                style="display:block;border-radius:6px;"></canvas>
+        <!-- Logo centré par-dessus le QR -->
+        <div id="qr-logo-wrap" style="
+          position:absolute;top:50%;left:50%;
+          transform:translate(-50%,-50%);
+          width:22px;height:22px;
+          background:#fff;border-radius:4px;
+          display:flex;align-items:center;justify-content:center;
+          box-shadow:0 0 3px rgba(0,0,0,0.25);overflow:hidden;">
+          <img src="$logo" alt="Sankadio"
+               style="width:18px;height:18px;object-fit:contain;"
+               onerror="this.parentNode.style.display='none'" />
+        </div>
+      </div>
+      <div class="qr-label" style="margin-top:4px;">Scannez pour v&eacute;rifier la facture</div>
+      <div style="font-size:7px;color:#999;margin-top:1px;word-break:break-all;max-width:90mm;text-align:center;">
+        $displayId
+      </div>
     </div>
     <script>
-      (function() {
-        var data = "$safe";
-        var c = document.getElementById('qr-canvas');
-        if (!c) return;
-        var ctx = c.getContext('2d');
-        var size = 90;
-        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,size,size);
-        ctx.strokeStyle='#222'; ctx.lineWidth=2; ctx.strokeRect(2,2,size-4,size-4);
-        function sq(x,y,s){ctx.fillStyle='#222';ctx.fillRect(x,y,s,s);ctx.fillStyle='#fff';ctx.fillRect(x+2,y+2,s-4,s-4);ctx.fillStyle='#222';ctx.fillRect(x+4,y+4,s-8,s-8);}
-        sq(8,8,18); sq(size-26,8,18); sq(8,size-26,18);
-        ctx.fillStyle='#333';
-        var seed=0; for(var i=0;i<data.length;i++) seed+=data.charCodeAt(i);
-        for(var r=0;r<7;r++) for(var col=0;col<7;col++) if((seed^(r*13+col*7))%3===0) ctx.fillRect(30+col*7,30+r*7,5,5);
-        ctx.fillStyle='#888'; ctx.font='5px Arial'; ctx.textAlign='center';
-        ctx.fillText('QR',size/2,size-8);
-      })();
+    (function() {
+      var url = "$safeUrl";
+      var canvas = document.getElementById('qr-canvas');
+      if (!canvas) return;
+
+      function generateQR() {
+        if (typeof QRCode !== 'undefined') {
+          QRCode.toCanvas(canvas, url, {
+            width: 96,
+            margin: 1,
+            color: { dark: '#111111', light: '#ffffff' },
+            errorCorrectionLevel: 'H'   // H = 30% de redondance → logo peut couvrir ~20%
+          }, function(err) {
+            if (err) console.warn('[QR] erreur génération:', err);
+          });
+        } else {
+          // Fallback : texte URL si CDN inaccessible (impression sans connexion)
+          var ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, 96, 96);
+          ctx.strokeStyle = '#222';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(2, 2, 92, 92);
+          ctx.fillStyle = '#333';
+          ctx.font = 'bold 8px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('SCAN', 48, 40);
+          ctx.font = '6px Arial';
+          ctx.fillText('FACTURE', 48, 55);
+          ctx.fillStyle = '#888';
+          ctx.font = '5px Arial';
+          ctx.fillText('(lien imprimé ci-dessus)', 48, 68);
+        }
+      }
+
+      // Si qrcode.js est déjà chargé, générer immédiatement
+      if (typeof QRCode !== 'undefined') {
+        generateQR();
+      } else {
+        // Attendre le chargement du script CDN
+        window.addEventListener('load', generateQR);
+        // Deuxième tentative à 500ms au cas où le CDN est lent
+        setTimeout(generateQR, 500);
+      }
+    })();
     </script>
     ''';
   }
@@ -326,6 +384,9 @@ class PrintService {
     }
   ''';
 
+  /// Expose le CSS thermique pour la page publique de vérification.
+  static String sharedThermalCss() => PrintService()._thermalCss();
+
   // ─────────────────────────────────────────────────────────────────────
   //  REÇU D'ENCAISSEMENT — design Sankadio v2 (80mm)
   // ─────────────────────────────────────────────────────────────────────
@@ -359,8 +420,8 @@ class PrintService {
     final resteRow = (order.totalAmount > amountPaid && amountPaid > 0)
         ? '<div class="payment-row"><span class="payment-label">Reste d&ucirc; :</span><span class="payment-value" style="color:#B71C1C;">${_fmt.format(order.totalAmount - amountPaid)} F CFA</span></div>'
         : '';
-    final qrData = 'N:$receiptNumber|D:$dateStr|M:${_fmt.format(order.totalAmount)}|R:Sankadiokro';
-    final qrBlock = _qrScript(qrData);
+    final invoiceUrl = 'https://www.restaurantsankadiokro.com/facture/$receiptNumber';
+    final qrBlock = _qrScript(invoiceUrl, invoiceId: receiptNumber);
     final header  = _htmlHeader("REÇU D'ENCAISSEMENT", "title-encaissement");
     final footer  = _htmlFooter;
     final prtBtn  = _printButton;
@@ -460,8 +521,8 @@ $prtBtn
     final resteRow = (order.totalAmount > amountPaid && amountPaid > 0)
         ? '<div class="payment-row"><span class="payment-label">Reste d&ucirc; :</span><span class="payment-value" style="color:#B71C1C;">${_fmt.format(order.totalAmount - amountPaid)} F CFA</span></div>'
         : '';
-    final qrData = 'N:$settlementNumber|D:$dateStr|M:${_fmt.format(order.totalAmount)}|R:Sankadiokro';
-    final qrBlock = _qrScript(qrData);
+    final invoiceUrl = 'https://www.restaurantsankadiokro.com/facture/$settlementNumber';
+    final qrBlock = _qrScript(invoiceUrl, invoiceId: settlementNumber);
     final header  = _htmlHeader("FACTURE RÉGLÉE", "title-reglee");
     final footer  = _htmlFooter;
     final prtBtn  = _printButton;
@@ -559,8 +620,8 @@ $prtBtn
         ? '<tr class="discount-row"><td colspan="3">Remise</td><td>-${_fmt.format(order.discount)}</td></tr>'
         : '';
 
-    final qrData = 'N:$cashoutInvoiceNumber|D:$dateStr|M:${_fmt.format(order.totalAmount)}|R:Sankadiokro';
-    final qrBlock = _qrScript(qrData);
+    final invoiceUrl = 'https://www.restaurantsankadiokro.com/facture/$cashoutInvoiceNumber';
+    final qrBlock = _qrScript(invoiceUrl, invoiceId: cashoutInvoiceNumber);
     final header  = _htmlHeader("REÇU D'ENCAISSEMENT", "title-provisoire");
     final footer  = _htmlFooter;
     final prtBtn  = _printButton;
@@ -650,8 +711,8 @@ $prtBtn
         ? '<tr><td class="info-label">R&eacute;f. encaiss. :</td><td class="info-value">${_escape(order.cashoutInvoiceNumber!)}</td></tr>'
         : '';
 
-    final qrData = 'N:$settlementInvoiceNumber|D:$dateStr|M:${_fmt.format(order.totalAmount)}|R:Sankadiokro';
-    final qrBlock = _qrScript(qrData);
+    final invoiceUrl = 'https://www.restaurantsankadiokro.com/facture/$settlementInvoiceNumber';
+    final qrBlock = _qrScript(invoiceUrl, invoiceId: settlementInvoiceNumber);
     final header  = _htmlHeader("FACTURE RÉGLÉE", "title-reglee");
     final footer  = _htmlFooter;
     final prtBtn  = _printButton;

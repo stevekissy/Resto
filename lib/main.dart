@@ -18,6 +18,7 @@ import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/client/client_main_screen.dart';
 import 'screens/client/auth/client_auth_screen.dart';
+import 'screens/public/invoice_verify_screen.dart';
 import 'services/firebase_service.dart';
 import 'services/client_firebase_service.dart';
 
@@ -182,12 +183,28 @@ class SankadiokroApp extends StatelessWidget {
         title: 'Les meilleurs plats africains sont chez nous',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
-        // Pas de routes nommées pour éviter les conflits avec Netlify.
-        // L'écran initial est déterminé par hasSession (calculé AVANT runApp).
+        // Route initiale déterminée par hasSession (calculé AVANT runApp).
         home: _AuthGate(
           firebaseError: firebaseError,
           hasSession: hasSession,
         ),
+        // ── Route publique /facture/:invoiceId ─────────────────────────────
+        // Accessible sans authentification depuis un QR code scanné.
+        // usePathUrlStrategy() garantit que l'URL est propre (sans #).
+        onGenerateRoute: (settings) {
+          final name = settings.name ?? '';
+          // Exemple : /facture/FAC-20260701-0116 ou /facture/REG-20260701-0116
+          if (name.startsWith('/facture/')) {
+            final invoiceId = name.replaceFirst('/facture/', '').trim();
+            if (invoiceId.isNotEmpty) {
+              return MaterialPageRoute(
+                builder: (_) => InvoiceVerifyScreen(invoiceId: invoiceId),
+                settings: settings,
+              );
+            }
+          }
+          return null; // Route inconnue → laissée à `home`
+        },
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context)
               .copyWith(textScaler: const TextScaler.linear(1.0)),

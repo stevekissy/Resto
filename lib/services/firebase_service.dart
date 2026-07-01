@@ -1599,6 +1599,7 @@ class FirebaseService {
       'items': items,
       'status': 'provisoire',
       'invoiceKind': 'cashout',
+      'invoiceUrl': 'https://www.restaurantsankadiokro.com/facture/$cashoutInvoiceNumber',
       'createdAt': FieldValue.serverTimestamp(),
       'cashoutAtMs': nowMs,
     });
@@ -1664,6 +1665,7 @@ class FirebaseService {
       'items': items,
       'status': 'definitif',
       'invoiceKind': 'settlement',          // ← requis par invoiceHistoryStream
+      'invoiceUrl': 'https://www.restaurantsankadiokro.com/facture/$settlementInvoiceNumber',
       'settledAt': nowMs,                   // ← requis par _applyFilters (date)
       'createdAt': FieldValue.serverTimestamp(),
       'settledAtMs': nowMs,
