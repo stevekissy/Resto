@@ -590,55 +590,11 @@ class FirebaseService {
       data['kitchenStatus'] = 'served';
       data['orderStatus']   = 'served'; // FIX : string pour contourner le mapping int ambigu
 
-      // ── Génération automatique de la facture provisoire ──────────────
-      // Dès qu'une commande est marquée "Servie" avec paramètres caisse,
-      // cashStatus passe à awaiting_payment et une cashout_invoice est créée.
-      if (cashoutInvoiceNumber != null &&
-          cashierId != null &&
-          cashierName != null &&
-          amountDue != null &&
-          items != null &&
-          orderNumber != null &&
-          tableNumber != null) {
-        data['cashStatus']              = CashStatus.awaiting_payment.index;
-        data['cashoutInvoiceGenerated'] = true;
-        data['cashoutInvoiceNumber']    = cashoutInvoiceNumber;
-        data['cashoutAt']               = nowMs;
-        data['cashierId']               = cashierId;
-        data['cashierName']             = cashierName;
-        data['discount']                = discount ?? 0.0;
-
-        // Écriture atomique : orders + cashout_invoices
-        final batch = _db.batch();
-        batch.update(_db.collection('orders').doc(orderId), data);
-        batch.set(
-          _db.collection('cashout_invoices').doc(cashoutInvoiceNumber),
-          {
-            'id':            cashoutInvoiceNumber,
-            'orderId':       orderId,
-            'orderNumber':   orderNumber,
-            'tableNumber':   tableNumber,
-            'serverName':    serverName,
-            'cashierId':     cashierId,
-            'cashierName':   cashierName,
-            'amountDue':     amountDue,
-            'discount':      discount ?? 0.0,
-            'items':         items,
-            'status':        'provisoire',
-            'createdAt':     FieldValue.serverTimestamp(),
-            'cashoutAtMs':   nowMs,
-          },
-        );
-        await batch.commit();
-        debugPrint('[FirebaseService] updateOrderStatus(served) → cashout_invoice $cashoutInvoiceNumber créée');
-        return; // batch déjà commis, ne pas faire le update séparé
-      }
-
-      // ── Cuisine marque "Servie" sans paramètres de facturation ───────
-      // Garantir que cashStatus = pending_cashout pour que la caisse la voie
-      // (la caisse génèrera sa facture provisoire dans cashoutOrder())
+      // La commande est servie : cashStatus = pending_cashout.
+      // Le caissier génère ensuite la facture provisoire via cashoutOrder().
+      // La facture n'est JAMAIS créée automatiquement ici — c'est au caissier de le faire.
       data['cashStatus'] = CashStatus.pending_cashout.index;
-      debugPrint('[FirebaseService] updateOrderStatus(served/cuisine) → cashStatus=pending_cashout');
+      debugPrint('[FirebaseService] updateOrderStatus(served) → cashStatus=pending_cashout, visible Tab1 Caisse');
     }
 
     if (status == OrderStatus.cancelled) {

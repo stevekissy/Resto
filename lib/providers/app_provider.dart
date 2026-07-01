@@ -1319,49 +1319,30 @@ class AppProvider extends ChangeNotifier {
       throw Exception('Action réservée au personnel de salle ou cuisine');
     }
 
-    // ── Passage à "served" : génère automatiquement la facture provisoire ──
+    // ── Passage à "served" : met cashStatus=pending_cashout uniquement ──
+    // La facture provisoire est générée par le CAISSIER dans cashoutOrder().
+    // Ici on se contente de rendre la commande visible en Tab 1 (Caisse).
     if (status == OrderStatus.served) {
       final order = _orders.firstWhere(
         (o) => o.id == orderId,
         orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
       );
-      if (order.id.isNotEmpty && order.cashStatus == CashStatus.pending_cashout) {
-        // Générer le numéro de facture provisoire
-        final invoiceNumber = PrintService.generateFacNumber(order.orderNumber);
-        final cashierId   = _currentUser?.id   ?? '';
-        final cashierName = _currentUser?.name ?? 'Serveur';
 
-        await _firebase.updateOrderStatus(
-          orderId,
-          status,
-          cashoutInvoiceNumber: invoiceNumber,
-          cashierId:            cashierId,
-          cashierName:          cashierName,
-          amountDue:            order.totalAmount,
-          discount:             order.discount,
-          items:                order.items.map((i) => i.toMap()).toList(),
-          orderNumber:          order.orderNumber,
-          tableNumber:          order.tableNumber,
-          serverName:           order.serverName,
-        );
-
-        // Synchronisation client_orders si commande en ligne
+      // Synchronisation client_orders si commande en ligne
+      if (order.id.isNotEmpty && order.isOnlineOrder) {
         try {
-          if (order.isOnlineOrder) {
-            final clientSvc = ClientFirebaseService();
-            await clientSvc.syncKitchenStatusToClientOrder(
-              internalOrderId: orderId,
-              clientStatus: ClientOrderStatus.delivered,
-            );
-          }
+          final clientSvc = ClientFirebaseService();
+          await clientSvc.syncKitchenStatusToClientOrder(
+            internalOrderId: orderId,
+            clientStatus: ClientOrderStatus.delivered,
+          );
         } catch (e) {
           debugPrint('[AppProvider] sync client_orders (served): $e');
         }
-        return; // déjà géré dans firebase_service via batch
       }
     }
 
-    // Mise à jour standard (preparing, ready, cancelled, ou served sans cashout)
+    // Mise à jour standard (status + cashStatus=pending_cashout si served)
     await _firebase.updateOrderStatus(orderId, status);
 
     // ── Synchronisation commandes en ligne → client_orders ────────────
@@ -1412,73 +1393,54 @@ class AppProvider extends ChangeNotifier {
   Future<void> updateKitchenStatus(String orderId, OrderStatus status) async {
     debugPrint('[AppProvider] updateKitchenStatus: orderId=$orderId status=${status.name}');
 
-    // FIX : Pour "served", utiliser la même logique que updateOrderStatus
-    // pour que la commande apparaisse en caisse avec cashStatus=pending_cashout
+    // Quand la cuisine marque "served" → cashStatus=pending_cashout uniquement.
+    // La commande apparaît en Tab 1 Caisse. Le caissier génère la facture via cashoutOrder().
     if (status == OrderStatus.served) {
       final order = _orders.firstWhere(
         (o) => o.id == orderId,
         orElse: () => Order(id: '', orderNumber: 0, tableNumber: '', items: []),
       );
-      if (order.id.isNotEmpty && order.cashStatus == CashStatus.pending_cashout) {
-        final invoiceNumber = PrintService.generateFacNumber(order.orderNumber);
-        final cashierId   = _currentUser?.id   ?? '';
-        final cashierName = _currentUser?.name ?? 'Serveur';
-        await _firebase.updateOrderStatus(
-          orderId,
-          status,
-          cashoutInvoiceNumber: invoiceNumber,
-          cashierId:            cashierId,
-          cashierName:          cashierName,
-          amountDue:            order.totalAmount,
-          discount:             order.discount,
-          items:                order.items.map((i) => i.toMap()).toList(),
-          orderNumber:          order.orderNumber,
-          tableNumber:          order.tableNumber,
-          serverName:           order.serverName,
-        );
-        debugPrint('[AppProvider] updateKitchenStatus(served) → facture provisoire générée');
 
-        // ── Fidélité + Parrainage pour commandes en ligne ─────────────────
-        // syncKitchenStatusToClientOrder() est un NO-OP (source unique orders).
-        // On appelle directement awardLoyaltyPoints + processReferralBonus
-        // car updateKitchenStatus est le SEUL point d'entrée pour "served" cuisine.
-        if (order.isOnlineOrder) {
-          final clientSvc = ClientFirebaseService();
-          try {
-            // Lire loyaltyPointsEarned depuis Firestore — absent du modèle Order POS
-            final orderDoc = await FirebaseFirestore.instance
-                .collection('orders')
-                .doc(orderId)
-                .get();
-            final orderData = orderDoc.data() ?? {};
-            final pts = (orderData['loyaltyPointsEarned'] as num?)?.toInt() ?? 0;
-            final cid = (orderData['clientId'] as String?)?.trim() ?? '';
+      // Mettre le statut served + cashStatus=pending_cashout (géré dans firebase_service)
+      await _firebase.updateOrderStatus(orderId, status);
+      debugPrint('[AppProvider] updateKitchenStatus(served) → cashStatus=pending_cashout, visible en Tab1 Caisse');
 
-            debugPrint('[AppProvider] loyalty → orderId=$orderId cid=$cid pts=$pts');
+      // ── Fidélité + Parrainage pour commandes en ligne ─────────────────
+      // Déclenché uniquement pour les commandes en ligne à la livraison cuisine.
+      if (order.id.isNotEmpty && order.isOnlineOrder) {
+        final clientSvc = ClientFirebaseService();
+        try {
+          // Lire loyaltyPointsEarned depuis Firestore — absent du modèle Order POS
+          final orderDoc = await FirebaseFirestore.instance
+              .collection('orders')
+              .doc(orderId)
+              .get();
+          final orderData = orderDoc.data() ?? {};
+          final pts = (orderData['loyaltyPointsEarned'] as num?)?.toInt() ?? 0;
+          final cid = (orderData['clientId'] as String?)?.trim() ?? '';
 
-            if (cid.isNotEmpty) {
-              // Attribution des points fidélité (idempotent — vérifie loyaltyPointsAwarded)
-              await clientSvc.awardLoyaltyPoints(
-                clientOrderId: orderId,
-                clientId:      cid,
-                pointsToAward: pts,
-              );
-              // Bonus parrainage (idempotent — vérifie referralBonusAwarded)
-              await clientSvc.processReferralBonus(
-                clientId: cid,
-                orderId:  orderId,
-              );
-              debugPrint('[AppProvider] loyalty ✅ fidélité+parrainage traités pour $cid');
-            } else {
-              debugPrint('[AppProvider] loyalty ⚠️ clientId vide pour $orderId — skip fidélité');
-            }
-          } catch (e) {
-            // Non bloquant : la commande est déjà marquée served
-            debugPrint('[AppProvider] loyalty ❌ erreur (non bloquant): $e');
+          debugPrint('[AppProvider] loyalty → orderId=$orderId cid=$cid pts=$pts');
+
+          if (cid.isNotEmpty) {
+            await clientSvc.awardLoyaltyPoints(
+              clientOrderId: orderId,
+              clientId:      cid,
+              pointsToAward: pts,
+            );
+            await clientSvc.processReferralBonus(
+              clientId: cid,
+              orderId:  orderId,
+            );
+            debugPrint('[AppProvider] loyalty ✅ fidélité+parrainage traités pour $cid');
+          } else {
+            debugPrint('[AppProvider] loyalty ⚠️ clientId vide pour $orderId — skip fidélité');
           }
+        } catch (e) {
+          // Non bloquant : la commande est déjà marquée served
+          debugPrint('[AppProvider] loyalty ❌ erreur (non bloquant): $e');
         }
-        return;
       }
+      return;
     }
 
     await _firebase.updateOrderStatus(orderId, status);
