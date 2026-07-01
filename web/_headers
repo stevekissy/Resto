@@ -28,6 +28,12 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
+# Favicon — cache court pour permettre la mise à jour rapide
+/favicon.ico
+  Cache-Control: public, max-age=3600
+/favicon.png
+  Cache-Control: public, max-age=3600
+
 # Icônes et manifeste
 /icons/*
   Cache-Control: public, max-age=86400
