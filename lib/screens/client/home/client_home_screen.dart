@@ -200,20 +200,9 @@ class ClientHomeScreen extends StatelessWidget {
                     const SizedBox(height: 20),
                     _SectionTitle(title: 'Notre menu', icon: Icons.restaurant_menu, onMore: () => _goToMenu(context)),
                     const SizedBox(height: 10),
-                    SizedBox(
-                      height: 160,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: provider.products.take(8).length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 12),
-                        itemBuilder: (ctx, i) {
-                          final p = provider.products[i];
-                          return _ProductMiniCard(
-                            product: p,
-                            onAdd: () => provider.addToCart(p),
-                          );
-                        },
-                      ),
+                    _MenuAutoScroll(
+                      products: provider.products.take(8).toList(),
+                      onAdd: (p) => provider.addToCart(p),
                     ),
                   ],
 
@@ -539,6 +528,120 @@ class _ProductMiniCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Auto-scroll carrousel "Notre menu" ───────────────────────────────────────
+/// Liste horizontale qui défile automatiquement, lentement et en boucle.
+/// • Se met en pause quand l'utilisateur pose le doigt.
+/// • Reprend 3 secondes après le dernier contact.
+/// • Swipe manuel toujours fonctionnel.
+/// • Le bouton "Voir tout" (dans _SectionTitle au-dessus) n'est pas touché.
+class _MenuAutoScroll extends StatefulWidget {
+  final List<dynamic> products;
+  final void Function(dynamic) onAdd;
+  const _MenuAutoScroll({required this.products, required this.onAdd});
+
+  @override
+  State<_MenuAutoScroll> createState() => _MenuAutoScrollState();
+}
+
+class _MenuAutoScrollState extends State<_MenuAutoScroll> {
+  late ScrollController _scroll;
+  Timer? _autoTimer;   // déclencheur périodique (toutes les ~16ms → 60 fps)
+  Timer? _pauseTimer;  // délai de reprise après contact
+
+  // Vitesse : pixels par frame (16ms). 0.45 px/frame ≈ 27 px/s → défilement lent.
+  static const double _speed = 0.45;
+
+  bool _userTouching = false;
+  bool _paused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll = ScrollController();
+    // Démarrer le scroll automatique après le premier frame rendu
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startAutoScroll());
+  }
+
+  // ── Démarrage du ticker auto-scroll ──────────────────────────────────────
+  void _startAutoScroll() {
+    _autoTimer?.cancel();
+    // Tick toutes les 16ms (~60 fps) pour un mouvement très fluide
+    _autoTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      if (_paused || _userTouching) return;
+      if (!_scroll.hasClients) return;
+
+      final max = _scroll.position.maxScrollExtent;
+      if (max <= 0) return;
+
+      final current = _scroll.offset;
+      // Arrivé en bout de liste → retour au début en douceur
+      if (current >= max - 1) {
+        _scroll.animateTo(
+          0,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOut,
+        );
+      } else {
+        // Avancer d'un micro-pas sans animation (ticker = fluidité native)
+        _scroll.jumpTo((current + _speed).clamp(0, max));
+      }
+    });
+  }
+
+  // ── Pause utilisateur ─────────────────────────────────────────────────────
+  void _onPointerDown() {
+    _userTouching = true;
+    _paused = true;
+    _pauseTimer?.cancel();
+  }
+
+  void _onPointerUp() {
+    _userTouching = false;
+    // Reprendre le scroll automatique après 3 secondes d'inactivité
+    _pauseTimer?.cancel();
+    _pauseTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _paused = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoTimer?.cancel();
+    _pauseTimer?.cancel();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (_) => _onPointerDown(),
+      onPointerUp:   (_) => _onPointerUp(),
+      onPointerCancel: (_) => _onPointerUp(),
+      child: SizedBox(
+        height: 160,
+        child: ListView.separated(
+          controller: _scroll,
+          scrollDirection: Axis.horizontal,
+          // Physique classique : le swipe manuel fonctionne normalement
+          physics: const BouncingScrollPhysics(),
+          // padding gauche pour que la première carte soit bien visible
+          padding: const EdgeInsets.only(left: 2, right: 2),
+          itemCount: widget.products.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 12),
+          itemBuilder: (ctx, i) {
+            final p = widget.products[i];
+            return _ProductMiniCard(
+              product: p,
+              onAdd: () => widget.onAdd(p),
+            );
+          },
+        ),
       ),
     );
   }
